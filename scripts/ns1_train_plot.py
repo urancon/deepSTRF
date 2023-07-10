@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 
 from utils import set_random_seed
 from interpret.metrics import correlation_coefficient
-from datasets.neurophysio_datasets import NS1Dataset
+from datasets.auditory_datasets import NS1Dataset
 from network.PSTH_models import GRU_RRF1d_Net
 
 

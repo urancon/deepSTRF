@@ -1,10 +1,5 @@
-import copy
-import os.path
-from scipy.io import loadmat
-import numpy as np
 import torch
 from torch.utils.data.dataset import Dataset
-import matplotlib.pyplot as plt
 
 class NS1Dataset(Dataset):
     """

@@ -11,7 +11,7 @@ import wandb
 
 from utils import set_random_seed
 from interpret.metrics import correlation_coefficient
-from datasets.neurophysio_datasets import NS1Dataset
+from datasets.auditory_datasets import NS1Dataset
 from network.PSTH_models import StatelessConvNet, RahmanDynamicNet, GRU_RRF1d_Net, GRU_RRF1dplus_Net, RRF_GRU_Learnable_Delays
 
 
