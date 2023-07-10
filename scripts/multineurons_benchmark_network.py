@@ -10,7 +10,7 @@ import csv
 
 from utils import set_random_seed
 from interpret.metrics import correlation_coefficient
-from datasets.neurophysio_datasets import RahmanDataset, NS2Dataset, NAT4Dataset
+from datasets.auditory_datasets import RahmanDataset, NS2Dataset, NAT4Dataset
 from network.PSTH_models import StatelessConvNet, RahmanDynamicNet, GRU_RRF1d_Net, GRU_RRF1dplus_Net
 
 def plot_spectrogram_and_signals(spectrogram, response, prediction):

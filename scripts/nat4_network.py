@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from datasets.neurophysio_datasets import NAT4Dataset, NAT4
+from datasets.auditory_datasets import NAT4Dataset, NAT4
 from interpret.metrics import correlation_coefficient
 from network.PSTH_models import StatelessConvNet
 
