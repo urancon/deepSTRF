@@ -53,12 +53,15 @@ for neuron_index in tqdm(range(dataset.n)):
 
         # load the dataset used in Rahman et al.
         n_bands = dataset.get_F()
-        n_time_steps = dataset.get_T()
+        n_timesteps = dataset.get_T()
 
-        train_set, valid_set, test_set = torch.utils.data.random_split(dataset, [14, 2, 4])
-        batch_size = 1
-        train_dataloader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
-        valid_dataloader = DataLoader(valid_set, batch_size=batch_size, shuffle=True)
+        crossval_set = torch.utils.data.Subset(dataset, list(range(16)))
+        test_set = torch.utils.data.Subset(dataset, list(range(16, 20, 1)))
+        train_set, valid_set = torch.utils.data.random_split(crossval_set, [14, 2])
+
+        batchsize = 1
+        train_dataloader = DataLoader(train_set, batch_size=batchsize, shuffle=True)
+        valid_dataloader = DataLoader(valid_set, batch_size=batchsize, shuffle=True)
         test_dataloader = DataLoader(test_set, batch_size=1, shuffle=True)
 
         net = GRU_RRF1d_Net(n_bands=n_bands,temporal_window_size=T, kernel_size=K, stride=S, hidden_channels=C).to(device)
