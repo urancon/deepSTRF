@@ -10,6 +10,7 @@ from utils.utils import set_random_seed
 import torch.utils
 
 seeds = range(10)
+first_run = True
 
 device = torch.device('cuda:2') if torch.cuda.is_available() else torch.device('cpu')
 print(f"\nSelected device: {device}\n")
@@ -17,15 +18,29 @@ print(f"\nSelected device: {device}\n")
 dataset = NS1Dataset('../datasets/NS1/ns1.pt')
 
 # Parameters of the model
-T = 1
-K = 7
-S = 3
-C = 7
+T = 1       # Temporal window size
+K = 7       # Kernel size
+S = 3       # Stride
+C = 7       # Hidden channels
 
 # optimization
 n_epochs = 300
 learning_rate = 0.001
 weight_decay = 0.02
+
+# Weights & Biases logging
+config = {
+    "temporal_window_size": T,
+    "Kernel Size": K,
+    "Stride": S,
+    "Hidden Channels": C,
+    "learning_rate": learning_rate,
+    "weight_decay": weight_decay
+}
+
+wandb.init(
+    project='PROJECT_NAME_PLACEHOLDER', entity='ENTITY_PLACEHOLDER',
+    config=config)
 
 ccraw_array = []
 ccnorm_array = []
@@ -61,7 +76,11 @@ for neuron_index in tqdm(range(dataset.n)):
         valid_dataloader = DataLoader(valid_set, batch_size=batch_size, shuffle=True)
         test_dataloader = DataLoader(test_set, batch_size=1, shuffle=True)
 
+        # The model
         net = GRU_RRF1d_Net(n_bands=n_bands,temporal_window_size=T, kernel_size=K, stride=S, hidden_channels=C).to(device)
+        if first_run:
+            wandb.config.update({"model": net.__class__.__name__, "Nb of parameters": net.count_trainable_params()})
+            first_run = False
 
         print(f"Model: {net.__class__.__name__}, # params: {net.count_trainable_params()}")
 
@@ -214,5 +233,7 @@ mean_cc_raw = np.mean(ccraw_array)
 
 cc_norm_all_seeds_array = np.mean(cc_norm_all_seeds_array, 1)
 
-
+wandb.log({"Mean CC Norm": mean_cc_norm, "Mean CC Raw":mean_cc_raw,
+           "Best Val Loss" : best_val_loss,"Best Val CCraw" : best_val_cc,"Best Val CCnorm" : best_val_cc_norm,
+           "Best Train Loss" : best_val_loss,"Best Train CCraw" : best_train_cc,"Best Train CCnorm" : best_train_cc_norm,"CCnorm All seeds" : cc_norm_all_seeds_array})
 
