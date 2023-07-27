@@ -1,5 +1,5 @@
-from network.filterbanks import FilterBank
-from network.prefiltering import FrequencyDependentHighPassExponential
+from models.filterbanks import FilterBank
+from models.prefiltering import FrequencyDependentHighPassExponential
 import torch
 
 def get_filters(device):
