@@ -3,6 +3,7 @@ import io
 import random
 import torch
 import numpy as np
+import torch.backends.cudnn
 
 
 #############
