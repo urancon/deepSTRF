@@ -10,9 +10,9 @@ import csv
 import wandb
 
 from utils import set_random_seed
-from interpret.metrics import correlation_coefficient
-from datasets.neurophysio_datasets import NS1Dataset
-from network.PSTH_models import StatelessConvNet, RahmanDynamicNet, GRU_RRF1d_Net, GRU_RRF1dplus_Net, RRF_GRU_Learnable_Delays
+from models.interpret.metrics import correlation_coefficient
+from datasets.NS1Dataset import NS1Dataset
+from models.PSTH_models import StatelessConvNet, RahmanDynamicNet, GRU_RRF1d_Net, GRU_RRF1dplus_Net, RRF_GRU_Learnable_Delays
 
 
 def plot_spectrogram_and_signals(spectrogram, response, prediction):
@@ -37,13 +37,13 @@ def plot_spectrogram_and_signals(spectrogram, response, prediction):
 
 seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
-device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
+device = torch.device('cuda:2') if torch.cuda.is_available() else torch.device('cpu')
 print(f"\nselected device: {device}\n")
 
 data = torch.load('datasets/NS1/ns1a.pt')
 
 # instanciate bio-plausible SNN model
-Max_Delay = 19
+T = 1
 K = 7
 S = 3
 C = 7
@@ -57,7 +57,7 @@ weight_decay = 0.02
 
 # wandb logging
 config = {
-    "Max Delay": Max_Delay,
+    "temporal_window_size": T,
     "Kernel Size": K,
     "Stride": S,
     "Hidden Channels": C,
@@ -111,8 +111,8 @@ with open('ns1a_GRU_correlations.csv', 'w', newline='') as file:
             # net = LIF_RRF1dplus_Net(temporal_window_size=T, kernel_size=7, stride=3, hidden_channels=7).to(device)
             # net = RahmanDynamicNet(temporal_window_size=T, n_hidden=H).to(device)
             # net = StatelessConvNet(n_bands=n_bands, temporal_window_size=41, n_hidden=20).to(device)
-            # net = GRU_RRF1d_Net(n_bands=n_bands,temporal_window_size=T, kernel_size=K, stride=S, hidden_channels=C).to(device)
-            net = RRF_GRU_Learnable_Delays(max_delay=Max_Delay, rrf_kernel_size=K, rrf_stride=S, hidden_channels=C).to(device)
+            net = GRU_RRF1d_Net(n_bands=n_bands,temporal_window_size=T, kernel_size=K, stride=S, hidden_channels=C).to(device)
+            # net = RRF_GRU_Learnable_Delays(max_delay=Max_Delay, rrf_kernel_size=K, rrf_stride=S, hidden_channels=C).to(device)
             print(f"Model: {net.__class__.__name__}, # params: {net.count_trainable_params()}")
             if nomentre==0:
                 wandb.config.update({"model": net.__class__.__name__, "Nb of parameters" : net.count_trainable_params()})
@@ -128,11 +128,11 @@ with open('ns1a_GRU_correlations.csv', 'w', newline='') as file:
             best_val_loss = float('inf')
 
             for epoch in range(n_epochs):
-
                 # #### TRAIN ##### #
 
                 epoch_train_loss = 0.
                 epoch_train_cc = 0.
+                epoch_train_cc_norm = 0.
                 net.train()
                 for spectrogram, response, ccmax in train_dataloader:
                     # data preprocessing
@@ -158,14 +158,18 @@ with open('ns1a_GRU_correlations.csv', 'w', newline='') as file:
                     # logging
                     epoch_train_loss += loss.item()
                     epoch_train_cc += cc.item()
+                    epoch_train_cc_norm += (cc.item()/ccmax.item)
 
                 epoch_train_loss /= len(train_dataloader)
                 epoch_train_cc /= len(train_dataloader)
+                epoch_train_cc_norm /= len(train_dataloader)
 
                 # #### EVAL ##### #
 
                 epoch_val_loss = 0.
                 epoch_val_cc = 0.
+                epoch_val_cc_norm = 0.
+
                 net.eval()
                 for spectrogram, response, ccmax in valid_dataloader:
                     spectrogram = spectrogram.to(device)
@@ -181,14 +185,21 @@ with open('ns1a_GRU_correlations.csv', 'w', newline='') as file:
 
                     epoch_val_loss += loss.item()
                     epoch_val_cc += cc.item()
+                    epoch_val_cc_norm += (cc.item()/ccmax.item())
 
                 epoch_val_loss /= len(valid_dataloader)
                 epoch_val_cc /= len(valid_dataloader)
+                epoch_val_cc_norm /= len(valid_dataloader)
 
                 # save trained model if it has improved
                 if epoch_val_loss < best_val_loss:
                     torch.save(net.state_dict(), "./results/response_predictor_snn.pth")
                     best_val_loss = epoch_val_loss
+                    best_val_cc = epoch_val_cc
+                    best_val_cc_norm = epoch_val_cc_norm
+                    best_train_cc = epoch_train_cc
+                    best_train_cc_norm = epoch_train_cc_norm
+                    best_train_loss = epoch_train_loss
 
             #######################
             # III. PREDICT
@@ -199,6 +210,7 @@ with open('ns1a_GRU_correlations.csv', 'w', newline='') as file:
 
             test_loss = 0.
             test_cc = 0.
+            test_cc_norm = 0.
 
             for spectrogram, response, ccmax in test_dataloader:
                 # data preprocessing
@@ -217,10 +229,11 @@ with open('ns1a_GRU_correlations.csv', 'w', newline='') as file:
 
                 cc = correlation_coefficient(prediction, response)
                 test_cc += cc.item()
+                test_cc_norm += (cc.item() / ccmax.item())
 
             test_loss /= len(test_dataloader)
             test_cc /= len(test_dataloader)
-            test_cc_norm = test_cc/ccmax.item()
+            test_cc_norm /= len(test_dataloader)
 
             # CSV preparation
             array_cc[i+1] = test_cc
@@ -257,7 +270,16 @@ with open('ns1a_GRU_correlations.csv', 'w', newline='') as file:
     mean_ccnorm = np.mean(ccnorm_array)
     mean_ccraw = np.mean(ccraw_array)
 
-    wandb.log({"Mean CC Norm": mean_ccnorm, "Mean CC Raw":mean_ccraw})
+    best_val_loss = epoch_val_loss
+    best_val_cc = epoch_val_cc
+    best_val_cc_norm = epoch_val_cc_norm
+    best_train_cc = epoch_train_cc
+    best_train_cc_norm = epoch_train_cc_norm
+    best_train_loss = epoch_train_loss
+
+    wandb.log({"Mean CC Norm": mean_ccnorm, "Mean CC Raw":mean_ccraw,
+               "Best Val Loss" : best_val_loss,"Best Val CCraw" : best_val_cc,"Best Val CCnorm" : best_val_cc_norm,
+               "Best Train Loss" : best_val_loss,"Best Train CCraw" : best_train_cc,"Best Train CCnorm" : best_train_cc_norm})
 
     file.close()
 

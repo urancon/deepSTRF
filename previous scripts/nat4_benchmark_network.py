@@ -10,7 +10,7 @@ import csv
 
 from utils import set_random_seed
 from interpret.metrics import correlation_coefficient
-from datasets.neurophysio_datasets import RahmanDataset, NS2Dataset, NAT4Dataset
+from datasets.NS1Dataset import RahmanDataset, NS2Dataset, NAT4Dataset, NAT4
 from network.PSTH_models import StatelessConvNet, RahmanDynamicNet, GRU_RRF1d_Net, GRU_RRF1dplus_Net
 
 def plot_spectrogram_and_signals(spectrogram, response, prediction):
@@ -35,28 +35,28 @@ def plot_spectrogram_and_signals(spectrogram, response, prediction):
 
 seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
+# Select the device (GPU if available, otherwise CPU)
 device = torch.device('cuda:1') if torch.cuda.is_available() else torch.device('cpu')
-print(f"\nselected device: {device}\n")
+print(f"\nSelected device: {device}\n")
 
 final_test_loss = 0.
 final_test_cc = 0.
 
-spectrograms = torch.load('datasets/NS2_230/ns2_spectrograms_500.pt')
-responses = torch.load('datasets/NS2_230/ns2_responses_500.pt')
+# Load datasets
+estimation = NAT4Dataset('datasets/NAT4/estimation.pt')
+validation = NAT4Dataset('datasets/NAT4/validation.pt')
 
-#responses = responses / responses.max()  # normalize responses between 0 and 1
+data = NAT4(estimation, validation)
 
-with open('multineurons_convnet.csv', 'w', newline='') as file:
+# Open a CSV file for data saves
+with open('nat4_convnet.csv', 'w', newline='') as file:
     writer = csv.writer(file)
     writer.writerow(["neuron_id", "Run 1", "Run 2", "Run 3", "Run 4", "Run 5", "Run 6", "Run 7", "Run 8", "Run 9", "Run 10"])
 
-    for neuron_index in tqdm(range(len(responses))):
-        # Init array for CSV
+    for neuron_index in tqdm(range(data.neuron_count)):
+        # Initialize array for CSV
         array_cc = np.zeros(11)
         array_cc[0] = neuron_index
-
-        dataset = NS2Dataset(spectrograms[neuron_index], responses[neuron_index])
-        # dataset = NAT4Dataset(spectrograms, responses[neuron_index])
 
         for seed, i in enumerate(seeds):
             #######################
@@ -66,32 +66,28 @@ with open('multineurons_convnet.csv', 'w', newline='') as file:
             set_random_seed(seed)
             start_time = time.time()
 
-            #######################
-            # I. PREPARE
-            #######################
+            ##########################
+            # I. PREPARE TRAIN + VALID
+            ##########################
 
-            # load the dataset used in Rahman et al
-            n_bands = dataset.get_F()
-            n_timesteps = dataset.get_T()
-            train_set, valid_set, test_set = torch.utils.data.random_split(dataset, [12, 2, 4])
+            est_data = data.prepare_nat4(neuron_index=1, choose_dataset="est")
+            # Load the dataset used in Rahman et al.
+            n_bands = data.estimation.get_F()
+            n_timesteps = data.estimation.get_T()
+            train_set, valid_set = torch.utils.data.random_split(est_data, [460, 115])
             batchsize = 1
             train_dataloader = DataLoader(train_set, batch_size=batchsize, shuffle=True)
             valid_dataloader = DataLoader(valid_set, batch_size=batchsize, shuffle=True)
-            test_dataloader = DataLoader(test_set, batch_size=1, shuffle=True)
 
-            # instanciate bio-plausible SNN model
+            # Instantiate bio-plausible SNN model
             T = 1
             K = 5
             S = 2
             C = 7
-            # net = StatelessConvNet(temporal_window_size=T, n_hidden=H).to(device)
-            # net = LIF_RRF1dplus_Net(temporal_window_size=T, kernel_size=7, stride=3, hidden_channels=7).to(device)
-            # net = RahmanDynamicNet(temporal_window_size=T, n_hidden=H).to(device)
             net = StatelessConvNet(n_bands=n_bands, temporal_window_size=7, n_hidden=10).to(device)
-            # net = GRU_RRF1d_Net(n_bands=n_bands,temporal_window_size=T, kernel_size=K, stride=S, hidden_channels=C).to(device)
             print(f"Model: {net.__class__.__name__}, # params: {net.count_trainable_params()}")
 
-            # optimization
+            # Optimization
             n_epochs = 300
             learning_rate = 0.001
             weight_decay = 0.02
@@ -105,33 +101,29 @@ with open('multineurons_convnet.csv', 'w', newline='') as file:
             best_val_loss = float('inf')
 
             for epoch in range(n_epochs):
-
                 # #### TRAIN ##### #
-
                 epoch_train_loss = 0.
                 epoch_train_cc = 0.
                 net.train()
                 for spectrogram, response in train_dataloader:
-                    # data preprocessing
+                    # Data preprocessing
                     spectrogram = spectrogram.to(device)
                     response = response.to(device)
 
-                    # feed to the ANN network
+                    # Feed
                     prediction = net(spectrogram)
 
-                    # gradient descent step
+                    # Gradient descent step
                     loss = criterion(prediction, response)
                     loss.backward()
                     optimizer.step()
                     optimizer.zero_grad()
-
-                    # detach stateful variables from graph
                     net.detach()
 
-                    # correlation coefficient
+                    # Correlation coefficient
                     cc = correlation_coefficient(prediction, response)
 
-                    # logging
+                    # Logging
                     epoch_train_loss += loss.item()
                     epoch_train_cc += cc.item()
 
@@ -139,7 +131,6 @@ with open('multineurons_convnet.csv', 'w', newline='') as file:
                 epoch_train_cc /= len(train_dataloader)
 
                 # #### EVAL ##### #
-
                 epoch_val_loss = 0.
                 epoch_val_cc = 0.
                 net.eval()
@@ -160,7 +151,7 @@ with open('multineurons_convnet.csv', 'w', newline='') as file:
                 epoch_val_loss /= len(valid_dataloader)
                 epoch_val_cc /= len(valid_dataloader)
 
-                # save trained model if it has improved
+                # Save trained model if it has improved
                 if epoch_val_loss < best_val_loss:
                     torch.save(net.state_dict(), "./results/response_predictor_snn.pth")
                     best_val_loss = epoch_val_loss
@@ -169,18 +160,21 @@ with open('multineurons_convnet.csv', 'w', newline='') as file:
             # III. PREDICT
             #######################
 
-            # load saved model
+            val_data = data.prepare_nat4(neuron_index=1, choose_dataset="val")
+            test_dataloader = DataLoader(val_data, batch_size=1, shuffle=True)
+
+            # Load saved model
             net.load_state_dict(torch.load("./results/response_predictor_snn.pth"))
 
             test_loss = 0.
             test_cc = 0.
 
             for spectrogram, response in test_dataloader:
-                # data preprocessing
+                # Data preprocessing
                 spectrogram = spectrogram.to(device)
                 response = response.to(device)
 
-                # feed to the SNN network
+                # Feed to the SNN network
                 with torch.no_grad():
                     prediction = net(spectrogram)
 
@@ -208,14 +202,12 @@ with open('multineurons_convnet.csv', 'w', newline='') as file:
 
             print(f"Run: {i+1}, test loss: {test_loss}, test correlation coefficient: {test_cc}, time: {run_time} s")
 
-        #Write in CSV
+        # Write to CSV
         writer.writerow(array_cc)
 
         final_test_loss /= len(seeds)
         final_test_cc /= len(seeds)
-        print(f"Result for the neuron n°{neuron_index+1}")
-        print(f"test loss: {final_test_loss}, test correlation coefficient: {final_test_cc} (average over {len(seeds)} runs)")
+        print(f"Result for neuron n°{neuron_index+1}")
+        print(f"Test loss: {final_test_loss}, test correlation coefficient: {final_test_cc} (average over {len(seeds)} runs)")
 
     file.close()
-
-
