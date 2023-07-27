@@ -5,8 +5,8 @@ from torch.nn import functional
 import matplotlib.pyplot as plt
 import scipy.io as scio
 
-from network.scales import mel_to_Hz, Hz_to_mel, ERB, Greenwood, inverse_Greenwood
-from network.wavelets import gammatone, sinc2, sinc
+from models.scales import mel_to_Hz, Hz_to_mel, ERB, Greenwood, inverse_Greenwood
+from models.wavelets import gammatone, sinc2, sinc
 
 
 ############################################

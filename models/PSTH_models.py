@@ -7,9 +7,9 @@ from spikingjelly.clock_driven.layer import SeqToANNContainer
 from spikingjelly.clock_driven.neuron import MultiStepParametricLIFNode
 from spikingjelly.clock_driven.neuron import ParametricLIFNode
 
-from network.minisobel_init import get_filters
-from network.rrfs import RRF1d, RRF2d
-from network.temporal_filters import FlipminiWfilter
+from models.minisobel_init import get_filters
+from models.rrfs import RRF1d, RRF2d
+from models.temporal_filters import FlipminiWfilter
 
 
 ##################################################################################
