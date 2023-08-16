@@ -4,6 +4,7 @@ import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from datasets.NS1_DRC.NS1_DRC_Dataset import NS1Dataset
+from datasets.NAT4.NAT4_Dataset import NAT4Dataset
 from models.PSTH_models import *
 from models.interpret.metrics import correlation_coefficient
 from utils.utils import set_random_seed
@@ -15,7 +16,10 @@ first_run = True
 device = torch.device('cuda:2') if torch.cuda.is_available() else torch.device('cpu')
 print(f"\nSelected device: {device}\n")
 
+# CHOOSE ONE
+
 dataset = NS1Dataset('../datasets/NS1_DRC/ns1.pt')
+# dataset = NAT4Dataset('../datasets/NAT4/nat4.pt')
 
 # Parameters of the model
 T = 1       # Temporal window size
@@ -69,21 +73,20 @@ for neuron_index in tqdm(range(dataset.n)):
 
         # load the dataset used in Rahman et al.
         n_bands = dataset.get_F()
-        n_timesteps = dataset.get_T()
+        n_time_steps = dataset.get_T()
 
-        crossval_set = torch.utils.data.Subset(dataset, list(range(16)))
-        test_set = torch.utils.data.Subset(dataset, list(range(16, 20, 1)))
-        train_set, valid_set = torch.utils.data.random_split(crossval_set, [14, 2])
-
-        batchsize = 1
-        train_dataloader = DataLoader(train_set, batch_size=batchsize, shuffle=True)
-        valid_dataloader = DataLoader(valid_set, batch_size=batchsize, shuffle=True)
+        train_set, valid_set, test_set = torch.utils.data.random_split(dataset, [0.7, 0.1, 0.2])
+        batch_size = 1
+        train_dataloader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
+        valid_dataloader = DataLoader(valid_set, batch_size=batch_size, shuffle=True)
         test_dataloader = DataLoader(test_set, batch_size=1, shuffle=True)
 
+        # The model
         net = GRU_RRF1d_Net(n_bands=n_bands,temporal_window_size=T, kernel_size=K, stride=S, hidden_channels=C).to(device)
         if first_run:
             wandb.config.update({"model": net.__class__.__name__, "Nb of parameters": net.count_trainable_params()})
             first_run = False
+
         print(f"Model: {net.__class__.__name__}, # params: {net.count_trainable_params()}")
 
         criterion = torch.nn.MSELoss()
@@ -163,7 +166,7 @@ for neuron_index in tqdm(range(dataset.n)):
 
             # save trained model if it has improved
             if epoch_val_loss < best_val_loss:
-                torch.save(net.state_dict(), "./results/response_model.pth")
+                torch.save(net.state_dict(), "./results/response_predictor_snn.pth")
                 best_val_loss = epoch_val_loss
                 best_val_cc = epoch_val_cc
                 best_val_cc_norm = epoch_val_cc_norm
@@ -238,5 +241,4 @@ cc_norm_all_seeds_array = np.mean(cc_norm_all_seeds_array, 1)
 wandb.log({"Mean CC Norm": mean_cc_norm, "Mean CC Raw":mean_cc_raw,
            "Best Val Loss" : best_val_loss,"Best Val CCraw" : best_val_cc,"Best Val CCnorm" : best_val_cc_norm,
            "Best Train Loss" : best_val_loss,"Best Train CCraw" : best_train_cc,"Best Train CCnorm" : best_train_cc_norm,"CCnorm All seeds" : cc_norm_all_seeds_array})
-
 

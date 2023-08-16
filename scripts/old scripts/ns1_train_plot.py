@@ -17,7 +17,7 @@ def train_and_plot(neuron_index, run):
     set_random_seed(run)
 
     # Load the data
-    data = torch.load('datasets/NS1/ns1a.pt')
+    data = torch.load('datasets/NS1_DRC/ns1a.pt')
     dataset = NS1Dataset(data, neuron_index)
 
     # Define the device
