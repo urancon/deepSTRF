@@ -6,6 +6,7 @@ ____
 
 TODO
 
+![placeholder.png](placeholder.png)
 
 ## Installation
 
