@@ -1,9 +1,6 @@
-import numpy as np
 import torch
 import torch.nn as nn
-from torch.nn import functional
 import matplotlib.pyplot as plt
-import scipy.io as scio
 
 from models.scales import mel_to_Hz, Hz_to_mel, ERB, Greenwood, inverse_Greenwood
 from models.wavelets import gammatone, sinc2, sinc
@@ -219,39 +216,7 @@ class FilterBank(nn.Module):
         return descr
 
 
-if __name__ == "__main__":
 
-    fbank = FilterBank(filter_type='gammatone', scale='mel',
-                       freq_range=(500, 20000), n_filters=34,
-                       sampling_rate=44100, filter_length=1500, energy_stride=240, energy_window_length=500)
-
-    s1 = np.array(scio.loadmat('spectro1.mat')['spectro'][None,:].astype(np.double),dtype=np.double)
-    s2 = np.array(scio.loadmat('spectro2.mat')['spectro'][None,:].astype(np.double),dtype=np.double)
-    s3 = np.array(scio.loadmat('spectro3.mat')['spectro'][None,:].astype(np.double),dtype=np.double)
-
-    data = torch.load('ns1.pt')
-
-    sig1 = torch.tensor(s1, dtype=torch.float)
-    sig2 = torch.tensor(s2,dtype=torch.float)
-    sig3 = torch.tensor(s3, dtype=torch.float)
-
-    sig_conv1 = fbank(sig1)
-    sig_conv2 = fbank(sig2)
-    sig_conv3 = fbank(sig3)
-
-    view1 = sig_conv1.detach().numpy()[0][:]
-    view2 = sig_conv2.detach().numpy()[0][:]
-    view3 = sig_conv3.detach().numpy()[0][:]
-    test1 = data['spectrograms'][0].detach().numpy()
-    test2 = data['spectrograms'][1].detach().numpy()
-    test3 = data['spectrograms'][2].detach().numpy()
-
-    fig, axs = plt.subplots(2,1)
-    axs[0] = plt.imshow(test1[0])
-    axs[1] = plt.imshow(view1)
-    print(fbank)
-    fbank.plot(domain='time')
-    fbank.plot(domain='frequency')
 
 
 

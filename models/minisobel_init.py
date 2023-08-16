@@ -1,4 +1,4 @@
-from models.filterbanks import FilterBank
+from utils.filterbanks import FilterBank
 from models.prefiltering import FrequencyDependentHighPassExponential
 import torch
 
