@@ -3,7 +3,7 @@ import numpy as np
 import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from datasets.NS1Dataset import NS1Dataset
+from datasets.NS1_DRC.NS1_DRC_Dataset import NS1Dataset
 from models.PSTH_models import *
 from models.interpret.metrics import correlation_coefficient
 from utils.utils import set_random_seed
@@ -15,7 +15,7 @@ first_run = True
 device = torch.device('cuda:2') if torch.cuda.is_available() else torch.device('cpu')
 print(f"\nSelected device: {device}\n")
 
-dataset = NS1Dataset('../datasets/NS1/ns1.pt')
+dataset = NS1Dataset('../datasets/NS1_DRC/ns1.pt')
 
 # Parameters of the model
 T = 1       # Temporal window size
@@ -30,6 +30,7 @@ weight_decay = 0.02
 
 # Weights & Biases logging
 config = {
+    "dataset": dataset.__class__.__name__,
     "temporal_window_size": T,
     "Kernel Size": K,
     "Stride": S,
@@ -162,7 +163,7 @@ for neuron_index in tqdm(range(dataset.n)):
 
             # save trained model if it has improved
             if epoch_val_loss < best_val_loss:
-                torch.save(net.state_dict(), "./results/response_predictor_snn.pth")
+                torch.save(net.state_dict(), "./results/response_model.pth")
                 best_val_loss = epoch_val_loss
                 best_val_cc = epoch_val_cc
                 best_val_cc_norm = epoch_val_cc_norm
@@ -175,7 +176,7 @@ for neuron_index in tqdm(range(dataset.n)):
         #######################
 
         # load saved model
-        net.load_state_dict(torch.load("./results/response_predictor_snn.pth"))
+        net.load_state_dict(torch.load("./results/response_model.pth"))
 
         test_loss = 0.
         test_cc = 0.
