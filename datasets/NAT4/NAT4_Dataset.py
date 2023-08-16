@@ -9,15 +9,23 @@ class NAT4Dataset(Dataset):
         if composition == 'val':
             self.n = len(data['val_responses'])
             self.spectrograms = data['val_spectrograms']            # Shape: (n_samples, 1, F, T) = (18, 1, 34, X)
-            self.responses = data['val_responses'][neuron_indexes]  # Shape: (n_neurons,n_samples, T) = (849, 18, X)
-            self.ccmaxes = data['ccmax'][neuron_indexes]            # Shape: (n_neurons,n_samples) = (849, 18 )
+            if neuron_indexes == "auditory":
+                self.responses = data['val_responses'][data['auditory']]
+                self.ccmaxes = data['ccmax'][data['auditory']]
+            else :
+                self.responses = data['val_responses'][neuron_indexes]  # Shape: (n_neurons,n_samples, T) = (849, 18, X)
+                self.ccmaxes = data['ccmax'][neuron_indexes]
             self.response = None
             self.ccmax = None
         if composition == 'est':
             self.n = len(data['est_responses'])
             self.spectrograms = data['est_spectrograms']            # Shape: (n_samples, 1, F, T) = (575, 1, 34, X)
-            self.responses = data['est_responses'][neuron_indexes]  # Shape: (n_neurons,n_samples, T) = (849, 575, X)
-            self.ccmaxes = data['ccmax'][neuron_indexes]            # Shape: (n_neurons,n_samples) = (849, 575)
+            if neuron_indexes == "auditory":
+                self.responses = data['est_responses'][data['auditory']]
+                self.ccmaxes = data['ccmax'][data['auditory']]
+            else:
+                self.responses = data['est_responses'][neuron_indexes]  # Shape: (n_neurons,n_samples, T) = (849, 18, X)
+                self.ccmaxes = data['ccmax'][neuron_indexes]
             self.response = None
             self.ccmax = None
         if composition == 'all':
