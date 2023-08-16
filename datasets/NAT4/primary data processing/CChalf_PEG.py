@@ -28,7 +28,7 @@ recs = []  # Liste pour stocker tous les rec
 tot = 0 #total number of neurons
 
 for filebase in file_list:
-    datafile = os.path.join(signals_dir, 'PEG_single_sites', filebase)
+    datafile = os.path.join(signals_dir, 'data_files_here/PEG_single_sites', filebase)
     rec = load_recording(datafile)
     recs.append(rec)
     tot += len(rec['resp'].chans)
