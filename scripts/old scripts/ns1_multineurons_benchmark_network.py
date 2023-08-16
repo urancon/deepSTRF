@@ -40,7 +40,7 @@ seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 device = torch.device('cuda:2') if torch.cuda.is_available() else torch.device('cpu')
 print(f"\nselected device: {device}\n")
 
-data = torch.load('datasets/NS1/ns1a.pt')
+data = torch.load('datasets/NS1_DRC/ns1a.pt')
 
 # instanciate bio-plausible SNN model
 T = 1
