@@ -119,7 +119,7 @@ responses_tensor = responses_tensor.view(398, 575, 150)
 est_responses = responses_tensor.to(dtype=torch.float32)
 
 ccmax = torch.load('Single/ccmax_peg.pt')
-ccmax = torch.mean(ccmax,dim=1)
+# ccmax = torch.mean(ccmax,dim=1)
 
 auditory = good_idx
 
