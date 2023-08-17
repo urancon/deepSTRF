@@ -67,7 +67,7 @@ responses1 = torch.squeeze(responses)
 #responses2 = torch.index_select(responses1, dim=1, index=good_idx)
 val_responses = torch.permute(responses1, (1,0,2))
 
-list_neurons = pd.read_csv("PEG_pred_corr.csv")
+list_neurons = pd.read_csv("data_files_here/PEG_pred_corr.csv")
 good_neurons = list_neurons.loc[list_neurons["sig_auditory"] == True].index
 good_idx = torch.tensor(good_neurons, dtype=torch.int64)
 
@@ -118,7 +118,7 @@ responses_tensor = torch.stack(responses, dim=0)
 responses_tensor = responses_tensor.view(398, 575, 150)
 est_responses = responses_tensor.to(dtype=torch.float32)
 
-ccmax = torch.load('Single/ccmax_peg.pt')
+ccmax = torch.load('ccmax_peg.pt')
 # ccmax = torch.mean(ccmax,dim=1)
 
 auditory = good_idx

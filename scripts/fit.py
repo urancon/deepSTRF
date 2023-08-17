@@ -19,7 +19,7 @@ print(f"\nSelected device: {device}\n")
 # CHOOSE ONE
 
 dataset = NS1Dataset('../datasets/NS1_DRC/ns1.pt')
-# dataset = NAT4Dataset('../datasets/NAT4/nat4_peg.pt')
+# dataset = NAT4Dataset('../datasets/NAT4/nat4_a1.pt')
 
 # Parameters of the model
 T = 1       # Temporal window size

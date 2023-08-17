@@ -173,14 +173,15 @@ for i, good_neuron in enumerate(good_neurons):
         cchalftot[i, j] = np.mean(cchalf)
 
 ccmax = np.sqrt(2. / (1 + np.sqrt(1. / pow(cchalftot,2))))
-ccmax = np.mean(ccmax, axis=(1, 2))
+# ccmax = np.mean(ccmax, axis=(1, 2))
 ccmax = torch.tensor(ccmax)
+ccmax = torch.squeeze(ccmax)
 
 data = torch.load('data.pt')
+
+##spectrograms de DRC to add
 spectrograms = data['spectrograms']
 responses = PSTH
 
-torch.save({'spectrograms': spectrograms, 'responses': responses, 'ccmax':ccmax}, "../NS1_DRC/ns1_new.pt")
+torch.save({'spectrograms': spectrograms, 'responses': responses, 'ccmax':ccmax}, "../ns1.pt")
 print("Dataset Sauvegardé !")
-
-torch.save(ccmax,'ccmax.pt')

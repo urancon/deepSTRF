@@ -12,7 +12,7 @@ class NAT4Dataset(Dataset):
         - Stimuli: 20 repetitions of 18 sounds + 1 repetition of 577 sounds (1.5s each)
         - Neurons: Total 849 (A1), 398 (PEG), Valid 777 (A1), 339 (PEG) auditory neurons
         """
-    def __init__(self, path: str, composition='val', neuron_indexes=range(73)):
+    def __init__(self, path: str, composition='val', neuron_indexes=range(100)):
         """
         Initializes the NAT4Dataset.
 

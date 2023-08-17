@@ -28,15 +28,14 @@ class NS1Dataset(Dataset):
         if composition == 'ns1':
             self.n = len(data['responses'][0:20])
             self.spectrograms = data['spectrograms'][0:20]               # Shape: (n_samples, 1, F, T) = (20, 1, 34, 999)
-            self.responses = data['responses'][neuron_indexes][0:20]     # Shape: (n_neurons,n_samples, T) = (73, 20, 999)
-            self.ccmaxes = data['ccmax'][neuron_indexes][0:20]           # Shape: (n_neurons,n_samples) = (73, 20)
+            self.responses = data['responses'][neuron_indexes, 0:20]     # Shape: (n_neurons,n_samples, T) = (73, 20, 999)
+            self.ccmaxes = data['ccmax'][neuron_indexes, 0:20]           # Shape: (n_neurons,n_samples) = (73, 20)
             self.response = None
             self.ccmax = None
         if composition == 'drc':
             raise NotImplementedError
         if composition == 'all':
             raise NotImplementedError
-
     def __len__(self):
         """
         Returns the number of samples in the dataset.
