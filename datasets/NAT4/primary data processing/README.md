@@ -41,6 +41,6 @@
 
 - Create an environment with the NEMS0 library
 - put the data (folders "A1_Single_Sites" & PEG_Single_Sites + A1_NAT4_ozgf.fs100.ch18.tgz + PEG_NAT4_ozgf.fs100.ch18.tgz) in the folder data_files_here.
-- Launch CChalf_A1.py, and then Dataset_creation_A1.py , or CChalf_PEG.py, and then Dataset_creation_PEG.py.
+- Launch CChalf_A1.py (creates ccmax_a1.pt), and then Dataset_creation_A1.py , or CChalf_PEG.py (creates ccmax_peg.pt), and then Dataset_creation_PEG.py.
 - the processed data files should appear as a pytorch file called "nat4_a1.pt" or "nat4_peg.pt"
 - you can use it right away by creating a NAT4_Dataset object with the path to one of these pytorch files.
