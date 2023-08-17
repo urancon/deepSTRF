@@ -1,39 +1,41 @@
 
 
-# A Natural Sound Dataset 1 (NS1)
+# A Natural Sound Dataset: A1 & PEG (NAT4)
 
-**Stimuli Source:** [NS1 Dataset](https://zenodo.org/record/7796574)
+**Dataset Source:** [A1 & PEG Dataset](https://doi.org/10.1101/2022.06.10.495698)
 
-**Original Paper:** ["Network receptive field modeling reveals extensive integration and multi-feature selectivity in auditory cortical neurons"](https://doi.org/10.1371/journal.pcbi.1005113) by Nicol S. Harper, Oliver Schoppe, Ben D. B. Willmore, Zhanfeng F. Cui, Jan W. H. Schnupp, Andrew J. King.
-
-**Papers Using the Dataset:**
-- ["A dynamic network model of temporal receptive fields in primary auditory cortex"](https://doi.org/10.1371/journal.pcbi.1006618) by M. Rahman, B. D. B. Willmore, A. J. King, N. S. Harper.
-- ["Measuring the performance of neural models"](https://doi.org/10.3389/fncom.2016.00010) by O. Schoppe, N. S. Harper, B. D. B. Willmore, A. J. King, J. W. H. Schnupp.
+**Original Papers:**
+- ["Can deep learning provide a generalizable model for dynamic sound encoding in auditory cortex?"](https://doi.org/10.1101/2022.06.10.495698) by Jacob R. Pennington, Stephen V. David.
+- ["A convolutional neural network provides a generalizable model of natural sound coding by neural populations in auditory cortex"](https://doi.org/10.1371/journal.pcbi.1011110) by Pennington JR, David SV.
 
 **Dataset Details:**
 
 **Description of Stimuli:**
-- 20 clips of natural sound (speech, ferret vocalizations, other animal vocalizations, and environmental sounds), each 5 seconds in duration.
-- Clips were played in random order, and each clip was repeated 20 times.
+- 20 repetitions of 18 sounds + 1 repetition of 577 sounds.
+- Each stimulus is 1.5 seconds in duration.
 
 **Description of Neurons:**
-- Total Number of Neurons: 119
-- Valid Neurons: 73
-- Valid Neurons Criteria: Noise ratio < 40 (The noise ratio is given)
-- Neuron Types: 549 single and multi-unit recordings from six adult pigmented ferrets (five female and one male), among which 284 were single units.
+- Total Number of Neurons: 849 for A1, 398 for PEG
+- Valid Neurons: 777 for A1, 339 for PEG
+- Valid Neurons Criteria: Auditory neurons (see the papers for further details)
 
-**Available data:**
-- *Needs MATLAB Data Processing.* More info in the readme file in the dataset.
-- Structured neuron array with 119 items. In each element:
-  - Sound waveform of each stimulus (y, fs).
-  - Spike times of each repeat of each stimulus.
-  - Information on the recording, on the noise ratio, etc.
+**Available Data:**
+- *Needs NEMS0 on Python Data Processing.*
+- Two recording objects from NEMS0. Each recording contains:
+  - Spectrograms of the entire recording.
+  - Responses of the entire recording.
+  - Names of sounds and names of neurons.
 
-**Processing needed:**
-- Transforming the sound waveform into a 34-band spectrogram.
-- Choosing 73 neurons out of 119 based on their noise ratio.
-- Transforming the spike times of each repeat of each stimulus into PSTHs.
-- What's been done is explained in the source paper.
+**Information on:**
+- Identification of the 18 high-repetition sounds.
+- Identification of the 777 valid A1 neurons and 339 valid PEG neurons.
+
+**Processing Needed:**
+1. Remove non-valid neurons.
+2. Use NEMS0 functions to separate high (val) and low (est) repetition data.
+3. Retain only the sounds corresponding to the appropriate data from "est" and "val".
+4. Transform data into matrices.
+
 
 ## **To process using our scripts:**
 
