@@ -1,3 +1,10 @@
+*.pt
+*.pth
+*.tgz
+*.mat
+*.wav
+*.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

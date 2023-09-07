@@ -11,18 +11,10 @@ import torch.backends.cudnn
 #############
 
 def set_random_seed(seed):
-    # Python
-    random.seed(seed)
-
-    # PyTorch
-    torch.manual_seed(seed)  # use torch.manual_seed() to seed the RNG for all devices (both CPU and CUDA)
+    random.seed(seed)                           # Python
+    np.random.seed(seed)                        # NumPy
+    torch.manual_seed(seed)                     # PyTorch
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    # if int(torch.__version__.split('.')[1]) < 8:
-    #    torch.set_deterministic(True)  # for pytorch < 1.8
-    # else:
     torch.use_deterministic_algorithms(True)
-
-    # NumPy
-    np.random.seed(seed)

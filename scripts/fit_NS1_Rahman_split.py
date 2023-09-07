@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from datasets.NS1_DRC.NS1_DRC_Dataset import NS1Dataset
 from models.PSTH_models import *
-from models.interpret.metrics import correlation_coefficient
+from metrics.metrics import correlation_coefficient
 from utils.utils import set_random_seed
 import torch.utils
 
