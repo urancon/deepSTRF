@@ -1,0 +1,19 @@
+##### Core #####
+numpy
+torch
+torchaudio
+torchvision
+cupy
+scipy
+scikit-learn
+matplotlib
+
+##### Data #####
+h5py
+pandas
+
+##### Utilities #####
+tqdm
+
+##### Optional #####
+wandb

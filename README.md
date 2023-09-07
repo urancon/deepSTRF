@@ -1,12 +1,12 @@
 # deepSTRF
-*Fitting of auditory neural responses with a GRU-based, biologically-plausible deep neural network model.*
+*Fitting of auditory neural responses with a GRU-based, biologically-inspired deep neural network model.*
 ____
 
 ## Presentation
 
 TODO
 
-![placeholder.png](placeholder.png)
+![placeholder.png](docs/homepage_illustration.png)
 
 ## Installation
 
