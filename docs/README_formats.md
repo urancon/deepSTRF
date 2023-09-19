@@ -23,7 +23,7 @@ Our framework expects a specific dimensionality for each nature of tensor. To ke
 these conventions when building on the project.
 * *stimuli (spectrogram form)*: `(B, C=1, F, T)`
 * *predicted responses*: `(B, R=1, T, N)`
-* *observed responses (groundtruth)*: `(B, R, T, N)`
+* *observed responses (groundtruth)*: `(B, N, R, T)`
 
 Dataset classes and pytorch dataloaders are supposed to serve the data in the above formats; similarly, tensor reshapes
 should be made within the `forward()` method of model classes.
@@ -41,7 +41,7 @@ model = MyModelClass(args)
 
 B, R, T, F, C, N = 4, 10, 999, 64, 1, 1
 spectrogram = torch.rand(B, C, F, T)    # a batch of 4, 1-channel spectrograms of 49 frequency bands and 999 time-bins
-responses = torch.rand(B, R, T, N)      # a batch of 4 responses of 999 time-bins for 1 neuron, each with 4 repeats
+responses = torch.rand(B, N, R, T)      # a batch of 4 responses of 999 time-bins for 1 neuron, each with 4 repeats
 
 prediction = model(responses)           # shape: (B, 1, T, 1)
 

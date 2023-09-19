@@ -1,4 +1,4 @@
-# A Natural Sound Dataset 1 (NS1)
+# Natural Sound Dataset #1 (NS1)
 
 **Dataset Source:** [NS1 Dataset](https://osf.io/ayw2p/)
 
