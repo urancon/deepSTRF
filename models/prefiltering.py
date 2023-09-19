@@ -1,8 +1,11 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 from torch.nn.parameter import Parameter
+
+from models.scales import mel_to_Hz, Hz_to_mel, ERB, Greenwood, inverse_Greenwood
+from utils.filterbanks import FilterBank
+
 import matplotlib.pyplot as plt
 
 
@@ -98,9 +101,9 @@ class FrequencyDependentHighPassExponential(nn.Module):
         kernel_ON, kernel_OFF = kernel_ON.to(self.device), kernel_OFF.to(self.device)
 
         # convolve input spectrogram with the kernels
-        spectro_in = F.pad(spectro_in, pad=(self.K-1, 0), mode='replicate').to(self.device)            # (B, F, T)     --> (B, F, T+1)  # TODO: use padding or not ?
-        out_ON = F.conv1d(spectro_in, kernel_ON, stride=1, groups=self.F)                # (B, F, T+1)   --> (B, F, T)
-        out_OFF = F.conv1d(spectro_in, kernel_OFF, stride=1, groups=self.F)              # (B, F, T+1)   --> (B, F, T)
+        spectro_in = nn.functional.pad(spectro_in, pad=(self.K-1, 0), mode='replicate').to(self.device)            # (B, F, T)     --> (B, F, T+1)  # TODO: use padding or not ?
+        out_ON = nn.functional.conv1d(spectro_in, kernel_ON, stride=1, groups=self.F)                # (B, F, T+1)   --> (B, F, T)
+        out_OFF = nn.functional.conv1d(spectro_in, kernel_OFF, stride=1, groups=self.F)              # (B, F, T+1)   --> (B, F, T)
 
         # reshape output from a 1D back to 2D representation
         spectro_out = torch.stack([out_ON, out_OFF], dim=1)                              # (B, 2, F, T)
@@ -138,77 +141,166 @@ class FrequencyDependentHighPassExponential(nn.Module):
         plt.show()
 
 
-if __name__ == "__main__":
+class Willmore_Adaptation(nn.Module):
+    """
+    High-pass exponential filter with frequency dependent time constants.
 
-    from encoding.filterbanks import FilterBank
+    TODO: description
 
-    # create gammatone filterbank
-    n_freqs = 64
-    freq_range = (50, 20000)
-    filter_length = 301  # 301  # 1501
-    energy_window_length = 80  # 80  # 400
-    energy_stride = 40  # 40  # 200
+    Independently filters each frequency band of an input spectrogram along temporal dimension with a parametrized
+    exponential kernel:
+
+        kernel = [...; -Cwa²; -Cwa; -Cw; +1]    with    C=1/(... + a² + a + 1)
+                                                                so that the sum of the negative terms equals w
+
+    This filter effectively computes the difference between the current value of the signal in each frequency band and
+    an exponential average of its recent past.
+
+    # TODO: talk about the flipped version of minisobel and ON-OFF responses
+
+    The kernel is flat along frequency dimension, and we apply padding='same' to keep the same time dimension
+    As a result, takes a 1-channel tensor as input, and returns a 2-channel tensor as output.
+    input_spectrogram.shape = (B, 1, F, T)
+    output_spectrogram.shape = (B, 2, F, T)
+
+    """
+    def __init__(self, n_bands: int, init_a, init_w: float = 1., kernel_size: int = 499, learnable: bool = False):
+        """
+        init_a_vals: a 1D vector of 'a' parameters (related to the time constant of the kernel's exponential). The
+         higher the 'a', the higher the corresponding time constant of the exponential
+
+        # TODO: add some variance to w values ?
+
+        init_w_vals: a 1D vector of 'w' parameters (representing the weight given to the exponential average of the
+         signal in its recent past)
+
+        """
+        super(Willmore_Adaptation, self).__init__()
+
+        # general attributes
+        self.F = n_bands
+        self.K = kernel_size
+
+        # learnable parameters (one per freq.)
+        self.a = init_a if not learnable else Parameter(init_a)
+        self.w = torch.ones(self.F) * init_w if not learnable else Parameter(torch.ones(self.F) * init_w)
+
+    def build_kernel(self, device='cpu'):
+        """
+        TODO: description
+
+        Creates a parametrized kernel
+
+        """
+        C = 1 / (torch.outer(self.a, torch.ones(self.K - 1)) ** torch.arange(0, self.K - 1)).sum(dim=1)
+
+        # kernel begins with an exponential whose elements sum to -w, then finishes with +1
+        kernel = torch.ones(self.F, 1, self.K)
+        kernel[:, 0, 1:] = (-C * self.w).unsqueeze(-1) * (torch.outer(self.a, torch.ones(self.K - 1)) ** torch.arange(0, self.K - 1))
+        kernel = torch.flip(kernel, dims=(2,))
+
+        return kernel.to(device)
+
+    def forward(self, x):
+        """
+        Convolves each frequency band of input 1-channel spectrogram with filters and standardize the output.
+
+        :param spectro_in: shape is (B, C, F, T) with B=Batch, C=Channels=1 (raw spectrogram), F=#Frequency_bands, T=#Timesteps
+        :return: a tensor of shape (B, 2, F, T). First channel is for the ON response, second channel for the OFF one.
+        """
+        # build exponential kernel
+        kernel = self.build_kernel(x.device)
+
+        # convolve input spectrogram with the kernel
+        x = x.squeeze(1)                                                        # (B, 1, F, T)  --> (B, F, T)
+        x = nn.functional.pad(x, pad=(self.K-1, 0), mode='replicate')           # (B, F, T) --> (B, F, T+K-1)
+        x = nn.functional.conv1d(x, kernel, stride=1, groups=self.F)            # (B, F, T+K-1) --> (B, F, T)
+        x = torch.abs(x)                                                        # (B, F, T), half-wave rectification
+        x = x.unsqueeze(1)                                                      # (B, F, T) --> (B, 1, F, T)
+
+        return x
+
+    @staticmethod
+    def freq_to_tau(freqs):
+        """
+        Finds the associated midbrain neuron time constants (in ms) to a set of frequencies (in Hz)
+        For more details, see Willmore et al. (2016),
+            "Incorporating Midbrain Adaptation to Mean Sound Level Improves Models of Auditory Cortical Processing"
+
+        """
+        return 500. - 105. * torch.log10(freqs)
+
+    @staticmethod
+    def tau_to_a(time_constants, dt: float = 1):
+        """
+        Converts values of physical time constants (in ms) to corresponding 'a' parameters (adimensional), given a fixed
+        time step (in ms)
+
+        """
+        return torch.exp(- dt / time_constants)
+
+    def plot_kernels(self, frequency_bin=0):
+        kernel = self.build_kernels()
+        filter = kernel[frequency_bin, :].squeeze().detach().to(self.device).numpy()
+
+        plt.figure()
+        plt.stem(torch.arange(0, self.K, 1).numpy(), filter, 'r', markerfmt='ro', label='ON')
+        plt.legend()
+        plt.show()
+
+
+def get_filters(device):
+    '''
+    TODO: remove this function !!!
+
+    '''
+
+    print(f"\nselected device: {device}\n")
+
+    n_freqs = 34
+    freq_range = (500, 20000)
+    filter_length = 1501  # 301  # 1501
+    energy_window_length = 442  # 80  # 400
+    energy_stride = 221  # 40  # 200
     fbank = FilterBank(filter_type='gammatone', scale='mel',
                        freq_range=freq_range, n_filters=n_freqs,
                        sampling_rate=44100, filter_length=filter_length,
                        energy_window_length=energy_window_length, energy_stride=energy_stride)
 
-    # create minisobel initialized with a specific distribution of time constants
-    center_freqs = torch.flip(fbank.CFs, dims=(0,))
+    for param in fbank.parameters():
+        param.requires_grad_(False)
+    fbank.eval()
+    device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
+    fbank = fbank.to(device)
+
+    center_freqs = fbank.CFs
     time_constants = FrequencyDependentHighPassExponential.freq_to_tau(center_freqs)
-    a_vals = FrequencyDependentHighPassExponential.tau_to_a(time_constants)
-    a_vals[0] = 0.6
-    w_vals = torch.ones_like(a_vals) * 0.3
-    filters = FrequencyDependentHighPassExponential(init_a_vals=a_vals, init_w_vals=w_vals, kernel_size=10, learnable=True)
-    filters.plot_kernels()
+    a_vals = FrequencyDependentHighPassExponential.tau_to_a(time_constants, dt=5)
+    w_vals = torch.ones_like(a_vals) * 0.75
 
-    # sound stimulus
-    from scipy.io import wavfile
+    filters = FrequencyDependentHighPassExponential(init_a_vals=a_vals, init_w_vals=w_vals, kernel_size=200, learnable=True)
+    #filters.plot_kernels()
 
-    sample_rate, wave = wavfile.read('../datasets/Misc/dog_bark.wav')
-    wave = wave[0:55000, 0]  # keep only 1/2 channel of the stereo file. Shape: (n_samples, 2) --> (n_samples, )
-    plt.title('input signal waveform')
-    plt.plot(wave, color='black')
-    plt.xlabel('time (s)')
-    plt.ylabel('sound pressure amplitude')
-    plt.show()
+    return filters
 
-    wave = torch._cast_Float(torch.from_numpy(wave).unsqueeze(0).unsqueeze(0))
-    #spectro = fbank(wave)
 
-    spectro = torch.zeros(1, 64, 5000) # let's imagine dt=1ms, low channel (dim=1) indices are low center freqs, high channel indices are high center frequencies
-    spectro[:, :, 1500:3500] = 100.
-    #spectro[:, 0, 0] = 100
+def get_init_a(n_bands: int, f_min: float, f_max: float, scale: str, dt: int = 5):
 
-    #spectro = torch.ones(1, 64, 5000) * 100.
-    #spectro[:, :, 1200:2500] = 0.
+    # TODO: this piece of code is repeated in the FilterBank class --> make a function
+    if scale == 'mel':
+        min_cf = Hz_to_mel(torch.tensor(f_min))
+        max_cf = Hz_to_mel(torch.tensor(f_max))
+        CFs = torch.linspace(min_cf, max_cf, n_bands)
+        CFs = mel_to_Hz(CFs)
+    elif scale == 'greenwood':
+        min_cf = Greenwood(torch.tensor(f_min))
+        max_cf = Greenwood(torch.tensor(f_max))
+        CFs = torch.linspace(min_cf, max_cf, n_bands)
+        CFs = inverse_Greenwood(CFs)
+    else:
+        raise NotImplementedError(f"scale argument should be 'mel' or 'greenwood', not '{scale}'")
 
-    # prefilter spectrogram
-    spectro_filtered = filters(spectro)
-    # spectro_filtered = torch.abs(filters(spectro))
+    taus = FrequencyDependentHighPassExponential.freq_to_tau(CFs)
+    a = FrequencyDependentHighPassExponential.tau_to_a(taus, dt=dt)
 
-    ON_response = spectro_filtered[:, 0, :]
-    OFF_response = spectro_filtered[:, 1, :]
-
-    plt.subplots(3, 1)
-    plt.subplot(311)
-    plt.title('spectrogram energy')
-    plt.imshow(spectro.detach().squeeze().flip(0))
-    plt.xlabel('time')
-    plt.ylabel('frequency sub-band')
-    plt.colorbar()
-    plt.subplot(312)
-    plt.title('ON energy')
-    plt.imshow(ON_response.detach().squeeze().flip(0))
-    plt.xlabel('time')
-    plt.ylabel('frequency sub-band')
-    plt.colorbar()
-    plt.subplot(313)
-    plt.title('OFF energy')
-    plt.imshow(OFF_response.detach().squeeze().flip(0))
-    plt.xlabel('time')
-    plt.ylabel('frequency sub-band')
-    plt.colorbar()
-    plt.show()
-
-    print("ok")
+    return a
