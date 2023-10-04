@@ -30,7 +30,9 @@ class NS1_DRC_Dataset(Dataset):
     e.g.
         {"spectrograms": list,      # N_sounds * torch.tensor(1, F, T)
          "responses": list,         # N_sounds * torch.tensor(N_repeats, T)
-         "stim_type": list          # str, e.g. 'nat'/'drc'
+         "ccmaxes": list,           # N_sounds * float
+         "ttrcs" : list,            # N_sounds * float
+         "stim_type": list          # N_sounds * str, e.g. 'nat'/'drc'
         }
 
 
@@ -74,9 +76,21 @@ class NS1_DRC_Dataset(Dataset):
         stim_mask = [True if ((stim_type in stimuli) or (stim_type in stimuli)) else False for stim_type in stim_types]
         self.spectrograms = spectrograms[stim_mask]
         for neuron_idx in range(len(self.response_data)):
+
+            # responses
             neuron_responses = self.response_data[neuron_idx]['responses']
             neuron_responses = [neuron_responses[sound_idx] for sound_idx in range(N_sounds) if stim_mask[sound_idx]]
             self.response_data[neuron_idx]['responses'] = neuron_responses
+
+            # ccmaxes
+            neuron_ccmaxes = self.response_data[neuron_idx]['ccmaxes']
+            neuron_ccmaxes = [neuron_ccmaxes[sound_idx] for sound_idx in range(N_sounds) if stim_mask[sound_idx]]
+            self.response_data[neuron_idx]['ccmaxes'] = neuron_ccmaxes
+
+            # TTRCs
+            neuron_ttrcs = self.response_data[neuron_idx]['ttrcs']
+            neuron_ttrcs = [neuron_ttrcs[sound_idx] for sound_idx in range(N_sounds) if stim_mask[sound_idx]]
+            self.response_data[neuron_idx]['ttrcs'] = neuron_ttrcs
 
     def __len__(self):
         """
@@ -89,7 +103,9 @@ class NS1_DRC_Dataset(Dataset):
         spectro = self.spectrograms[sound_index]            # (1, F, T)
         neuron_data = self.response_data[self.I]            # select neuron according to current index
         responses = neuron_data['responses'][sound_index]   # (N_repeats, T)
-        return spectro, responses
+        ccmax = neuron_data['ccmaxes'][sound_index]
+        ttrc = neuron_data['ttrcs'][sound_index]
+        return spectro, responses, ccmax, ttrc
 
     def select_neuron(self, neuron_index):
         assert (neuron_index >= 0) and (neuron_index < self.N_neurons), "neuron_index must be positive and < to the # neurons"

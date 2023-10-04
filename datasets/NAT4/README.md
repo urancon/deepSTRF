@@ -49,12 +49,9 @@ pip install -e NEMS0
   * unzipped **"A1_Single_Sites"** + **"PEG_Single_Sites"** folders
   * **"A1_NAT4_ozgf.fs100.ch18.tgz"** + **"PEG_NAT4_ozgf.fs100.ch18.tgz"** archives
   * **"A1_pred_correlation.csv"** + **"PEG_pred_correlation.csv"** tables
-- Launch `NAT4_preprocessing.py`, which creates 4 files, named **"val_trials_a1.pt"**, **"val_trials_peg.pt"**, **"nat4_a1.pt"** and **"nat4_peg.pt"**. 
+- Launch `NAT4_preprocessing.py`, which creates 2 files, named **"nat4_a1.pt"** and **"nat4_peg.pt"**. 
 The latter two files constitute the final preprocessed dataset files.
 - The `NAT4Dataset()` class can be used with the path ti the **data/** folder  containing these two files.
-
-**Note**: `NAT4_preprocessing.py`consumes quite a lot of RAM. In case of a crash of the script, add comments to the 
-`__main__()` in order to execute each step separately.
 
 
 ## TODOs

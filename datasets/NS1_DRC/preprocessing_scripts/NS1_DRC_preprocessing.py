@@ -3,6 +3,8 @@ import numpy as np
 import torch
 from scipy.signal.windows import hann
 
+from metrics.metrics import compute_CCmax, compute_TTRC
+
 
 # Constants
 CCHALF_MAX_ITERS = 126
@@ -80,8 +82,23 @@ for i, good_neuron in enumerate(good_neurons):
             # save repeats
             drc_responses[i, j-20] = spike_matrix   # -20 = -N_nat_stims
 
+# response tensors
 nat_responses = torch.from_numpy(nat_responses)[:, :, :, :999].to(torch.float32)  # (N, S, R, T)
 drc_responses = torch.from_numpy(drc_responses)[:, :, :, :999].to(torch.float32)  # (N, S, R, T)
+
+# compute normalization factors for natural stimuli
+nat_r_temp = torch.flatten(nat_responses, start_dim=0, end_dim=1)   # (N*S, R, T)
+nat_ccmaxes = compute_CCmax(nat_r_temp, max_iters=126)              # (N*S,)
+nat_ccmaxes = torch.unflatten(nat_ccmaxes, 0, (73, 20))             # (N, S)
+nat_ttrcs = compute_TTRC(nat_r_temp)                                # (N*S,)
+nat_ttrcs = torch.unflatten(nat_ttrcs, 0, (73, 20))                 # (N, S)
+
+# compute normalization factors for DRC stimuli
+drc_r_temp = torch.flatten(drc_responses, start_dim=0, end_dim=1)   # (N*S, R, T)
+drc_ccmaxes = compute_CCmax(drc_r_temp, max_iters=126)              # (N*S,)
+drc_ccmaxes = torch.unflatten(drc_ccmaxes, 0, (73, 12))             # (N, S)
+drc_ttrcs = compute_TTRC(drc_r_temp)                                # (N*S,)
+drc_ttrcs = torch.unflatten(drc_ttrcs, 0, (73, 12))                 # (N, S)
 
 data2save = []
 for neuron_idx in range(VALID_NEURONS):
@@ -90,14 +107,19 @@ for neuron_idx in range(VALID_NEURONS):
     responses = []
     psth = []
     ccmaxes = []
+    ttrcs = []
     for sound_idx in range(NAT_SOUNDS + DRC_SOUNDS):
         if sound_idx < NAT_SOUNDS:
             responses.append(nat_responses[neuron_idx, sound_idx])
+            ccmaxes.append(nat_ccmaxes[neuron_idx, sound_idx])
+            ttrcs.append(nat_ttrcs[neuron_idx, sound_idx])
         else:
             responses.append(drc_responses[neuron_idx, sound_idx - NAT_SOUNDS])
+            ccmaxes.append(drc_ccmaxes[neuron_idx, sound_idx - NAT_SOUNDS])
+            ttrcs.append(drc_ttrcs[neuron_idx, sound_idx - NAT_SOUNDS])
 
-    neuron_dict = {'responses': responses}
+    neuron_dict = {'responses': responses, 'ccmaxes': ccmaxes, 'ttrcs': ttrcs}
     data2save.append(neuron_dict)
 
-torch.save(data2save, "../data/ns1_drc_responses.pt")
+torch.save(data2save, "../data/ns1_drc_responses_with_ccmax.pt")
 print("Dataset preprocessed & saved !")

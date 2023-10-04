@@ -104,6 +104,7 @@ class WehrDataset(Dataset):
 
         # iterate through neurons (1 file per neuron)
         neuron_index = 0
+        filelist = sorted(os.listdir(path))
         for file in sorted(os.listdir(path)):
 
             # preprocess selected neurons only
