@@ -91,7 +91,7 @@ def compute_TTRC(responses):
                 if i >= j:
                     pass
                 else:
-                    ttrc += correlation_coefficient(responses[:, i, :], responses[:, j, :], reduction=None)
+                    ttrc += correlation_coefficient(responses[:, i, :], responses[:, j, :], reduction='None')
         ttrc /= ((N_repeats*N_repeats - N_repeats)/2)
         return ttrc
 
@@ -126,7 +126,7 @@ def compute_CCmax(responses, max_iters=float('inf')):
         for i in range(n_iters):
             first_half, second_half = responses[:, half_sets[i], :], responses[:, half_sets[-1-i], :]  # mutually exclusive (itertools)
             psth_first_half, psth_second_half = first_half.mean(dim=1), second_half.mean(dim=1)
-            cchalf += correlation_coefficient(psth_first_half, psth_second_half)
+            cchalf += correlation_coefficient(psth_first_half, psth_second_half, reduction='None')
         cchalf /= n_iters
         ccmax = torch.sqrt(2 / (1 + 1 / torch.sqrt(torch.pow(cchalf, 2))))
         return ccmax
@@ -173,11 +173,12 @@ def sahani_performance(y_pred, y_gt, signal_frac: float = 1.):
     else:
         sig_pow = signal_frac * resp_pow                                    # (B, 1)
     perf = (resp_pow - error_pow) / sig_pow                                 # (B, 1)
+    perf = perf.squeeze(1)                                                  # (B,)
     return perf
 
 
 @torch.no_grad()
-def pennington_prediction_correlation(y_pred, y_gt):
+def pennington_prediction_correlation(y_pred, y_gt, precomputed_ttrc=None):
     """
     Computes the noise-corrected prediction correlation between a model's output y_pred (T coeffs, one for each
     time-bin), with R different repetitions of the ground-truth response (T coeffs)
@@ -189,7 +190,12 @@ def pennington_prediction_correlation(y_pred, y_gt):
     :return: a scalar
     """
     B, R, T = y_gt.shape
-    ttrc = compute_TTRC(y_gt)                                       # (B,)
+    if precomputed_ttrc is not None:
+        assert isinstance(precomputed_ttrc, torch.Tensor) and precomputed_ttrc.shape == torch.Size([B])
+        ttrc = precomputed_ttrc                                     # (B,)
+    else:
+        ttrc = compute_TTRC(y_gt)                                   # (B,)
+
     y_pred = y_pred.unsqueeze(1).repeat(1, R, 1)                    # (B, R, T)
     y_pred = y_pred.flatten(start_dim=0, end_dim=1)                 # (B*R, T) to treat repeats as batches
     y_gt = y_gt.flatten(start_dim=0, end_dim=1)                     # (B*R, T) idem
@@ -200,7 +206,7 @@ def pennington_prediction_correlation(y_pred, y_gt):
 
 
 @torch.no_grad()
-def normalized_correlation_coefficient(y_pred, y_gt, ccmax_iters=126):
+def normalized_correlation_coefficient(y_pred, y_gt, precomputed_ccmaxes=None, ccmax_iters=126):
     """
     Computes the average correlation coefficient between two batches of 1D vectors.
     It is computed independently for each pair in the batch, and then averaged over batch dimension.
@@ -211,8 +217,13 @@ def normalized_correlation_coefficient(y_pred, y_gt, ccmax_iters=126):
     :return: a scalar
     """
     B, R, T = y_gt.shape
+    if precomputed_ccmaxes is not None:
+        assert isinstance(precomputed_ccmaxes, torch.Tensor) and precomputed_ccmaxes.shape == torch.Size([B])
+        ccmax = precomputed_ccmaxes                                     # (B,)
+    else:
+        ccmax = compute_CCmax(y_gt, max_iters=ccmax_iters)              # (B,)
+
     mean_resp = y_gt.mean(dim=1)        # average response over repeats --> (B, T)
-    ccmax = compute_CCmax(y_gt, max_iters=ccmax_iters)                  # (B,)
     cc = correlation_coefficient(y_pred, mean_resp, reduction='None')   # (B,)
     cc_norm = cc / ccmax                                                # (B,)
     return cc_norm
