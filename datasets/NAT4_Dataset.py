@@ -72,6 +72,13 @@ class NAT4Dataset(Dataset):
         self.ccmaxes = data[f'{set}_ccmaxes'][neuron_indexes]       # (N_neurons, N_sounds)
         self.ttrcs = data[f'{set}_ttrcs'][neuron_indexes]           # (N_neurons, N_sounds)
 
+        # TODO: normalize the activity of each neuron by its maximum activation across all sounds
+        #  e.g., self.responses / self.responses.amax(dim=(1,2,3)).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+        #  careful though ! The prediction tries to match the gt, which is the mean over the responses for a given sound
+        #  --> better think about a unified psth normalization method accross datasets
+        #       (see 'Wehr_Dataset.py')
+        self.psth_max = self.responses.mean(dim=2).amax(dim=(1, 2))  # maximum psth (avg across repeats for one sound and one neuron) for further normalization
+
         # let us get rid of stimuli eliciting zero response/spike.
         # for each neuron, we will get the indexes of the stimuli that actually elicit nonzero responses
         # the output will be a list of N_neurons tensors of N_valid_sounds sound indexes (different for each neuron)

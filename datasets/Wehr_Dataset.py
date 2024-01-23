@@ -3,6 +3,8 @@ import scipy.io as sio
 import torch
 from torch.utils.data.dataset import Dataset
 
+from metrics.metrics import compute_CCmax, compute_TTRC
+
 
 WEHR_VALID_NEURONS = (0, 3, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24)
 
@@ -104,7 +106,6 @@ class WehrDataset(Dataset):
 
         # iterate through neurons (1 file per neuron)
         neuron_index = 0
-        filelist = sorted(os.listdir(path))
         for file in sorted(os.listdir(path)):
 
             # preprocess selected neurons only
@@ -117,6 +118,8 @@ class WehrDataset(Dataset):
                 n_sounds = single_neuron_data['spectros_to_save'].size
                 spectrograms = []
                 responses = []
+                ccmaxes = []
+                ttrcs = []
                 stim_type = []
                 for sound_index in range(n_sounds):
 
@@ -131,8 +134,14 @@ class WehrDataset(Dataset):
                     spectro = spectro[:, :n_timebins]   # remove excess time bins in spectrogram
                     spectro = spectro.unsqueeze(0)      # add channel dimension
 
+                    # compute normalization factors (noise)
+                    ccmax = compute_CCmax(response.unsqueeze(0), max_iters=126)
+                    ttrc = compute_TTRC(response.unsqueeze(0))
+
                     spectrograms.append(spectro.float())
                     responses.append(response.float())
+                    ccmaxes.append(ccmax.item())
+                    ttrcs.append(ttrc.item())
                     stim_type.append('natural')  # TODO: pure tones stimuli
 
                 if neuron_index == 12:
@@ -142,13 +151,15 @@ class WehrDataset(Dataset):
                     spectrograms[10] = spectrograms[10][:, :, :neuron12_clip10_T//2]
                     # response  #11 of neuron #12 is out of the distribution (possible recording problem)
                     responses.pop(11)
+                    ccmaxes.pop(11)
+                    ttrcs.pop(11)
                     spectrograms.pop(11)
                     stim_type.pop(11)
 
                 # normalize responses to have a min of 0 and a max of 1 for the neuron
                 min_resp = float('inf')
                 max_resp = -float('inf')
-                for response in responses:                  # find min and max valuesover this neuron
+                for response in responses:                  # find min and max values over this neuron
                     if torch.min(response) < min_resp:
                         min_resp = torch.min(response)
                     if torch.max(response) > max_resp:
@@ -158,7 +169,9 @@ class WehrDataset(Dataset):
 
                 neuron_dict = {"spectrograms": spectrograms,
                                "responses": responses,
-                               "stim_type": stim_type}
+                               "stim_type": stim_type,
+                               "ccmaxes": ccmaxes,
+                               "ttrcs": ttrcs}
                 self.data.append(neuron_dict)
 
             # filter out unwanted neurons
@@ -195,7 +208,9 @@ class WehrDataset(Dataset):
         neuron_data = self.data[self.I]                         # select neuron according to current index
         spectro = neuron_data['spectrograms'][sound_index]      # (1, F, T)
         response = neuron_data['responses'][sound_index]        # (N_repeats, T)
-        return spectro, response
+        ccmax = neuron_data['ccmaxes'][sound_index]
+        ttrc = neuron_data['ttrcs'][sound_index]
+        return spectro, response, ccmax, ttrc
 
     def select_neuron(self, neuron_index):
         assert (neuron_index >= 0) and (neuron_index < self.N_neurons), "neuron_index must be positive and < to the # neurons"
