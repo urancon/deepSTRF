@@ -5,7 +5,49 @@ This file illustrates how to use the library, in particular: datasets, models an
 
 ## Datasets
 
+Our library provide preprocessed and ready to use electrophysiology datasets ! How they function is described in the 
+[note on datasets](README_datasets.md). Here is a small usage example to prepare data for a specific neuron:
 
+```python
+import deepSTRF
+from deepSTRF.datasets.Wehr_Dataset import WehrDataset, WEHR_NEURONS_SPLIT_NATURAL, WEHR_VALID_NEURONS
+
+# instanciate dataset with all neurons, or all valid ones...
+timestep = 5  # ms
+path = 'deepSTRF/datasets/CRCNS_AC1_Wehr/data/'
+dataset = WehrDataset(path, WEHR_VALID_NEURONS, dt=timestep)
+
+# ...then choose the specific neuron you want
+target_nrn_idx = 15
+dataset.select(target_nrn_idx)
+```
+or alternatively:
+```python
+# instanciate dataset with the target neuron directly
+timestep = 5  # ms
+target_nrn_idx = 15
+path = 'deepSTRF/datasets/CRCNS_AC1_Wehr/data/'
+dataset = WehrDataset(path, (target_nrn_idx,), dt=timestep)
+dataset.select(0)  # only one neuron is loaded in the dataset class, so it has index #0
+```
+
+From there, you can split the dataset according to your needs (methods might slightly change across datasets):
+```python
+import torch
+from torch.utils.data import DataLoader
+
+# splitting
+train_set, valid_set, test_set = torch.utils.data.random_split(dataset, WEHR_NEURONS_SPLIT_NATURAL[target_nrn_idx])
+batch_size = 1
+train_dataloader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
+valid_dataloader = DataLoader(valid_set, batch_size=1, shuffle=False)
+test_dataloader = DataLoader(test_set, batch_size=1, shuffle=False)
+```
+and then train:
+```python
+for spectrogram, responses, ccmax, ttrc in train_dataloader:
+    ...  # do your things
+```
 
 
 ## Models
@@ -23,7 +65,7 @@ Important models include:
 Here is a minimal example of how these classes can be imported and used:
 ```python
 import deepSTRF
-model = deepSTRF.model_zoo.LinearStrfModel(T=20, F=64)
+model = deepSTRF.model_zoo.Linear(T=20, F=64)
 
 # let's assume some dummy responses of an hypothetical neuron, and the corresponding model predictions
 B, C, F, T = 4, 1, 18, 999

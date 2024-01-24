@@ -8,7 +8,7 @@ ____
 ## Presentation
 
 This repository is associated with the paper "[A general theoretical framework unifying the adaptive, transient and 
-sustained properties of ON and OFF auditory neural responses](BIOARXIV_URL)" by Rançon et al.
+sustained properties of ON and OFF auditory neural responses](https://www.biorxiv.org/content/early/2024/01/20/2024.01.17.576002)" by Rançon et al.
 
 It contains major codes for result reproduction. In particular, it provides several publicly available datasets that in
 convenient **PyTorch** classes, as well as ready-to-deploy computational models and the AdapTrans model of auditory 
@@ -27,20 +27,20 @@ A ready-to-deploy PyTorch model class will have to be provided to support your c
 researchers.
 
 
-| **Dataset**  | **Model** | Ranking | **Note**       | **Parameters** | **Perfs <br/>(CCraw / CCnorm) [%]** | **Paper**                                                                                           | 
-|--------------|-----------|:-------:|----------------|----------------|-------------------------------------|-----------------------------------------------------------------------------------------------------|
-| **NS1**      | 2D-CNN    |   🥇    | uses AdapTrans | 37,276         | 43.7 / 65.3                         | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |          
-|              |           |   🥈    |                |                |                                     |                                                                                                     |          
-|              |           |   🥉    |                |                |                                     |                                                                                                     |
-| **Wehr**     | NRF       |   🥇    | uses AdapTrans | 40,261         | 26.0 / 26.3                         | [Harper et al.](DOI:10.1371/journal.pcbi.1005113)                                                   |          
-|              |           |   🥈    |                |                |                                     |                                                                                                     |          
-|              |           |   🥉    |                |                |                                     |                                                                                                     |
-| **NAT4 A1**  | 2D-CNN    |   🥇    | uses AdapTrans | 15,748         | 32.6 / 56.9                         | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
-|              |           |   🥈    |                |                |                                     |                                                                                                     |          
-|              |           |   🥉    |                |                |                                     |                                                                                                     |
-| **NAT4 PEG** | 2D-CNN    |   🥇    | uses AdapTrans | 15,748         | 37.2 / 62.4                         | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
-|              |           |   🥈    |                |                |                                     |                                                                                                     |
-|              |           |   🥉    |                |                |                                     |                                                                                                     |
+| **Dataset**  | **Model** | Ranking | **Note**                                   | **Parameters** | **Perfs <br/>(CCraw / CCnorm) [%]** | **Paper**                                                                                           | 
+|--------------|-----------|:-------:|--------------------------------------------|----------------|-------------------------------------|-----------------------------------------------------------------------------------------------------|
+| **NS1**      | 2D-CNN    |   🥇    | uses [AdapTrans](docs/README_AdapTrans.md) | 37,276         | 43.7 / 65.3                         | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |          
+|              |           |   🥈    |                                            |                |                                     |                                                                                                     |          
+|              |           |   🥉    |                                            |                |                                     |                                                                                                     |
+| **Wehr**     | NRF       |   🥇    | uses [AdapTrans](docs/README_AdapTrans.md) | 40,261         | 26.0 / 26.3                         | [Harper et al.](DOI:10.1371/journal.pcbi.1005113)                                                   |          
+|              |           |   🥈    |                                            |                |                                     |                                                                                                     |          
+|              |           |   🥉    |                                            |                |                                     |                                                                                                     |
+| **NAT4 A1**  | 2D-CNN    |   🥇    | uses [AdapTrans](docs/README_AdapTrans.md) | 15,748         | 32.6 / 56.9                         | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|              |           |   🥈    |                                            |                |                                     |                                                                                                     |          
+|              |           |   🥉    |                                            |                |                                     |                                                                                                     |
+| **NAT4 PEG** | 2D-CNN    |   🥇    | uses [AdapTrans](docs/README_AdapTrans.md) | 15,748         | 37.2 / 62.4                         | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|              |           |   🥈    |                                            |                |                                     |                                                                                                     |
+|              |           |   🥉    |                                            |                |                                     |                                                                                                     |
 
 
 ## Installation
