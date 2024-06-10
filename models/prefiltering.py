@@ -57,6 +57,10 @@ class Willmore_Adaptation(nn.Module):
     """
     High-pass exponential filter with frequency dependent time constants.
 
+    See paper:
+        Willmore et al. (2016), "Incorporating Midbrain Adaptation to Mean Sound Level Improves Models of Auditory
+        Cortical Processing", J.Neurosci., https://doi.org/10.1523/JNEUROSCI.2441-15.2016
+
     Independently filters each frequency band of an input spectrogram along temporal dimension with a parametrized
     exponential kernel:
 
@@ -141,7 +145,7 @@ class Willmore_Adaptation(nn.Module):
         out = F.conv1d(spectro_in, kernel, stride=1, groups=self.F)                # (B, F, T+1)   --> (B, F, T)
 
         # full-wave rectification
-        out = torch.abs(out)
+        out = torch.relu(out)
 
         # reshape output from a 1D back to 2D representation
         spectro_out = torch.unsqueeze(out, dim=1)                                        # (B, 1, F, T)
@@ -160,9 +164,13 @@ class Willmore_Adaptation(nn.Module):
 
 class AdapTrans(nn.Module):
     """
-    High-pass exponential filter with frequency dependent time constants.
+    Computes adapted ON and OFF spectrograms, through high-pass exponential filters with frequency dependent time
+    constants.
 
-    TODO: ref of our paper
+    See paper:
+        Rançon et al. (2024), "A general theoretical framework unifying the adaptive, transient and sustained properties
+        of ON and OFF auditory responses", BioRxiv, 10.1101/2024.01.17.576002
+
 
     Independently filters each frequency band of an input spectrogram along temporal dimension with a parametrized
     exponential kernel:
@@ -172,8 +180,6 @@ class AdapTrans(nn.Module):
 
     This filter effectively computes the difference between the current value of the signal in each frequency band and
     an exponential average of its recent past.
-
-    # TODO: talk about the flipped version of minisobel and ON-OFF responses
 
     The kernel is flat along frequency dimension, and we apply padding='same' to keep the same time dimension
     As a result, takes a 1-channel tensor as input, and returns a 2-channel tensor as output.
@@ -298,7 +304,7 @@ class AdapTrans(nn.Module):
         # reshape output from a 1D back to 2D representation
         spectro_out = torch.stack([out_ON, out_OFF], dim=1)                              # (B, 2, F, T)
 
-        return spectro_out
+        return torch.relu(spectro_out)
 
     def get_a(self):
         a_on = 1 / (1 + self.d_on.cpu().detach().pow(2))
