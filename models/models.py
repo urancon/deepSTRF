@@ -51,7 +51,7 @@ class AudioResponseModel(nn.Module):
                 self.CF_scale = prefiltering['scale']           # 'mel'
                 cf = get_CFs(self.fmin, self.fmax, self.F, self.CF_scale)
                 tau = freq_to_tau(cf)
-                a = tau_to_a(tau)
+                a = tau_to_a(tau, dt=self.dt)
                 w = torch.ones_like(a) * 0.75
                 K = round(3 * max(tau).item()) + 1
                 self.prefiltering_block = AdapTrans(init_a_vals=a, init_w_vals=w, kernel_size=K, learnable=True)
@@ -66,17 +66,17 @@ class AudioResponseModel(nn.Module):
                 self.CF_scale = prefiltering['scale']
                 cf = get_CFs(self.fmin, self.fmax, self.F, self.CF_scale)
                 tau = freq_to_tau(cf)
-                a = tau_to_a(tau)
+                a = tau_to_a(tau, dt=self.dt)
                 K = round(3 * max(tau).item()) + 1
                 self.prefiltering_block = Willmore_Adaptation(init_a_vals=a, kernel_size=K)
                 self.C_in = 2
 
             else:
-                raise NotImplementedError(f"Unkown prefiltering {prefiltering_type}. Currently supported spectrogram prefiltering are 'adaptrans' and 'willmore'.")
+                raise NotImplementedError(f"Unknown prefiltering {prefiltering_type}. Currently supported spectrogram prefiltering are 'adaptrans' and 'willmore'.")
 
     def forward(self, spectrogram):
         # takes in a spectrogram of.shape (B, 1, F, T)
-        # outputs a population activity over time of.shape (B, N, T)
+        # outputs a population activity over time of.shape (B, N, R=1, T)
         raise NotImplementedError
 
     def detach(self):
@@ -102,7 +102,6 @@ class AudioResponseModel(nn.Module):
 #
 #
 
-# TODO: harmonize output to be (B, 1, N, T) for all models
 # TODO: for all models but L, allow to choose the output nonlinearity, e.g. a 4-parameter sigmoid ?
 
 
@@ -133,7 +132,8 @@ class Linear(AudioResponseModel):
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
         y = self.prefiltering_block(x) if self.prefiltering else x
-        return self.conv(y).squeeze(1).squeeze(1)
+        y = self.conv(y)
+        return y
 
     def STRFs(self, polarity='ON'):
 
@@ -186,7 +186,8 @@ class LinearNonlinear(AudioResponseModel):
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
         y = self.prefiltering_block(x) if self.prefiltering else x
-        return self.activation(self.conv(y)).squeeze(1).squeeze(1)
+        y = self.activation(self.conv(y))
+        return y
 
     def STRFs(self, polarity='ON'):
 
@@ -251,15 +252,17 @@ class NetworkReceptiveField(AudioResponseModel):
                     nn.BatchNorm2d(self.H),
                     nn.Sigmoid(),
                     nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
-                    nn.Sigmoid(),
                 )
             else:
                 raise NotImplementedError(f"Unknown parameterization {parameterization_type}. Currently supported STRF parameterizations are 'DCLS'.")
 
+        self.activation = nn.Sigmoid()
+
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
         y = self.prefiltering_block(x) if self.prefiltering else x
-        return self.convs(y).squeeze(1).squeeze(1)
+        y = self.activation(self.convs(y))
+        return y
 
     def STRFs(self, hidden_idx=0, polarity='ON'):
 
@@ -334,7 +337,8 @@ class DNet(AudioResponseModel):
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
         y = self.prefiltering_block(x) if self.prefiltering else x
-        return self.convs(y).squeeze(1).squeeze(1)
+        y = self.convs(y)
+        return y
 
     def STRFs(self, hidden_idx=0, polarity='ON'):
 
@@ -400,9 +404,10 @@ class ConvNet2D(AudioResponseModel):
         self.fc = nn.Sequential(
             nn.Linear(in_features=self.C * F_down, out_features=self.H),
             nn.LeakyReLU(0.1),
-            nn.Linear(in_features=self.H, out_features=self.N_out),
-            layers.ParametricSigmoid(self.N_out, False)
+            nn.Linear(in_features=self.H, out_features=self.O),
         )
+
+        self.activation = nn.Sigmoid()  # layers.ParametricSigmoid(self.O, False)
 
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
@@ -410,8 +415,9 @@ class ConvNet2D(AudioResponseModel):
         y = self.convs(y)                       # (B, C, F_down, T)
         y = y.flatten(start_dim=1, end_dim=2)   # (B, C*F_down, T)
         y = y.permute(0, 2, 1)                  # (B, T, C*F_down)
-        y = self.fc(y)                          # (B, T, N)
-        return y.squeeze(2)
+        y = self.activation(self.fc(y))         # (B, T, N)
+        y = y.permute(0, 2, 1).unsqueeze(2)     # (B, N, R=1, T)
+        return y
 
     def STRFs(self, hidden_idx=0, polarity='ON'):
         # TODO: define and implement a STRF extraction method for models with small convs

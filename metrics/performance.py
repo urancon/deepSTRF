@@ -26,18 +26,18 @@ def statistical_power(y):
 def correlation_coefficient(y_pred, y_gt, reduction="mean"):
     """
     Computes the average correlation coefficient between two batches of tensors, whose last dimension is time.
-    It is computed independently for each pair in the batch, and then averaged over all but the temporal dimension.
+    It is computed independently for each pair in the batch, and then averaged over the batch dimension.
 
-    :param y_pred: (*, T)
-    :param y_gt: (*, T)
-    :return: (*,) or a scalar
+    :param y_pred: (B, *, T)
+    :param y_gt: (B, *, T)
+    :return: (B, *) or (*,)
     """
-    cov = covariance(y_pred, y_gt)              # (*,)
-    var_pred = torch.var(y_pred, dim=-1)        # (*,)
-    var_gt = torch.var(y_gt, dim=-1)            # (*,)
-    cc = cov / torch.sqrt(var_pred * var_gt)    # (*,)
+    cov = covariance(y_pred, y_gt)              # (B, *)
+    var_pred = torch.var(y_pred, dim=-1)        # (B, *)
+    var_gt = torch.var(y_gt, dim=-1)            # (B, *)
+    cc = cov / torch.sqrt(var_pred * var_gt)    # (B, *)
     if reduction == 'mean':
-        cc = torch.mean(cc)  # scalar
+        cc = torch.mean(cc, dim=0)  # avg over batch dimension --> (*,)
     return cc
 
 
@@ -78,6 +78,8 @@ def compute_TTRC(responses):
         dividing by a factor of 1. won't do anything. So in this case, the raw and normalized correlation coefficients
         are equal.
 
+    TODO: adapt for (B, N, R, T) --> output (B, N,)
+
     :param responses:  (B, R, T) = (batches, N_repeats, N_timebins)
     return: (B, )
     """
@@ -108,6 +110,8 @@ def compute_CCmax(responses, max_iters=float('inf')):
         trial with itself is a perfect 1. However, a CCmax of 1 is the worst case scenario for normalization purposes, as
         dividing by a factor of 1. won't do anything. So in this case, the raw and normalized correlation coefficients
         are equal.
+
+    TODO: adapt for (B, N, R, T)  --> output (B, N)
 
     :param responses: (B, R, T) = (Batch, N_repeats, N_timebins)
     :param max_iters: int, the number of combinations of trials to compute the ccmax
@@ -206,36 +210,44 @@ def pennington_prediction_correlation(y_pred, y_gt, precomputed_ttrc=None):
 
 
 @torch.no_grad()
-def normalized_correlation_coefficient(y_pred, y_gt, method='schoppe', precomputed_ccmaxes=None, ccmax_iters=126):
+def normalized_correlation_coefficient(y_pred, y_gt, method='schoppe', precomputed_ccmaxes=None, ccmax_iters=126, reduction="mean"):
     """
     Computes the normalized correlation coefficient between two batches of 1D vectors.
     It is computed independently for each pair in the batch, and then averaged over batch dimension.
 
-    :param y_pred: (B, T)
-    :param y_gt: (B, R, T)
+    :param y_pred: (B, N, T)
+    :param y_gt: (B, N, R, T)
     :param method: 'schoppe' or 'hsu'
-    :param precomputed_ccmaxes: (B,) tensor to skip ccmax calculation
+    :param precomputed_ccmaxes: (B, N) tensor to skip ccmax calculation
     :param ccmax_iters: int, the number of combinations of trials to compute the ccmax
-    :return: a scalar
+    :return: (B, N) or (N,)
     """
-    B, R, T = y_gt.shape
-    mean_resp = y_gt.mean(dim=1)  # (B, T)  avg response over repeats
+    B, N, R, T = y_gt.shape
+    mean_resp = y_gt.mean(dim=-2)  # (B, N, T)  avg response of each neuron over repeats
 
-    if method == 'schoppe':
-        SP = signal_power(y_gt)                                                     # (B,)
-        cc_norm = covariance(y_pred, mean_resp) / (y_pred.var() * SP).sqrt()     # (B,)
-
-    elif method == 'hsu':
-        if precomputed_ccmaxes is not None:
-            assert isinstance(precomputed_ccmaxes, torch.Tensor) and precomputed_ccmaxes.shape == torch.Size([B])
-            ccmax = precomputed_ccmaxes                                             # (B,)
-        else:
-            ccmax = compute_CCmax(y_gt, max_iters=ccmax_iters)                      # (B,)
-        cc = correlation_coefficient(y_pred, mean_resp, reduction='None')           # (B,)
-        cc_norm = cc / ccmax                                                        # (B,)
+    # in case of only 1 repeat, do not overestimate ccnorm, take worst case scenario in terms of model perfs
+    if R == 1:
+        return correlation_coefficient(y_pred, mean_resp)
 
     else:
-        raise ValueError(f"received invalid method {method}, please try 'schoppe' or 'hsu'.")
+        if method == 'schoppe':
+            SP = signal_power(y_gt)                                                     # (B, N)
+            cc_norm = covariance(y_pred, mean_resp) / (y_pred.var(dim=-1) * SP).sqrt()  # (B, N)
+
+        elif method == 'hsu':
+            if precomputed_ccmaxes is not None:
+                assert isinstance(precomputed_ccmaxes, torch.Tensor) and precomputed_ccmaxes.shape == torch.Size([B, N])
+                ccmax = precomputed_ccmaxes                                             # (B, N)
+            else:
+                ccmax = compute_CCmax(y_gt, max_iters=ccmax_iters)                      # (B, N)
+            cc = correlation_coefficient(y_pred, mean_resp, reduction='None')           # (B, N)
+            cc_norm = cc / ccmax                                                        # (B, N)
+
+        else:
+            raise ValueError(f"received invalid method {method}, please try 'schoppe' or 'hsu'.")
+
+        if reduction == 'mean':
+            cc_norm = torch.mean(cc_norm, dim=0)  # avg over batch dimension --> (*,)
 
     return cc_norm
 
@@ -250,13 +262,13 @@ def signal_power(responses):
     Computes the signal power (SP) as first introduced in Sahani and Linden (2003),
     and reminded in Schoppe et al. (2016)
 
-    :param responses: (B, R, T)
-    :return: (B,)
+    :param responses: (B, N, R, T)
+    :return: (B, N)
     """
-    B, R, T = responses.shape
-    mean_response = responses.mean(dim=1)       # avg across trials
+    B, N, R, T = responses.shape
+    mean_response = responses.mean(dim=-2)       # avg across trials
     TP = total_power(responses)
-    SP = (1/(R-1)) * (R * mean_response.var() - TP)
+    SP = (1/(R-1)) * (R * mean_response.var(dim=-1) - TP)
     return SP
 
 
@@ -266,9 +278,46 @@ def total_power(responses):
     Computes the total power (TP) as first introduced in Sahani and Linden (2003),
     and reminded in Schoppe et al. (2016)
 
-    :param responses: (B, R, T)
-    :return: (B,)
+    :param responses: (B, N, R, T)
+    :return: (B, N)
     """
-    B, R, T = responses.shape
-    TP = (1 / R) * responses.var(dim=-1).sum(dim=1)
+    B, N, R, T = responses.shape
+    TP = (1 / R) * responses.var(dim=-1).sum(dim=-1)
     return TP
+
+
+########################################################
+# SOME UTILITIES
+########################################################
+
+def fill_missing_repeats(responses_list):
+    """
+    given a list of S response tensors of shapes (B, N, R, T) with different Rs, and therefore missing repeats, fill
+    missing data so that SP is overrestimated and therefore CCnorm underestimated.
+
+    """
+    # first check whether all response tensors have the same number of repeats or not
+    Rs = [x.shape[-2] for x in responses_list]
+    fill = Rs.count(Rs[0]) != len(Rs)
+
+    # if they are all the same, no need to fill any missing repeat: return original list
+    if fill == False:
+        return responses_list
+
+    else:
+
+        device = responses_list[0].device
+        Rmax = max([x.shape[-2] for x in responses_list])           # S * (B, N, R, T)
+        mean_responses = [x.mean(dim=-2) for x in responses_list]   # S * (B, N, T)
+
+        filled_responses = []
+        for resp, mean_resp in zip(responses_list, mean_responses):
+            B, N, R, T = resp.shape
+            filled_resp = torch.zeros(B, N, Rmax, T).to(device)
+            filled_resp[:, :, :R, :] = resp
+            filled_resp[:, :, R:, :] = mean_resp
+            filled_responses.append(filled_resp)
+
+        return filled_responses
+
+
