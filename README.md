@@ -1,14 +1,19 @@
 # deepSTRF
 *A PyTorch-based library and benchmark for fitting auditory neural responses with deep neural network models*
 
+![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg) ![Python 3.10](https://img.shields.io/badge/Python-3.10-green)
+
 Work in progress - Jan. 2025
+
+**Contact:** Ulysse Rançon @[urancon](https://github.com/urancon/)
 
 ____
 
 ## 🧠 Presentation
 
-This repository is associated with the paper "[A general theoretical framework unifying the adaptive, transient and 
-sustained properties of ON and OFF auditory neural responses](https://www.biorxiv.org/content/early/2024/01/20/2024.01.17.576002)" by Rançon et al.
+This repository is associated with the papers "[A general theoretical framework unifying the adaptive, transient and 
+sustained properties of ON and OFF auditory neural responses](https://doi.org/10.1371/journal.pcbi.1012288)" and 
+"[Temporal recurrence as a general mechanism to explain neural responses in the auditory system](https://www.biorxiv.org/content/early/2025/01/09/2025.01.08.631909)" by Rançon et al.
 
 It contains major codes for result reproduction. In particular, it provides several publicly available datasets that in
 convenient **PyTorch** classes, as well as ready-to-deploy computational models and the AdapTrans model of auditory 
@@ -155,7 +160,7 @@ This code repository is at the core of two of our papers; if you found this repo
 
 **Preprint:**
 ```text
-@article {Rancon2025statenet,
+@article {rancon2025statenet,
     author = {Rançon, Ulysse and Masquelier, Timothée and Cottereau, Benoit R.},
     title = {Temporal recurrence as a general mechanism to explain neural responses in the auditory system},
     year = {2025},
@@ -178,5 +183,7 @@ This code repository is at the core of two of our papers; if you found this repo
 - finish some doc (README + docstring)
 - beta testing
 - add AdapTrans + Transformer
-- add other audio datasets (zebra finch ? ferret ?)
+- add other audio datasets
+  - zebra finch ?
+  - ferret ?
 - ...
