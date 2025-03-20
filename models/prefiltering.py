@@ -5,8 +5,7 @@ from torch import Tensor
 from torch.nn.parameter import Parameter
 import matplotlib.pyplot as plt
 
-from models.scales import mel_to_Hz, Hz_to_mel, ERB, Greenwood, inverse_Greenwood
-from utils.filterbanks import FilterBank
+from models.scales import mel_to_Hz, Hz_to_mel, Greenwood, inverse_Greenwood
 
 
 def get_CFs(min_freq, max_freq, n_freqs, scale):
