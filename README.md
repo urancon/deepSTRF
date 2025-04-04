@@ -1,9 +1,9 @@
 # deepSTRF
-*A PyTorch-based library and benchmark for fitting auditory neural responses with deep neural network models*
+*A PyTorch-based library and benchmark for fitting sensory neural responses with deep neural network models*
 
 ![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg) ![Python 3.10](https://img.shields.io/badge/Python-3.10-green)
 
-Work in progress - Jan. 2025
+Work in progress - Mar. 2025
 
 **Contact:** Ulysse Rançon @[urancon](https://github.com/urancon/)
 
@@ -128,10 +128,10 @@ repository (we would be glad to help you doing so) or make your own with a simil
 
 This work was made possible by the generous publication of several electrophysiology datasets, mainly hosted on the [CRCNS website](https://crcns.org/). If you find them useful
 for your research or use them, please do not forget to cite their corresponding article:
-* [NS1](datasets/NS1_DRC/README.md)
-* [NAT4](datasets/NAT4/README.md)
+* [NS1](datasets/audio/NS1_DRC/README.md)
+* [NAT4](datasets/audio/NAT4/README.md)
 * [CRCNS AA1](datasets/Asari/README.md)
-* [CRCNS AC1 - Wehr](datasets/CRCNS_AC1_Wehr/README.md)
+* [CRCNS AC1 - Wehr](datasets/audio/CRCNS_AC1_Wehr/README.md)
 * [CRCNS AC1 - Asari (MGB + A1)](datasets/Asari/README.md)
 
 
