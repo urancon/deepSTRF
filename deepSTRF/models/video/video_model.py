@@ -1,9 +1,7 @@
 import torch
-import torch.nn as nn
-import torch.functional as F
 from torch.nn.parameter import Parameter
 
-from models.neural_model import NeuralModel
+from deepSTRF.models.neural_model import NeuralModel
 
 
 class VideoNeuralModel(NeuralModel):

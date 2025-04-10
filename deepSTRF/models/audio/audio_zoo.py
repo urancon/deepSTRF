@@ -4,11 +4,11 @@ import torch.nn.functional
 
 from .audio_model import AudioNeuralModel
 
-import models.layers as layers
-from models.dependencies.s4 import S4Block
-from models.dependencies.lmu import LMU
-from models.dependencies.mamba import MambaBlock, MambaConfig
-from models.prefiltering import AdapTrans
+import deepSTRF.models.layers as layers
+from deepSTRF.models.dependencies.s4 import S4Block
+from deepSTRF.models.dependencies.lmu import LMU
+from deepSTRF.models.dependencies.mamba import MambaBlock, MambaConfig
+from deepSTRF.models.prefiltering import AdapTrans
 
 
 # TODO: for all models but L, allow to choose the output nonlinearity, e.g. a 4-parameter sigmoid ?

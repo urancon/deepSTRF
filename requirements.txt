@@ -17,3 +17,7 @@ tqdm
 
 ##### Optional #####
 wandb
+
+##### Documentation #####
+sphinx-rtd-theme
+sphinx

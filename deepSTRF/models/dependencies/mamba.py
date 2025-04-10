@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.dependencies.pscan import pscan
+from deepSTRF.models.dependencies.pscan import pscan
 
 """
 

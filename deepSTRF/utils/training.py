@@ -1,12 +1,12 @@
 import os
-import io
 import random
 import torch
 import numpy as np
 import torch.backends.cudnn
 from torch.utils.data import DataLoader
 
-from metrics.performance import *
+from deepSTRF.metrics import correlation_coefficient, normalized_correlation_coefficient
+from deepSTRF.metrics.performance import fill_missing_repeats
 
 
 #############

@@ -1,11 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
 from torch.nn.parameter import Parameter
 import matplotlib.pyplot as plt
 
-from models.scales import mel_to_Hz, Hz_to_mel, Greenwood, inverse_Greenwood
+from deepSTRF.models.scales import mel_to_Hz, Hz_to_mel, Greenwood, inverse_Greenwood
 
 
 def get_CFs(min_freq, max_freq, n_freqs, scale):

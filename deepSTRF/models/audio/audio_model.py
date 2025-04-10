@@ -1,9 +1,8 @@
 import torch
 from torch.nn.parameter import Parameter
 
-from models.neural_model import NeuralModel
-
-from models.prefiltering import get_CFs, freq_to_tau, tau_to_a, AdapTrans, Willmore_Adaptation
+from deepSTRF.models.neural_model import NeuralModel
+from deepSTRF.models.prefiltering import get_CFs, freq_to_tau, tau_to_a, AdapTrans, Willmore_Adaptation
 
 
 class AudioNeuralModel(NeuralModel):

@@ -1,1 +1,0 @@
-from metrics.performance import normalized_correlation_coefficient

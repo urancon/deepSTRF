@@ -36,15 +36,17 @@ change datasets and models construction.
 Here is an illustration of a proper usage of the conventions set by our framework.
 
 ```python
-from models import MyModelClass
+from deepSTRF.models import MyModelClass
+
 model = MyModelClass(args)
 
 B, R, T, F, C, N = 4, 10, 999, 64, 1, 1
-spectrogram = torch.rand(B, C, F, T)    # a batch of 4, 1-channel spectrograms of 49 frequency bands and 999 time-bins
-responses = torch.rand(B, N, R, T)      # a batch of 4 responses of 999 time-bins for 1 neuron, each with 4 repeats
+spectrogram = torch.rand(B, C, F, T)  # a batch of 4, 1-channel spectrograms of 49 frequency bands and 999 time-bins
+responses = torch.rand(B, N, R, T)  # a batch of 4 responses of 999 time-bins for 1 neuron, each with 4 repeats
 
-prediction = model(responses)           # shape: (B, 1, T, 1)
+prediction = model(responses)  # shape: (B, 1, T, 1)
 
-from metrics import correlation_coefficient
+from deepSTRF.metrics import correlation_coefficient
+
 cc = correlation_coefficient(prediction, responses)  # (B, ) or (0,)
 ```
