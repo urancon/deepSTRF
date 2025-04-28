@@ -1,23 +1,10 @@
-##### Core #####
-numpy
-torch
-torchaudio
-torchvision
-cupy
-scipy
-scikit-learn
-matplotlib
+setuptools
+extensions
 
-##### Data #####
-h5py
-pandas
-
-##### Utilities #####
-tqdm
-
-##### Optional #####
-wandb
+##### Interactive #####
+ipython
 
 ##### Documentation #####
 sphinx-rtd-theme
 sphinx
+myst-parser

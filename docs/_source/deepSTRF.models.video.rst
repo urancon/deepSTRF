@@ -1,0 +1,29 @@
+deepSTRF.models.video package
+=============================
+
+Submodules
+----------
+
+deepSTRF.models.video.video\_model module
+-----------------------------------------
+
+.. automodule:: deepSTRF.models.video.video_model
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+deepSTRF.models.video.video\_zoo module
+---------------------------------------
+
+.. automodule:: deepSTRF.models.video.video_zoo
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+Module contents
+---------------
+
+.. automodule:: deepSTRF.models.video
+   :members:
+   :show-inheritance:
+   :undoc-members:

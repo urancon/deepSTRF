@@ -1,4 +1,4 @@
-# Auditory neural response Datasets
+# Sensory neural response Datasets
 
 One of the main contributions of this repository is the presence of several off-the-shelf electrophysiology datasets, 
 compiled from various sources, preprocessed, and represented by convenient PyTorch classes.
@@ -45,10 +45,23 @@ Each call of the dataset or associated dataloader will return 4 things: `spectro
 
 ---
 
-## Dataset Zoo
+## Auditory Datasets Zoo
 
 Currently, 3 response datasets are available, each with a name for easier communication. Each are more described in their
 respective README, which gives link to their orginal paper / public repository.
-* [NS1](datasets/NS1_DRC/README.md)
-* [Wehr](datasets/CRCNS_AC1_Wehr/README.md)
-* [NAT4](datasets/NAT4/README.md)
+* [NS1](README_NS1.md)
+* [NAT4](README_NAT4.md)
+* [CRCNS AC1 (Wehr)](README_CRCNS_AC1_Wehr.md)
+* [CRCNS AC1 (Asari)](CRCNS_AC1_Asari/README_CRCNS_AC1_Asari.md)
+* [CRCNS AA1](CRCNS_AA1/README_CRCNS_AA1.md)
+* [CRCNS AA2](CRCNS_AA2/README_CRCNS_AA2.md)
+
+
+## Visual Datasets Zoo
+
+Currently, 3 response datasets are available, each with a name for easier communication. Each are more described in their
+respective README, which gives link to their orginal paper / public repository.
+* CRCNS PVC1
+* CRCNS PVC11
+* CRCNS MT1
+* CRCNS MT2

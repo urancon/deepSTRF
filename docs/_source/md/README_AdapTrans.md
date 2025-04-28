@@ -11,7 +11,7 @@ In other words, 2 learnable kernels are convolved along the temporal dimension o
 
 It takes a single-channel spectrogram as input, and returns a 2-channel (ON/OFF) spectrogram as output.
 
-![Figure 1](figure1.png)
+![Figure 1](../img/figure1.png)
 
 
 ## Advantages
