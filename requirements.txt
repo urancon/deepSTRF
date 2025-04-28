@@ -8,3 +8,4 @@ ipython
 sphinx-rtd-theme
 sphinx
 myst-parser
+recommonmark
