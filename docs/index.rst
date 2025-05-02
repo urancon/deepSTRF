@@ -13,8 +13,10 @@ Welcome to the official documentation of the deepSTRF repository !
    :maxdepth: 1
    :caption: Quickstart:
 
+   _source/md/README_installation.md
    _source/md/README_tutorial.md
    _source/md/README_formats.md
+   _source/md/README_publications.md
 
 
 .. toctree::
@@ -22,6 +24,8 @@ Welcome to the official documentation of the deepSTRF repository !
    :caption: Datasets:
 
    _source/md/README_datasets.md
+   _source/md/README_video_datasets.md
+   _source/md/README_audio_datasets.md
 
 
 .. toctree::

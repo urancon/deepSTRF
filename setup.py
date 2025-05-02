@@ -1,8 +1,9 @@
 from setuptools import setup, find_packages
+from deepSTRF._version import __version__
 
 setup(
     name='deepSTRF',
-    version='0.0.1',
+    version=__version__,
     description='A PyTorch-based library and benchmark for fitting sensory neural responses with deep neural network models',
     url="https://github.com/urancon/deepSTRF",
     author='Ulysse Rancon',
