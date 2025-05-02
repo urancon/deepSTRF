@@ -73,8 +73,8 @@ data/
 1. You can use the `Allen_OPhys_Dataset` class right way by specifying the above data folder as the input path. E.g.,
 
 ```python
-from deepSTRF.datasets import Allen_OPhys_Dataset
+from deepSTRF.datasets.video import Allen_Ophys_Dataset
 
-train_set = Allen_OPhys_Dataset("deepSTRF/datasets/Allen_OPhys/data/", areas=('VISp',), spat_res=(152, 304), seq_len=75,
+train_set = Allen_Ophys_Dataset("deepSTRF/datasets/Allen_OPhys/data/", areas=('VISp',), spat_res=(152, 304), seq_len=75,
                                 optim_set='train')
 ```
