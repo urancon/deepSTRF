@@ -9,18 +9,13 @@
 
 
 import os
-import time
-from tqdm import tqdm
-import numpy as np
 import wandb
 import torch.utils
-from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
 
-from datasets.Wehr_Dataset import WehrDataset, WEHR_NEURONS_SPLIT_NATURAL, WEHR_VALID_NEURONS
-from datasets.NS1_DRC_Dataset import NS1_DRC_Dataset_pop, RAHMAN_TRAINVAL_SET_INDICES, RAHMAN_TEST_SET_INDICES
-from models.models import Linear, LinearNonlinear, NetworkReceptiveField, DNet, ConvNet2D
-from utils.training_pop import set_random_seed, optimize_one_seed, optimize_multiple_seeds
+from deepSTRF.datasets import WehrDataset, WEHR_NEURONS_SPLIT_NATURAL, WEHR_VALID_NEURONS
+from deepSTRF.datasets import NS1_DRC_Dataset_pop, RAHMAN_TRAINVAL_SET_INDICES, RAHMAN_TEST_SET_INDICES
+from deepSTRF.models import ConvNet2D
+from deepSTRF.utils.training_pop import optimize_multiple_seeds
 
 
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')

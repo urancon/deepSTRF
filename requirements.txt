@@ -1,19 +1,30 @@
-##### Core #####
-numpy
-torch
-torchaudio
+setuptools
+extensions
+
+##### Interactive #####
+ipython
+
+##### Documentation #####
+sphinx-rtd-theme
+sphinx
+myst-parser
+recommonmark
+
+
+numpy==1.23.5
+scipy==1.15.2
+scikit-image
+torch==2.5.1
+torchaudio==2.5.1
+soundfile
+pytorch_lightning==2.5.1
+matplotlib==3.10.1
+Pillow==11.1.0
 torchvision
-cupy
-scipy
-scikit-learn
-matplotlib
-
-##### Data #####
+DCLS==0.1.1
+einops==0.8.1
 h5py
+tables
 pandas
-
-##### Utilities #####
-tqdm
-
-##### Optional #####
 wandb
+tqdm

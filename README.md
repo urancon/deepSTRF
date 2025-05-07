@@ -1,9 +1,9 @@
 # deepSTRF
-*A PyTorch-based library and benchmark for fitting auditory neural responses with deep neural network models*
+*A PyTorch-based library and benchmark for fitting sensory neural responses with deep neural network models*
 
 ![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg) ![Python 3.10](https://img.shields.io/badge/Python-3.10-green)
 
-Work in progress - Jan. 2025
+Work in progress - Mar. 2025
 
 **Contact:** Ulysse Rançon @[urancon](https://github.com/urancon/)
 
@@ -19,9 +19,9 @@ It contains major codes for result reproduction. In particular, it provides seve
 convenient **PyTorch** classes, as well as ready-to-deploy computational models and the AdapTrans model of auditory 
 ON/OFF responses.
 
-![placeholder.png](docs/homepage_illustration.png)
+![placeholder.png](docs/_source/img/homepage_illustration.png)
 
-Details about currently available [models](docs/README_models.md) and [datasets](docs/README_datasets.md) in the doc folder.
+Details about currently available [models](docs_md/README_models.md) and [datasets](docs_md/README_datasets.md) in the doc folder.
 
 
 ## 🏁 Benchmark
@@ -38,10 +38,10 @@ researchers.
 |                   |     Transformer      |    🥈    |                     pop                      |          29,205           |              53.9 / 73.0              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |          
 |                   |        2D-CNN        |    🥉    |                     pop                      |          36,275           |              51.8 / 70.1              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
 |    **NAT4 A1**    |       StateNet       |    🥇    |                  LSTM, pop                   |          40,271           |              46.6 / 65.1              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
-|                   |        2D-CNN        |    🥈    |  [AdapTrans](docs/README_AdapTrans.md), pop  |          XX,XXX           |              46.4 / 64.5              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|                   |        2D-CNN        |    🥈    |  [AdapTrans](docs_md/README_AdapTrans.md), pop  |          XX,XXX           |              46.4 / 64.5              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
 |                   |     Transformer      |    🥉    |                     pop                      |          28,437           |              46.6 / 64.4              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
 |   **NAT4 PEG**    |     Transformer      |    🥇    |                     pop                      |          28,437           |              39.7 / 55.5              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
-|                   |        2D-CNN        |    🥈    |  [AdapTrans](docs/README_AdapTrans.md), pop  |          XX,XXX           |              39.2 / 55.2              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|                   |        2D-CNN        |    🥈    |  [AdapTrans](docs_md/README_AdapTrans.md), pop  |          XX,XXX           |              39.2 / 55.2              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
 |                   |       StateNet       |    🥉    |                  LSTM, pop                   |          40,271           |              38.9 / 54.7              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
 |  **AA1 Field L**  |       StateNet       |    🥇    |                   S4, pop                    |          24,900           |              51.2 / 74.8              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
 |                   |     Transformer      |    🥈    |                     pop                      |          29,109           |              50.6 / 73.8              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
@@ -128,11 +128,11 @@ repository (we would be glad to help you doing so) or make your own with a simil
 
 This work was made possible by the generous publication of several electrophysiology datasets, mainly hosted on the [CRCNS website](https://crcns.org/). If you find them useful
 for your research or use them, please do not forget to cite their corresponding article:
-* [NS1](datasets/NS1_DRC/README.md)
-* [NAT4](datasets/NAT4/README.md)
-* [CRCNS AA1](datasets/Asari/README.md)
-* [CRCNS AC1 - Wehr](datasets/CRCNS_AC1_Wehr/README.md)
-* [CRCNS AC1 - Asari (MGB + A1)](datasets/Asari/README.md)
+* [NS1](deepSTRF/datasets/audio/NS1_DRC/README.md)
+* [NAT4](deepSTRF/datasets/audio/NAT4/README.md)
+* [CRCNS AA1](deepSTRF/datasets/Asari/README.md)
+* [CRCNS AC1 - Wehr](deepSTRF/datasets/audio/CRCNS_AC1_Wehr/README.md)
+* [CRCNS AC1 - Asari (MGB + A1)](deepSTRF/datasets/Asari/README.md)
 
 
 
