@@ -35,7 +35,7 @@ def correlation_coefficient(y_pred, y_gt, reduction="mean"):
     cov = covariance(y_pred, y_gt)              # (B, *)
     var_pred = torch.var(y_pred, dim=-1)        # (B, *)
     var_gt = torch.var(y_gt, dim=-1)            # (B, *)
-    cc = cov / torch.sqrt(var_pred * var_gt)    # (B, *)
+    cc = cov / torch.sqrt(var_pred * var_gt + 1e-8)    # (B, *)
     if reduction == 'mean':
         cc = torch.mean(cc, dim=0)  # avg over batch dimension --> (*,)
     return cc
@@ -231,8 +231,8 @@ def normalized_correlation_coefficient(y_pred, y_gt, method='schoppe', precomput
 
     else:
         if method == 'schoppe':
-            SP = signal_power(y_gt)                                                     # (B, N)
-            cc_norm = covariance(y_pred, mean_resp) / (y_pred.var(dim=-1) * SP).sqrt()  # (B, N)
+            SP = signal_power(y_gt)                                                            # (B, N)
+            cc_norm = covariance(y_pred, mean_resp) / (y_pred.var(dim=-1) * SP + 1e-8).sqrt()  # (B, N)
 
         elif method == 'hsu':
             if precomputed_ccmaxes is not None:
@@ -270,7 +270,6 @@ def signal_power(responses):
     TP = total_power(responses)
     SP = (1/(R-1)) * (R * mean_response.var(dim=-1) - TP)
     return SP
-
 
 @torch.no_grad()
 def total_power(responses):
