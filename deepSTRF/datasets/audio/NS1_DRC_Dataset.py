@@ -50,118 +50,10 @@ class NS1_DRC_Dataset(AudioNeuralDataset):
     Original paper:
         B. Willmore, J. W. H. Schnupp, A. J. King (2016), "Network Receptive Field Modeling Reveals Extensive
         Integration and Multi-feature Selectivity in Auditory Cortical Neurons", PLoS CB, 10.1371/journal.pcbi.1005113
-
-    """
-
-    def __init__(self, path: str, stimuli=('nat', 'drc'), neuron_indexes=tuple(range(73)), normalize_resps=True):
-        """
-        Initializes and loads the (preprocessed) NS1_DRC_Dataset.
-
-        Parameters:
-            path (str): Path to the 'data/' folder containing the preprocessed 'ns1_drc_responses.pt and 'ns1_drc_spectrograms.pt'
-            stimuli: stimuli of the dataset, can be 'ns1' for the netural sounds, 'drc' for dynamic random chords, or 'all' for both.
-            neuron_indexes (iterable): List or array of indexes of neurons to include in the dataset.
-
-        Note:
-        For neuron_indexes, the dataset includes 73 valid neurons by default. Neuron indexes are used to select specific
-        neurons from the dataset.
-        """
-        super().__init__(path)
-
-        # stimuli are the same for all neurons
-        spectrograms = torch.load(os.path.join(path, 'ns1_drc_spectrograms.pt'))
-        spectrograms = torch.cat([spectrograms, torch.ones(12, 1, 34, 999) * torch.nan])    # TODO: replace NaN by actual DRC stim
-        stim_types = 20 * ['nat'] + 12 * ['drc']
-        N_sounds = 32
-
-        # load neural responses (different for each neuron)
-        response_data = torch.load(os.path.join(path, 'ns1_drc_responses.pt'))
-        self.N_neurons = len(neuron_indexes)
-        self.response_data = [response_data[neuron_idx] for neuron_idx in neuron_indexes]   # filter selected neurons
-        self.I = [0]      # select neuron #0 by default
-
-        # filter by stimulus type
-        stim_mask = [True if ((stim_type in stimuli) or (stim_type in stimuli)) else False for stim_type in stim_types]
-        self.spectrograms = spectrograms[stim_mask]
-        for neuron_idx in range(len(self.response_data)):
-
-            # responses
-            neuron_responses = self.response_data[neuron_idx]['responses']
-            neuron_responses = [neuron_responses[sound_idx] for sound_idx in range(N_sounds) if stim_mask[sound_idx]]
-            neuron_responses = torch.stack(neuron_responses, dim=0)  # (S, R, T)
-            if normalize_resps:
-                psth_max = neuron_responses.mean(-2).amax(-1)
-                neuron_responses /= psth_max.unsqueeze(-1).unsqueeze(-1)
-            self.response_data[neuron_idx]['responses'] = neuron_responses
-            self.response_data[neuron_idx]['responses'] = neuron_responses
-
-            # ccmaxes
-            neuron_ccmaxes = self.response_data[neuron_idx]['ccmaxes']
-            neuron_ccmaxes = [neuron_ccmaxes[sound_idx] for sound_idx in range(N_sounds) if stim_mask[sound_idx]]
-            self.response_data[neuron_idx]['ccmaxes'] = neuron_ccmaxes
-
-            # TTRCs
-            neuron_ttrcs = self.response_data[neuron_idx]['ttrcs']
-            neuron_ttrcs = [neuron_ttrcs[sound_idx] for sound_idx in range(N_sounds) if stim_mask[sound_idx]]
-            self.response_data[neuron_idx]['ttrcs'] = neuron_ttrcs
-
-        self.species = 'ferret'
-
-    def __len__(self):
-        """
-        Returns the number of samples in the dataset.
-        """
-        return len(self.spectrograms)
-
-    def __getitem__(self, sound_index):
-        """Retrieves a single sample from the dataset."""
-        spectro = self.spectrograms[sound_index]            # (1, F, T)
-        neuron_data = self.response_data[self.I]  # select neuron according to current index
-        responses = neuron_data['responses'][sound_index]  # (N_repeats, T)
-        ccmax = neuron_data['ccmaxes'][sound_index]
-        ttrc = neuron_data['ttrcs'][sound_index]
-        return spectro, responses, ccmax, ttrc
-
-    def select_neuron(self, neuron_index):
-        assert (isinstance(neuron_index, int)) and (neuron_index >= 0) and (neuron_index < self.N_neurons), \
-            "neuron_index must be positive and < to the # neurons"
-        self.I = [neuron_index]
-
-    def select_population(self, neuron_indices):
-        for neuron_index in neuron_indices:
-            assert (isinstance(neuron_index, int)) and (neuron_index >= 0) and (neuron_index < self.N_neurons), \
-                "neuron_index must be positive and < to the # neurons"
-        self.I = list(neuron_indices)
-
-    def get_F(self):
-        """
-        Returns the number of frequency bins in the spectrograms.
-        """
-        return self.spectrograms.shape[2]
-
-    def get_T(self):
-        """
-        Returns the number of time bins in the spectrograms.
-        """
-        return self.spectrograms.shape[3]
-
-    def get_N(self):
-        """
-        Returns the number of neurons
-        """
-        return self.N_neurons
-
-
-class NS1_DRC_Dataset_pop(AudioNeuralDataset):
-    """
-        for population training.
-
-        Sounds are indexed from 0 to S
-
-        Because all neurons are responsive to all stimuli, the neuron mask is True everywhere
         """
 
     def __init__(self, path: str, stimuli=('nat', 'drc'), neuron_indexes=tuple(range(73)), normalize_resps=False):
+        super().__init__(path)
 
         # stimuli are the same for all neurons
         spectrograms = torch.load(os.path.join(path, 'ns1_drc_spectrograms.pt'))
@@ -200,6 +92,7 @@ class NS1_DRC_Dataset_pop(AudioNeuralDataset):
             self.response_data[neuron_idx]['ttrcs'] = neuron_ttrcs
 
         self.species = 'ferret'
+        self.F = self.spectrograms.shape[-2]
 
     def __len__(self):
         """ Returns the number of samples in the dataset. """
@@ -207,28 +100,10 @@ class NS1_DRC_Dataset_pop(AudioNeuralDataset):
 
     def __getitem__(self, sound_index):
         """Retrieves a single sample from the dataset."""
+        # Because all neurons are responsive to all stimuli, the neuron mask is True everywhere
         spectro = self.spectrograms[sound_index]            # (1, F, T)
         pop_data = [self.response_data[i] for i in self.I]      # select neuron(s) according to current indices
         responses = [neuron_data['responses'][sound_index] for neuron_data in pop_data]     # N * (R, T)
-        responses = torch.stack(responses, 0)                                               # --> (N, R, T)
+        responses = torch.stack(responses, 0)                                           # --> (N, R, T)
         nrn_mask = torch.ones(len(self.I)).bool()                                           # (N,)
         return spectro, responses, nrn_mask
-
-    def select_neuron(self, neuron_index):
-        assert (isinstance(neuron_index, int)) and (neuron_index >= 0) and (neuron_index < self.N_neurons), \
-            "neuron_index must be positive and < to the # neurons"
-        self.I = [neuron_index]
-
-    def select_population(self, neuron_indices):
-        for neuron_index in neuron_indices:
-            assert (isinstance(neuron_index, int)) and (neuron_index >= 0) and (neuron_index < self.N_neurons), \
-                "neuron_index must be positive and < to the # neurons"
-        self.I = list(neuron_indices)
-
-    def get_F(self):
-        """ Returns the number of frequency bins in the spectrograms. """
-        return self.spectrograms.shape[-2]
-
-    def get_T(self):
-        """ Returns the number of time bins in the spectrograms. """
-        return self.spectrograms.shape[-1]

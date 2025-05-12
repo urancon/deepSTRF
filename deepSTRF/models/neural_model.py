@@ -25,6 +25,10 @@ class NeuralModel(nn.Module):
         """Takes a sensory stimulus as input and output a tensor of population neural response"""
         raise NotImplementedError
 
+    def detach(self):
+        """Detaches stateful variables and parameters from the computational graph (cf. spikingjelly)"""
+        pass
+
     def count_trainable_params(self):
         """Returns the total number of trainable parameters within the model"""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)

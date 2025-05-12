@@ -97,7 +97,7 @@ class AudioNeuralModel(NeuralModel):
         response = self.forward(stim_opt)  # (B=N, N, T)
 
         # Spike-Triggered Average (STA) loss = activation at the last timestep
-        loss = - response[:, :, -1].mean()     # (B=N,) --> scalar
+        loss = - torch.trace(response[:, :, -1])     # scalar
 
         # backward pass
         loss.backward()
