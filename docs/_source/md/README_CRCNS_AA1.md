@@ -42,6 +42,19 @@ http://dx.doi.org/10.6080/K0F769GP
   - Pad/cut to the right (present/future time steps) so that trials hvae the same duration
 
 
+## Benchmar results
+
+|   **Area**    | **Model backbone** | **Rank** | **Remarks** |     **Params / nrn**      | **Perfs <br/>(CCraw / CCnorm) [%]** |                                        **Paper (backbone)**                                         | 
+|:-------------:|:------------------:|:--------:|:-----------:|:-------------------------:|:-----------------------------------:|:---------------------------------------------------------------------------------------------------:|
+| **Field L**   |      StateNet      |    🥇    |  GRU, pop   |          24,900           |               / 71.0                |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
+|               |    Transformer     |    🥈    |     pop     |          29,109           |               / 65.5                |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
+|               |       2D-CNN       |    🥉    |     pop     |          26,915           |               / 65.0                | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|    **MLd**    |      StateNet      |    🥇    | Mamba, pop  |          32,334           |               / 73.4                |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
+|               |       2D-CNN       |    🥈    |     pop     |          29,109           |               / 68.9                |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
+|               |    Transformer     |    🥉    |     pop     |          34,475           |               / 68.3                | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+
+
+
 ## Setup
 
 **Requirements**: A CRCNS account to download the dataset.

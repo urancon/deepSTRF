@@ -21,7 +21,7 @@ ON/OFF responses.
 
 ![placeholder.png](docs/_source/img/homepage_illustration.png)
 
-Details about currently available [models](docs_md/README_models.md) and [datasets](docs_md/README_datasets.md) in the doc folder.
+A detailed documentation can be found here: [deepstrf.readthedocs.io](https://deepstrf.readthedocs.io/) (under construction)
 
 
 ## 🏁 Benchmark
@@ -32,23 +32,23 @@ A ready-to-deploy PyTorch model class will have to be provided to support your c
 researchers.
 
 
-|    **Dataset**    |  **Model backbone**  | **Rank** |                 **Remarks**                  |     **Params / nrn**      |  **Perfs <br/>(CCraw / CCnorm) [%]**  |                                        **Paper (backbone)**                                         | 
-|:-----------------:|:--------------------:|:--------:|:--------------------------------------------:|:-------------------------:|:-------------------------------------:|:---------------------------------------------------------------------------------------------------:|
-|      **NS1**      |       StateNet       |    🥇    |                   GRU, pop                   |          30,465           |              55.6 / 75.1              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |          
-|                   |     Transformer      |    🥈    |                     pop                      |          29,205           |              53.9 / 73.0              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |          
-|                   |        2D-CNN        |    🥉    |                     pop                      |          36,275           |              51.8 / 70.1              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
-|    **NAT4 A1**    |       StateNet       |    🥇    |                  LSTM, pop                   |          40,271           |              46.6 / 65.1              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
-|                   |        2D-CNN        |    🥈    |  [AdapTrans](docs_md/README_AdapTrans.md), pop  |          XX,XXX           |              46.4 / 64.5              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
-|                   |     Transformer      |    🥉    |                     pop                      |          28,437           |              46.6 / 64.4              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
-|   **NAT4 PEG**    |     Transformer      |    🥇    |                     pop                      |          28,437           |              39.7 / 55.5              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
-|                   |        2D-CNN        |    🥈    |  [AdapTrans](docs_md/README_AdapTrans.md), pop  |          XX,XXX           |              39.2 / 55.2              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
-|                   |       StateNet       |    🥉    |                  LSTM, pop                   |          40,271           |              38.9 / 54.7              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
-|  **AA1 Field L**  |       StateNet       |    🥇    |                   S4, pop                    |          24,900           |              51.2 / 74.8              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
-|                   |     Transformer      |    🥈    |                     pop                      |          29,109           |              50.6 / 73.8              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
-|                   |        2D-CNN        |    🥉    |                     pop                      |          26,915           |              47.8 / 69.9              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
-|    **AA1 MLd**    |       StateNet       |    🥇    |                  Mamba, pop                  |          32,334           |              39.0 / 53.9              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
-|                   |     Transformer      |    🥈    |                     pop                      |          29,109           |              35.6 / 49.5              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
-|                   |        2D-CNN        |    🥉    |                     pop                      |          34,475           |              33.0 / 46.2              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|   **Dataset**   | **Model backbone** | **Rank** |                  **Remarks**                  | **Params / nrn** | **Perfs <br/>(CCraw / CCnorm) [%]** |                                        **Paper (backbone)**                                         | 
+|:---------------:|:------------------:|:--------:|:---------------------------------------------:|:----------------:|:-----------------------------------:|:---------------------------------------------------------------------------------------------------:|
+|     **NS1**     |      StateNet      |    🥇    |                   GRU, pop                    |      30,465      |             55.6 / 75.1             |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |          
+|                 |    Transformer     |    🥈    |                      pop                      |      29,205      |             53.9 / 73.0             |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |          
+|                 |       2D-CNN       |    🥉    |                      pop                      |      36,275      |             51.8 / 70.1             | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|   **NAT4 A1**   |      StateNet      |    🥇    |                   LSTM, pop                   |      40,271      |             46.6 / 65.1             |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
+|                 |       2D-CNN       |    🥈    | [AdapTrans](docs_md/README_AdapTrans.md), pop |      XX,XXX      |             46.4 / 64.5             | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|                 |    Transformer     |    🥉    |                      pop                      |      28,437      |             46.6 / 64.4             |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
+|  **NAT4 PEG**   |    Transformer     |    🥇    |                      pop                      |      28,437      |             39.7 / 55.5             | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|                 |       2D-CNN       |    🥈    | [AdapTrans](docs_md/README_AdapTrans.md), pop |      XX,XXX      |             39.2 / 55.2             | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|                 |      StateNet      |    🥉    |                   LSTM, pop                   |      40,271      |             38.9 / 54.7             | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+| **AA1 Field L** |      StateNet      |    🥇    |                   GRU, pop                    |      24,900      |               / 71.0                |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
+|                 |    Transformer     |    🥈    |                      pop                      |      29,109      |               / 65.5                |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
+|                 |       2D-CNN       |    🥉    |                      pop                      |      26,915      |               / 65.0                | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|   **AA1 MLd**   |      StateNet      |    🥇    |                  Mamba, pop                   |      32,334      |               / 73.4                |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
+|                 |       2D-CNN       |    🥈    |                      pop                      |      29,109      |               / 68.9                |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
+|                 |    Transformer     |    🥉    |                      pop                      |      34,475      |               / 68.3                | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
 
 
 **Note:** _Because all three CRCNS AC1 datasets (Wehr, Asari A1, Asari MGB) are single-unit fitting only and can yield 
@@ -79,10 +79,7 @@ Install Python libraries and dependencies for this code:
 pip3 install -r requirements.txt
 ```
 
-Download the datasets and move them to the appropriate place:
-```shell
-Explain how to download and install the datasets ! 
-```
+Download some datasets by following instructions on the [official documentation](https://deepstrf.readthedocs.io/en/latest/).
 
 Now you should be all set up to reproduce our experiments. Have fun !
 
@@ -128,12 +125,14 @@ repository (we would be glad to help you doing so) or make your own with a simil
 
 This work was made possible by the generous publication of several electrophysiology datasets, mainly hosted on the [CRCNS website](https://crcns.org/). If you find them useful
 for your research or use them, please do not forget to cite their corresponding article:
-* [NS1](deepSTRF/datasets/audio/NS1_DRC/README.md)
-* [NAT4](deepSTRF/datasets/audio/NAT4/README.md)
-* [CRCNS AA1](deepSTRF/datasets/Asari/README.md)
-* [CRCNS AC1 - Wehr](deepSTRF/datasets/audio/CRCNS_AC1_Wehr/README.md)
-* [CRCNS AC1 - Asari (MGB + A1)](deepSTRF/datasets/Asari/README.md)
-
+* [NS1](docs/_source/md/README_NS1.md) (audio, ferret, extracellular)
+* [NAT4](docs/_source/md/README_NAT4.md) (audio, ferret, 2 cortical areas, extracellular)
+* [CRCNS AA1](docs/_source/md/README_CRCNS_AA1.md) (audio, zebra finch, 2 areas, extracellular)
+* [CRCNS AA2](docs/_source/md/README_CRCNS_AA2.md) (audio, zebra finch, >4 areas, extracellular)
+* [CRCNS AC1 - Wehr](docs/_source/md/README_CRCNS_AC1_Wehr.md) (audio, rat, intracellular)
+* [CRCNS AC1 - Asari (MGB + A1)](docs/_source/md/README_CRCNS_AC1_Asari.md) (audio, rat, 2 areas, intracellular)
+* [Allen Visual Coding - "Ophys"](docs/_source/md/README_Allen_Ophys.md) (vision, mouse, 6 areas, 2-photon)
+* [Allen Visual Coding - "Ecephys"](docs/_source/md/README_Allen_Ecephys.md) (vision, mouse, 6 areas, extracellular)
 
 
 ## 📖 Citation 
@@ -172,18 +171,11 @@ This code repository is at the core of two of our papers; if you found this repo
 }
 ```
 
-## TODO
+## Future improvements
 
-- Add CRCNS AC1 scores on main README
-- Add StateNets and Transformer audio models
-- Add AA1 and Asari datasets
-- Add STRFs / Gradmaps / Dreams
-- change models and datasets API resp. to models/audio and datasets/audio
-- main training / testing / dream scripts
-- finish some doc (README + docstring)
-- beta testing
-- add AdapTrans + Transformer
-- add other audio datasets
-  - zebra finch ?
-  - ferret ?
+- concatenate datasets (e.g. CRCNS AA1 and AA2)
+- fMRI datasets ? (e.g., CRCNS-VIM2)
+- behavioral data as additional input, if relevant ? (e.g. eye tracking)
+- include artificial stimuli
+- multiprocessing / multi-GPU for faster training
 - ...

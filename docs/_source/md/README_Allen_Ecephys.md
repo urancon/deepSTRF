@@ -42,6 +42,34 @@ Three natural grayscale videos taken from Orson Welles' 1958 movie _Touch of Evi
 - 58 sessions total
 
 
+## Benchmark results
+
+TODO
+
+| **Area**  | **Model backbone** | **Rank** | **Remarks** | **Params / nrn** | **Perfs <br/>(CCraw / CCnorm) [%]** | **Paper (backbone)** | 
+|:---------:|:------------------:|:--------:|:-----------:|:----------------:|:-----------------------------------:|:--------------------:|
+| **VISal** |                    |    🥇    |             |                  |                                     |                      |
+|           |                    |    🥈    |             |                  |                                     |                      |
+|           |                    |    🥉    |             |                  |                                     |                      |
+| **VISam** |                    |    🥇    |             |                  |                                     |                      |
+|           |                    |    🥈    |             |                  |                                     |                      |
+|           |                    |    🥉    |             |                  |                                     |                      |
+| **VISl**  |                    |    🥇    |             |                  |                                     |                      |
+|           |                    |    🥈    |             |                  |                                     |                      |
+|           |                    |    🥉    |             |                  |                                     |                      |
+| **VISp**  |                    |    🥇    |             |                  |                                     |                      |
+|           |                    |    🥈    |             |                  |                                     |                      |
+|           |                    |    🥉    |             |                  |                                     |                      |
+| **VISpm** |                    |    🥇    |             |                  |                                     |                      |
+|           |                    |    🥈    |             |                  |                                     |                      |
+|           |                    |    🥉    |             |                  |                                     |                      |
+| **VISrl** |                    |    🥇    |             |                  |                                     |                      |
+|           |                    |    🥈    |             |                  |                                     |                      |
+|           |                    |    🥉    |             |                  |                                     |                      |
+
+
+
+
 ## Setup Instructions
 
 **Requirements:** `allensdk` installed (install with pip)

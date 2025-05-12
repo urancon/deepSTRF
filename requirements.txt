@@ -3,12 +3,15 @@ extensions
 
 ##### Interactive #####
 ipython
+ipykernel
 
 ##### Documentation #####
 sphinx-rtd-theme
 sphinx
 myst-parser
 recommonmark
+nbsphinx
+pandocfilters  # Optional but helps with filtering content
 
 
 numpy==1.23.5

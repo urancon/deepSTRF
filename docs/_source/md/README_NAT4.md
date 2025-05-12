@@ -35,6 +35,18 @@
 4. Transform data into matrices.
 
 
+## Benchmark results
+
+| **Area** | **Model backbone** | **Rank** |                  **Remarks**                  | **Params / nrn** | **Perfs <br/>(CCraw / CCnorm) [%]** |                                        **Paper (backbone)**                                         | 
+|:--------:|:------------------:|:--------:|:---------------------------------------------:|:----------------:|:-----------------------------------:|:---------------------------------------------------------------------------------------------------:|
+|  **A1**  |      StateNet      |    🥇    |                   LSTM, pop                   |      40,271      |             46.6 / 65.1             |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
+|          |       2D-CNN       |    🥈    | [AdapTrans](docs_md/README_AdapTrans.md), pop |      XX,XXX      |             46.4 / 64.5             | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|          |    Transformer     |    🥉    |                      pop                      |      28,437      |             46.6 / 64.4             |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |
+| **PEG**  |    Transformer     |    🥇    |                      pop                      |      28,437      |             39.7 / 55.5             | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|          |       2D-CNN       |    🥈    | [AdapTrans](docs_md/README_AdapTrans.md), pop |      XX,XXX      |             39.2 / 55.2             | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+|          |      StateNet      |    🥉    |                   LSTM, pop                   |      40,271      |             38.9 / 54.7             | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+
+
 ## Setup using our scripts:
 
 - Create an environment with the `NEMS0` library
@@ -52,8 +64,3 @@ pip install -e NEMS0
 - Launch `NAT4_preprocessing.py`, which creates 2 files, named **"nat4_a1.pt"** and **"nat4_peg.pt"**. 
 The latter two files constitute the final preprocessed dataset files.
 - The `NAT4Dataset()` class can be used with the path ti the **data/** folder  containing these two files.
-
-
-## TODOs
-
-- clean this file (remove uninformative "dataset details")

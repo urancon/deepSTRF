@@ -34,6 +34,19 @@ Machens et al. (2004), J.Neuroscience*
 * pharmacologically blocked action potentials
 
 
+## Benchmark results
+
+| **Area** | **Model backbone** | **Rank** | **Remarks** | **Params / nrn** | **Perfs <br/>(CCraw / CCnorm) [%]** |                     **Paper (backbone)**                      | 
+|:---------|:------------------:|:--------:|:-----------:|:----------------:|:-----------------------------------:|:-------------------------------------------------------------:|
+| **MGB**  |        DNet        |    🥇    |             |      1,186       |             19.7 / 22.0             | [Rahman et al.](https://doi.org/10.1371/journal.pcbi.1006618) |          
+|          |      StateNet      |    🥈    |     GRU     |      22,631      |             18.7 / 20.6             |  [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)   |          
+|          |    Transformer     |    🥉    |             |      30,165      |             17.6 / 19.5             |  [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)   |
+| **A1**   |        DNet        |    🥇    |             |      44,386      |             17.1 / 20.2             | [Rahman et al.](https://doi.org/10.1371/journal.pcbi.1006618) |          
+|          |      StateNet      |    🥈    |     GRU     |      22,631      |             16.7 / 19.6             |  [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)   |          
+|          |        NRF         |    🥉    |             |      44,365      |             16.1 / 19.0             | [Harper et al.](https://doi.org/10.1371/journal.pcbi.1005113) |
+
+
+
 ## Setup
 
 **Requirements**: A CRCNS account to download the dataset, MATLAB to preprocess it.
