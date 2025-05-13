@@ -40,6 +40,7 @@ Welcome to the official documentation of the deepSTRF repository !
    :maxdepth: 2
    :caption: Examples
 
+   _source/ipynb/fit_audio_singleunit_aa1.ipynb
    _source/ipynb/fit_audio_population_ns1.ipynb
 
 
