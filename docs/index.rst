@@ -42,7 +42,11 @@ Welcome to the official documentation of the deepSTRF repository !
 
    _source/ipynb/fit_audio_singleunit_aa1.ipynb
    _source/ipynb/fit_audio_population_ns1.ipynb
-
+   _source/ipynb/fit_PVC11.ipynb
+   _source/ipynb/test_MT2.ipynb
+   _source/ipynb/test_Ophys.ipynb
+   _source/ipynb/test_PVC1.ipynb
+   _source/ipynb/test_PVC11.ipynb
 
 .. toctree::
    :maxdepth: 3
