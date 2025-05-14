@@ -3,7 +3,6 @@
 First clone and go inside the repository with:
 ```shell
 git clone https://github.com/urancon/deepSTRF.git
-cd deepSTRF
 ```
 
 We recommend dedicating a new virtual environment to this library, using Anaconda for instance:
@@ -14,7 +13,7 @@ conda activate neuralfit
 
 Then install dependencies:
 ```shell
-pip3 install -r requirements.txt
+pip3 install -r deepSTRF/requirements.txt
 ```
 
 If you want to have access to deepSTRF from anywhere on your machine, install it with the following command line:

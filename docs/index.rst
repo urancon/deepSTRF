@@ -11,7 +11,7 @@ Welcome to the official documentation of the deepSTRF repository !
 
 .. toctree::
    :maxdepth: 1
-   :caption: Quickstart:
+   :caption: Quickstart
 
    _source/md/README_installation.md
    _source/md/README_tutorial.md
@@ -21,7 +21,7 @@ Welcome to the official documentation of the deepSTRF repository !
 
 .. toctree::
    :maxdepth: 2
-   :caption: Datasets:
+   :caption: Datasets
 
    _source/md/README_datasets.md
    _source/md/README_video_datasets.md
@@ -30,13 +30,22 @@ Welcome to the official documentation of the deepSTRF repository !
 
 .. toctree::
    :maxdepth: 2
-   :caption: Models:
+   :caption: Models
 
    _source/md/README_models.md
+   _source/md/README_AdapTrans.md
+
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Examples
+
+   _source/ipynb/fit_audio_singleunit_aa1.ipynb
+   _source/ipynb/fit_audio_population_ns1.ipynb
 
 
 .. toctree::
    :maxdepth: 3
-   :caption: API:
+   :caption: API
 
    _source/modules.rst

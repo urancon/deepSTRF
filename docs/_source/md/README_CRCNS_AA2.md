@@ -50,6 +50,29 @@ http://dx.doi.org/10.6080/10.6080/K0JW8BSC
   - Pad/cut to the right (present/future time steps) so that trials have the same duration
 
 
+## Benchmark results
+
+TODO
+
+|  **Area**   | **Model backbone** | **Rank** | **Remarks** | **Params / nrn** | **Perfs <br/>(CCraw / CCnorm) [%]** | **Paper (backbone)** | 
+|:-----------:|:------------------:|:--------:|:-----------:|:----------------:|:-----------------------------------:|:--------------------:|
+|   **mld**   |                    |    🥇    |             |                  |                                     |                      |
+|             |                    |    🥈    |             |                  |                                     |                      |
+|             |                    |    🥉    |             |                  |                                     |                      |
+|   **OV**    |                    |    🥇    |             |                  |                                     |                      |
+|             |                    |    🥈    |             |                  |                                     |                      |
+|             |                    |    🥉    |             |                  |                                     |                      |
+| **L (all)** |                    |    🥇    |             |                  |                                     |                      |
+|             |                    |    🥈    |             |                  |                                     |                      |
+|             |                    |    🥉    |             |                  |                                     |                      |
+|   **CM**    |                    |    🥇    |             |                  |                                     |                      |
+|             |                    |    🥈    |             |                  |                                     |                      |
+|             |                    |    🥉    |             |                  |                                     |                      |
+| **others**  |                    |    🥇    |             |                  |                                     |                      |
+|             |                    |    🥈    |             |                  |                                     |                      |
+|             |                    |    🥉    |             |                  |                                     |                      |
+
+
 ## Setup
 
 **Requirements**: A CRCNS account to download the dataset.

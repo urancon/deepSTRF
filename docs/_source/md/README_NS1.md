@@ -10,6 +10,8 @@
 
 ## Dataset Details:
 
+**Population fitting:** ✅
+
 **Description of Stimuli:**
 - 20 clips of natural sounds (speech, ferret vocalizations, other animal vocalizations, and environmental sounds), and 12 Dynamic Random Chords (DRCs) each 5 seconds in duration.
 - Clips were played in random order
@@ -34,16 +36,21 @@
 - Transforming the spike times of each repeat of each stimulus into PSTHs.
 - What's been done is explained in the source paper.
 
+
+## Benchmark results
+
+|  **Model backbone**  | **Rank** |                 **Remarks**                  |     **Params / nrn**      |  **Perfs <br/>(CCraw / CCnorm) [%]**  |                                        **Paper (backbone)**                                         | 
+|:--------------------:|:--------:|:--------------------------------------------:|:-------------------------:|:-------------------------------------:|:---------------------------------------------------------------------------------------------------:|
+|       StateNet       |    🥇    |                   GRU, pop                   |          30,465           |              55.6 / 75.1              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |          
+|     Transformer      |    🥈    |                     pop                      |          29,205           |              53.9 / 73.0              |                     [Rançon et al.](https://doi.org/10.1101/2025.01.08.631909)                      |          
+|        2D-CNN        |    🥉    |                     pop                      |          36,275           |              51.8 / 70.1              | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
+
+
+
 ## **Setup using our scripts:**
 
 0. Download the data at [the original dataset repository](https://osf.io/ayw2p/) as well as the **"ns1_drc_spectrograms.pt"** file
-1. Put files (**MetadateSHEnCneurons.mat** + **spikesandwav folder** + **ns1_drc_spectrograms.pt**) inside the **data/** folder. 
+1. Put files (**MetadateSHEnCneurons.mat** + **spikesandwav/ folder** + **ns1_drc_spectrograms.pt**) inside the **data/** folder. 
 2. Launch `NS1_DRC_preprocessing.py`.
 3. The processed data file should appear as a pytorch file called **ns1_drc_responses.pt**
 4. You can use it right away by creating a `NS1_DRC_Dataset(...)` object with the path to the **data/** folder
-
-
-## TODOs
-
-- include a script to create the **"ns1_drc_spectrograms.pt"** file from the original dataset repository.
-- clean this file (remove uninformative "dataset details")

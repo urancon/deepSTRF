@@ -320,7 +320,7 @@ class ConvNet2D(AudioNeuralModel):
         y = y.flatten(start_dim=1, end_dim=2)   # (B, C*F_down, T)
         y = y.permute(0, 2, 1)                  # (B, T, C*F_down)
         y = self.activation(self.fc(y))         # (B, T, N)
-        y = y.permute(0, 2, 1).unsqueeze(2)     # (B, N, R=1, T)
+        y = y.permute(0, 2, 1)                  # (B, N, T)
         return y
 
 

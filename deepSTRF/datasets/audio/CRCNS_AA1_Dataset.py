@@ -25,7 +25,6 @@ def get_animals_ids(data_path):
 
 def get_area_cells(data_path):
     """
-    TODO
     From the cell_regions.csv file, returns a dictionary with area labels as keys and lists of cell names as values.
     """
     cell_dict = {
@@ -42,7 +41,6 @@ def get_area_cells(data_path):
 
 def get_stim_ids(data_path):
     """
-    TODO
     From the cell_regions.csv file, returns a dictionary with area labels as keys and lists of cell names as values.
     """
     stim_dict = {
@@ -96,7 +94,7 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
         self.dt = dt
         hl = dt * 32
         transform = torchaudio.transforms.MelSpectrogram(sample_rate=32000, n_fft=10*hl, hop_length=hl, n_mels=32)   # n_fft=800
-
+        self.F = 32
 
         #######################
         # 1. get metadata
