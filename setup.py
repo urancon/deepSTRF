@@ -35,7 +35,7 @@ setup(
         'tqdm'
     ],
     extras_require={
-        'allen': ['allensdk, xarray'],
+        'allen': ['allensdk', 'xarray'],
         'nems': ['PyNEMS']
     }
 )
