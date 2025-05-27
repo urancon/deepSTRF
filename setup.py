@@ -32,7 +32,8 @@ setup(
         'tables',
         'pandas',
         'wandb',
-        'tqdm'
+        'tqdm',
+        'pykeops'
     ],
     extras_require={
         'allen': ['allensdk', 'xarray'],

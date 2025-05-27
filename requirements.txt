@@ -31,3 +31,4 @@ tables
 pandas
 wandb
 tqdm
+pykeops
