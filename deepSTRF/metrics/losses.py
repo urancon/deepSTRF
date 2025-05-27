@@ -21,8 +21,8 @@ class NegativePoissonLogLikelihood(nn.Module):
 
     def forward(self, prediction, psth):
         # both input tensors should be positive and of shape (B, N, T)
-        assert not (prediction < 0.).any() and not (psth < 0.).any()
-        assert prediction.shape == psth.shape
+        assert not (prediction < 0.).any() and not (psth < 0.).any(), "detected non-positive elements in predicted tensor"
+        assert prediction.shape == psth.shape, f"shapes of prediction {prediction.shape} and psth {psth.shape} did not match"
 
         L = - torch.mean((psth * torch.log(-prediction + 1e-9) - prediction), dim=(-2, -1))
         if self.reduction == "mean":

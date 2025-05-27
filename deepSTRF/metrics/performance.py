@@ -1,6 +1,7 @@
 import itertools
 import numpy as np
 import torch
+import scipy
 
 
 ########################################################
@@ -219,7 +220,7 @@ def normalized_correlation_coefficient(y_pred, y_gt, method='schoppe', precomput
     :param y_gt: (B, N, R, T)
     :param method: 'schoppe' or 'hsu'
     :param precomputed_ccmaxes: (B, N) tensor to skip ccmax calculation
-    :param ccmax_iters: int, the number of combinations of trials to compute the ccmax
+    :param ccmax_iters: int, the number of trial combinations to compute the ccmax
     :return: (B, N) or (N,)
     """
     B, N, R, T = y_gt.shape
@@ -283,6 +284,50 @@ def total_power(responses):
     B, N, R, T = responses.shape
     TP = (1 / R) * responses.var(dim=-1).sum(dim=-1)
     return TP
+
+
+########################################################
+# COHERENCE-BASED METRICS
+########################################################
+
+@torch.no_grad()
+def coherence(y_pred, y_gt, dt=1, reduction="mean"):
+    """
+     Computes the coherence function between predicted and groundtruth time series of neural activity..
+
+    :param y_pred: (B, N, T)
+    :param y_gt: (B, N, R, T)
+    :param dt: time bin in ms
+    :return: (B, N) or (N,)
+    """
+    y_gt = y_gt.mean(dim=-2)    # avg over repeats to get the psth: (B, N, R, T) --> (B, N, T)
+    fs = 1 / (dt * 1e-3)
+    _, coh = scipy.signal.coherence(y_pred, y_gt, fs=fs)  # (B, N, F)
+    if reduction == "mean":
+        coh = coh.mean(0)
+    return torch.from_numpy(coh)
+
+
+@torch.no_grad()
+def coherence_information(y_pred, y_gt, dt=1, reduction="mean"):
+    """
+    Computes the coherence-information between predicted and groundtruth time series of neural activity.
+    For more details, please refer to:
+
+        Gill et al. (2025). "Sound representation methods for spectro-temporal receptive field estimation",
+        Journal of Computational Neuroscience
+
+    :param y_pred: (B, N, T)
+    :param y_gt: (B, N, R, T)
+    :param dt: time bin in ms
+    :return: (B, N) or (N,)
+    """
+    coh = coherence(y_pred, y_gt, dt=dt, reduction="none")  # (B, N, F)
+    coh = torch.log2(1 - coh**2)
+    I = coh.mean(dim=-1)                    # (B, N)
+    if reduction == "mean":
+        I = I.mean(0)                       # (N,)
+    return I
 
 
 ########################################################
