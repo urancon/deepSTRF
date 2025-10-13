@@ -8,6 +8,7 @@ respective README, which gives link to their orginal paper / public repository.
 * [CRCNS AC1 (Asari)](README_CRCNS_AC1_Asari.md)
 * [CRCNS AA1](README_CRCNS_AA1.md)
 * [CRCNS AA2](README_CRCNS_AA2.md)
+* [CRCNS AA4](README_CRCNS_AA4.md)
 
 
 ```{toctree}
