@@ -1,13 +1,36 @@
+import gc
 import os
+from tqdm import tqdm
+
 import torch
+import pandas as pd
+
+try:
+    from nems0.recording import load_recording
+    from nems0 import xforms, preprocessing, epoch
+    _NEMS_AVAILABLE = True
+except ImportError:
+    _NEMS_AVAILABLE = False
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 
 
-NAT4_A1_ALL_NEURONS = 849
-NAT4_A1_AUDITORY_NEURONS = 777
-NAT4_PEG_ALL_NEURONS = 398
-NAT4_PEG_AUDITORY_NEURONS = 339
+_NEMS_INSTALL_HINT = (
+    "NAT4_Dataset needs the NEMS0 library to read its .tgz recording format. "
+    "Install it with:\n"
+    "    pip install 'deepSTRF[nems]'\n"
+    "See https://github.com/LBHB/NEMS0 for details."
+)
+
+
+# TODO:
+#  1. load both A1 and PEG at the same time, then select neurons by area with the provided API ?
+#  2. (stim, nrn) pairs with null (R, T) responses --> (R=1, T=1) nan ?
+#  3. smooth resps ?
+#  4. dt_ms ? what determines the size of spectrogram time bins in NEMS ??
+#  5. integrate to NAT4 constructor --> remove preprocessing_script
+#  6. update README
+
 
 
 class NAT4_Dataset(AudioNeuralDataset):
@@ -37,120 +60,174 @@ class NAT4_Dataset(AudioNeuralDataset):
 
 
         """
-    def __init__(self, path: str, area='A1', set='val', neuron_indexes="auditory", normalize_resps=False):
+    def __init__(self, path: str, area='A1'):
         """
         Initializes the NAT4Dataset.
 
         Parameters:
             path (str): Path to the folder containing the datafiles.
             area (str): the cortical area of the recordings, 'A1' or 'PEG'
-            set (str): set of the dataset, can be 'val' for validation dataset or 'est' for estimation dataset.
-            neuron_indexes (iterable): Indexes of neurons to include in the dataset, or 'auditory' for auditory neurons, or simply 'all' for all neurons
-
         """
+
+        if not _NEMS_AVAILABLE:
+            raise ImportError(_NEMS_INSTALL_HINT)
 
         super().__init__(path)
         assert area == "A1" or area == "PEG", f"Unexpected value '{area}' for argument 'area', choose between 'A1' or 'PEG'"
-        assert set == "est" or set == "val", f"Unexpected value '{set}' for argument 'set', choose between 'est' or 'val'."
 
-        self.species = 'ferret'
+        # =========  LOAD THE DATA  ===========
+
+        datafile = path + f'/{area}_NAT4_ozgf.fs100.ch18.tgz'
+        rec = load_recording(datafile)
+
+        context = {'rec': rec}
+        context.update(xforms.normalize_sig(sig='stim', norm_method='minmax', log_compress=1, **context))  # normalize spectrograms (log-compression, important)
+        context.update(xforms.normalize_sig(sig='resp', norm_method='minmax', **context))  # normalize responses
+        context.update(preprocessing.split_pop_rec_by_mask(**context))
+
+        cells = context['rec']['resp'].chans
+        val_sounds = epoch.epoch_names_matching(context['rec']['resp'].epochs, "^STIM_00cat")
+        est_sounds = epoch.epoch_names_matching(context['rec']['resp'].epochs, "^STIM_cat")
+
+        # =========  EXTRACT STIMULUS SPECTROGRAMS  ===========
+
+        # [(S_est + S_val) * {'uid': str, 'subset': str}
+        self.stim_meta = []
+
+        est_spectros = []
+        for est_sound in est_sounds:
+            est_spectro = context['rec']['stim'].extract_epoch(est_sound)
+            est_spectros.append(torch.from_numpy(est_spectro))
+            self.stim_meta.append({'uid': est_sound, 'subset': 'est'})
+        est_spectros = torch.stack(est_spectros)  # (575, 1, 18, 150) = (S, 1, F, T)
+
+        val_spectros = []
+        for val_sound in val_sounds:
+            val_spectro = context['rec']['stim'].extract_epoch(val_sound)  # (1, F=18, T=150)
+            val_spectros.append(torch.from_numpy(val_spectro))
+            self.stim_meta.append({'uid': val_sound, 'subset': 'val'})
+        val_spectros = torch.stack(val_spectros)  # (18, 1, 18, 150) = (S, 1, F, T)
+
+        self.stims = torch.cat([est_spectros, val_spectros], dim=0)  # (S_est + S_val, 1, F, T)
+
+        # =========  MASK FOR 'AUDITORY RESPONSIVE' NEURONS  ===========
+
+        # [N * {'uid': str, 'area': str, 'auditory': bool}]
+        self.pop_metadata = []
+
+        # register the "auditory responsiveness" of neurons, pre-determined by the dataset's authors
+        list_neurons = pd.read_csv(path + f'/{area}_pred_correlation.csv')
+        for cell in cells:
+            cell_auditory = list_neurons.loc[list_neurons['cellid'] == cell]['sig_auditory'].item()
+            self.pop_metadata.append({'uid': cell, 'area': area, 'auditory': cell_auditory})
+
+        # =========  EXTRACT CORRESPONDING RESPONSE TRIALS (ESTIMATION SET) ===========
+        # estimation stimuli were presented only once, sequentially
+
+        est_responses = []
+        for est_sound in est_sounds:
+            est_resp = context['rec']['resp'].extract_epoch(est_sound)  # (R=1, N, T=150), N=849 for A1 and N=398 for PEG
+            est_responses.append(torch.from_numpy(est_resp))
+        est_responses = torch.cat(est_responses)  # (575, N, 150) = (S, N, T)
+        est_responses = est_responses.unsqueeze(2)  # (S, N, R=1, T)
+
+        # =========  EXTRACT CORRESPONDING RESPONSE TRIALS (VALIDATION SET)  ===========
+
+        val_responses = []
+        val_cells = []  # variable to keep track of cells' order as we browse through val files
+
+        del rec
+        del context
+        gc.collect()
+
+        FILES_LIST = os.listdir(os.path.join(path, f'{area}_single_sites/'))
+
+        for filename in tqdm(FILES_LIST):
+
+            # ignore 'TNCxxx' cells since they do not have est set responses
+            if 'TNC' in filename:
+                print(f"skipping {filename} (no est set responses)...")
+                continue
+
+            datafile = path + f'/{area}_single_sites/' + filename
+            single_site_rec = load_recording(datafile)
+
+            val_cells += single_site_rec['resp'].chans  # progressively adds units, but in a different order as in the 'cells' variable
+            responses = []
+
+            for val_sound in val_sounds:
+                resp = single_site_rec['resp'].rasterize()  # (N_subpop, T)
+                subpop_resp = resp.extract_epoch(val_sound)  # (R=20, N_subpop, T_stim_ms=1500)
+                R, N_subpop, T_stim_ms = subpop_resp.shape
+                subpop_resp = subpop_resp.reshape(R, N_subpop, -1, 10).sum(axis=-1)  # (R, N_subpop, N_timebins/10): dt=1ms --> dt=10ms
+                responses.append(torch.from_numpy(subpop_resp))
+
+                del resp
+                gc.collect()
+
+            responses = torch.stack(responses)  # (S, R, N_subpop, T)
+            val_responses.append(responses)
+
+            del single_site_rec
+            gc.collect()
+
+        val_responses = torch.cat(val_responses, dim=2)  # (S, R, N, T)
+        val_responses = val_responses.permute(0, 2, 1, 3)  # (S, N, R, T)
+
+        # at this point responses of all neurons to all val stims are registered (cf. val_responses.shape)
+        # but the order of cells in the neuron dimension differs from est responses. In other words:
+        #  - cells == debug_cells --> False
+        #  - set(cells) == set(debug_cells) --> True
+        # So we need to reorder cells in this dimension to match that in 'est'
+        index_map = {u: i for i, u in enumerate(val_cells)}
+        perm_indices = [index_map[u] for u in cells]  # length N
+        perm_tensor = torch.tensor(perm_indices, dtype=torch.long)
+        val_responses = val_responses.index_select(dim=1, index=perm_tensor)
+        assert [val_cells[i] for i in perm_indices] == cells
+
+        # final responses attribute
+        self.responses = [r for r in est_responses] + [r for r in val_responses]
+
+        # TODO: check (stim, nrn) pairs with null responses --> nan (using special method) ?
+        # val_responses.mean(dim=(2, 3)) --> (S, N)
+        # val_responses.mean(dim=(2, 3)).count_nonzero() / val_responses.mean(dim=(2, 3)).numel()
+
+        # neuron mask attribute. TODO: 1) use compute_nrn_masks() method ? 2) make this attribute obsolete soon ?
+        # for the moment, consider that all neurons had valid responses (even null ones) to all stims, for this dataset
+        self.nrn_masks = torch.ones(len(self.stim_meta), len(self.pop_metadata)).bool()  # (S, N)
+
+        # general attributes
         self.area = area
-        self.set = set
-        self.neuron_indexes = neuron_indexes
+        self.N_neurons = len(self.pop_metadata)
+        self.I = list(range(self.N_neurons))
+        self.dt = 10
+        self.F = 18
+        self.species = 'ferret'
 
-        # select brain area and load the data
-        datafile_name = f'nat4_{area.lower()}.pt'
-        datafile_path = os.path.join(path, datafile_name)
-        data = torch.load(datafile_path)
 
-        # select neurons
-        if neuron_indexes == "all":
-            neuron_indexes = list(range(len(data[f'{set}_responses'])))
-        elif neuron_indexes == "auditory":
-            neuron_indexes = data['auditory']
-        elif neuron_indexes == "non_auditory":
-            raise NotImplementedError  # TODO: allow to choose non-auditory neurons !
-        else:
-            pass
-        self.N_neurons = len(neuron_indexes)
-
-        # select the proper set of the data
-        self.spectrograms = data[f'{set}_spectrograms']             # (N_sounds, 1, N_bands, N_timebins)
-        self.responses = data[f'{set}_responses'][neuron_indexes]   # (N_neurons, N_sounds, N_repeats, N_timebins)
-        self.ccmaxes = data[f'{set}_ccmaxes'][neuron_indexes]       # (N_neurons, N_sounds)
-        self.ttrcs = data[f'{set}_ttrcs'][neuron_indexes]           # (N_neurons, N_sounds)
-
-        # normalize the activity of each neuron so that its maximum PSTH across all sounds is 1.
-        if normalize_resps:
-            self.psth_max = self.responses.mean(dim=2).amax(dim=(1, 2))  # maximum psth (avg across repeats for one sound and one neuron) for further normalization
-            self.responses /= self.psth_max.unsqueeze(1).unsqueeze(1).unsqueeze(1)
-
-        # let us get rid of stimuli eliciting zero response/spike.
-        # for each neuron, we will get the indices of the stimuli that actually elicit nonzero responses
-        # the output will be a list of N_neurons tensors of N_valid_sounds sound indexes (different for each neuron)
-        self.valid_data = []
-        if set == 'est':
-            # estimation sounds only have 1 repeat, so filtering out null neural responses is straightforward
-            for nrn_idx in range(self.N_neurons):
-                responses = self.responses[nrn_idx].sum(dim=(1, 2))     # (N_sounds,) because for each sound sum spikes over trials and timebins
-                valid_indexes = responses.nonzero().squeeze(1)          # (N_valid_sounds < N_sounds)
-                self.valid_data.append(valid_indexes)
-        else:
-            # validation sounds have multiple repeats: if not enough spikes in the response, the ccmax is NaN
-            for nrn_idx in range(self.N_neurons):
-                valid_indexes = (~self.ccmaxes[nrn_idx].isnan()).nonzero().squeeze(1)
-                self.valid_data.append(valid_indexes)
-
-        self.I = [0]  # select neuron #0 by default
-        self.prepare_population_indices()
-
-        print("dataset loaded !")
-
-    def __len__(self):
-        """Returns the number of samples (sound stimuli) in the dataset. """
-        return len(self.valid_stim_idces)
-
-    def __getitem__(self, sound_index):
-        """Retrieves a single sample from the dataset."""
-        # Sounds are indexed from 0 to S (S_est=575, S_val=18)
-        valid_stim_idx = self.valid_stim_idces[sound_index]
-        spectro = self.spectrograms[valid_stim_idx]                 # (1, F, T)
-        responses = self.responses[self.I, valid_stim_idx, :, :]    # (N, R, T)
-        if len(self.I) > 1.:
-            nrn_mask = torch.tensor(self.valid_nrn_idces[sound_index])                  # (N_valid_nrns,)
-            nrn_mask = torch.nn.functional.one_hot(nrn_mask, num_classes=len(self.I))   # (N_valid_nrns, I)
-            nrn_mask = nrn_mask.sum(dim=0).bool()                                       # (N_valid_nrns, )
-        else:
-            nrn_mask = torch.ones(len(self.I)).bool()                                   # (N_valid_nrns, )
-        return spectro, responses, nrn_mask
-
-    def select_neuron(self, neuron_index):
-        assert (isinstance(neuron_index, int)) and (neuron_index >= 0) and (neuron_index < self.N_neurons), \
-            "neuron_index must be positive and < to the # neurons"
-        self.I = [neuron_index]
-        self.prepare_population_indices()
-
-    def select_population(self, neuron_indices):
-        for neuron_index in neuron_indices:
-            assert (isinstance(neuron_index, int)) and (neuron_index >= 0) and (neuron_index < self.N_neurons), \
-                "neuron_index must be positive and < to the # neurons"
-        self.I = list(neuron_indices)
-        self.prepare_population_indices()
-
-    def prepare_population_indices(self):
+    @staticmethod
+    def replace_null_resps_by_nan_placeholder(responses):
         """
-        for each stimulus, if at least one neuron has spiked, create a mask with the indices of the neurons which did
-        also keep the indices of those stimuli with non-null responses
+        Some stimuli elicit no spikes to some neurons in any trial at all: these are null responses.
+        They take the same amount of memory as other responses as an (R, T) tensor full of zeros.
+        This function replaces them by a (1, 1) NaN placeholder, in conformity with deepSTRF's guidelines.
 
-        TODO: find a way to do this without this specific function, for coherence with the dataset API
+        # TODO: also discard null trials ???
         """
-        self.valid_stim_idces = []
-        self.valid_nrn_idces = []
-        for stim_idx in range(len(self.spectrograms)):
-            mask = []
-            for nrn_idx in self.I:
-                if stim_idx in self.valid_data[nrn_idx]:
-                    mask.append(nrn_idx)
-            if len(mask) > 0:
-                self.valid_stim_idces.append(stim_idx)
-                self.valid_nrn_idces.append(mask)
+
+        final_resps = []
+        S_val, N, _, _ = responses.shape
+        mask = responses.mean(dim=(2, 3)) > 0.
+        for s in range(S_val):
+
+            temp_stim_resps = []
+
+            for n in range(N):
+                # if at least one spike was elicited for this neuron by this stim, keep the responses
+                if mask[s, n]:
+                    temp_stim_resps.append(responses[s, n])
+                # if no response elicited at all, nan placeholder instead
+                else:
+                    temp_stim_resps.append(torch.full((1, 1), fill_value=torch.nan))
+
+            final_resps.append(temp_stim_resps)
