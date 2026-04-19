@@ -80,6 +80,7 @@ dev = [
     "pre-commit>=3",
     "ipython>=8",
     "ipykernel>=6",
+    "nbstripout>=0.7",
 ]
 
 # Allen Brain Observatory (visual datasets): allensdk is heavy so it's opt-in.
