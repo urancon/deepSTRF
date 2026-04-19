@@ -1,17 +1,63 @@
+# =============================================================================
+# deepSTRF-specific
+# =============================================================================
+
+# --- Claude Code / local-only assistant files (NEVER push) ---
+/CLAUDE.md
+/NEXT_PROMPT.md
+.claude/
+
+# --- Paper drafts and supplementary (NEVER push) ---
+/deepSTRF_paper_draft.pdf
+*paper_draft*
+/paper/
+/paper_figures/
+
+# --- Raw & preprocessed dataset data (NEVER push, hosted on CRCNS/OSF/Zenodo/Dryad) ---
+# Any 'data/' subdirectory anywhere under the datasets tree.
+deepSTRF/datasets/**/data/
+# Dataset-host README PDFs that live next to the data dirs.
+deepSTRF/datasets/**/*-readme.pdf
+deepSTRF/datasets/**/*_readme.pdf
+deepSTRF/datasets/**/ReadMe.*
+# Stray preprocessed dumps occasionally produced by preprocessing scripts.
+deepSTRF/datasets/**/*.pt
+
+# --- Data file extensions (neural recordings / spectrograms / archives) ---
 *.pt
 *.pth
+*.npy
+*.npz
+*.mat
+*.h5
+*.hdf5
+*.nwb
+*.wav
+*.mp3
+*.flac
+*.csv
+*.tsv
+*.parquet
+*.zip
 *.tgz
 *.tar.gz
-*.mat
-*.wav
-*.csv
-*.h5
-*.npy
-*.nwb
+*.tar
+*.rar
+*.7z
+*.bz2
+
+# --- Run outputs / experiments ---
+wandb/
+/deepSTRF/results/
+/results/
+/checkpoints/
+/runs/
+*.ckpt
 
 
-*.vscode/
-docs/_build/
+# =============================================================================
+# Python standard ignores
+# =============================================================================
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -42,8 +88,6 @@ share/python-wheels/
 MANIFEST
 
 # PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
 
@@ -70,20 +114,8 @@ cover/
 *.mo
 *.pot
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
 # Sphinx documentation
+docs/_build/
 docs_md/_build/
 
 # PyBuilder
@@ -91,43 +123,23 @@ docs_md/_build/
 target/
 
 # Jupyter Notebook
-.ipynb_checkpoints
+.ipynb_checkpoints/
 
 # IPython
 profile_default/
 ipython_config.py
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
+# pyenv / pipenv / poetry / pdm
 # .python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
-
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#pdm.lock
-#   pdm stores project-wide configurations in .pdm.toml, but it is recommended to not include it
-#   in version control.
-#   https://pdm.fming.dev/#use-with-ide
+# Pipfile.lock
+# poetry.lock
+# pdm.lock
 .pdm.toml
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
+# PEP 582
 __pypackages__/
 
-# Celery stuff
+# Celery
 celerybeat-schedule
 celerybeat.pid
 
@@ -143,87 +155,35 @@ ENV/
 env.bak/
 venv.bak/
 
-# Spyder project settings
+# Spyder / Rope
 .spyderproject
 .spyproject
-
-# Rope project settings
 .ropeproject
 
-# results
-.pth
-
-# mkdocs documentation
+# mkdocs
 /site
 
-# mypy
+# mypy / pyre / pytype / ruff
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# Pyre type checker
 .pyre/
-
-# pytype static type analyzer
 .pytype/
+.ruff_cache/
 
 # Cython debug symbols
 cython_debug/
 
-# Weights and Biases
-wandb/
-.yaml
+# Logs
+*.log
 
-# PyCharm
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
+# =============================================================================
+# IDEs / editors
+# =============================================================================
 .idea/
-/__pycache
-__pycache/
-__pycache
-.pt
-/deepSTRF/datasets/audio/NAT4/nat4_a1.pt
-/deepSTRF/datasets/audio/NAT4/nat4_peg.pt
-/deepSTRF/datasets/audio/NAT4/primary data processing/ccmax_a1.pt
-/deepSTRF/datasets/audio/NAT4/primary data processing/ccmax_peg.pt
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_single_sites/PEG_ARM017a_78f8cd0f60b245f8dd137e6b00306c27f0cae9af.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_single_sites/PEG_ARM018a_5e04645168a032cf445a5246a5865c1977a2378c.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_single_sites/PEG_ARM019a_54195bae38f79360e61248914f2f035ead3c0279.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_single_sites/PEG_ARM021b_ee2e2266509d78ceadee0da7906dadeb049c8909.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_single_sites/PEG_ARM022b_5e0509b8a4bf6dd7ad890b620f1313941612e49a.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_single_sites/PEG_ARM023a_55b620d7fd2958d3201d347d75c6b1be9aa757d9.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_single_sites/PEG_ARM024a_b97ebd6d2780914105a1562ce19942dacaf8abb5.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_single_sites/PEG_ARM025a_b6cabae20ac9a9d2863fa68569037b29fb1b62ed.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_single_sites/PEG_ARM026b_f230bfe4a990c4a8eadcb843bbcb4deb79c837c9.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_single_sites/PEG_ARM027a_c36811efdff0d4136be330e77953f6c6e69c7aec.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_single_sites/PEG_ARM028b_f2005ed600d22a854579b7735758144c15c56f46.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_single_sites/PEG_TNC022a_5da19f65eab678631540a3074cefc14e80dd076c.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_ARM029a_aefada7c479857e55fdafe3e00e94df189250651.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_ARM030a_9b0586bd962b60ab7b02a21771c98695134b8be8.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_ARM031a_e73a3420ba4e26d680d9a8adc5bef1c32f6d9617.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_ARM032a_d28371c918efb9917c560f41e51ff15efdf516c5.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_ARM033a_8bc7cdda34517574d7973a1b6352d52d873bad7b.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_CRD016d_f9cf97eab58415d6187e5f104e9df6bf06a9fd99.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_CRD017c_07010f7f2781fc649e4f1f90679212e60a7ff3b4.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_DRX006b_adb77e6b989c6b08bf7fce0c19ab1a94ba124399.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_DRX007a_5409c3cb81c2745cec8af5f9a1402ed24ea7ec7d.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_DRX008b_240d4f51148b270f6dc099eaccd4f316ce3021f5.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_TNC008a_2eb34ed73bb45f087a72652b5fcea810a9f2e9c9.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_TNC009a_91819235d1188908cee2787e5769d3613fbd756f.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_TNC010a_2f50864a77d8ec2f1786ebd8b0161114a9e905b1.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_TNC012a_c677f8485dfd121765cd31de50230196a8a4bcc1.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_TNC013a_cc40dccc6e141410c8b0c16e403b763ad368b170.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_TNC014a_a0ebe478cdce9612658c29d6766859fd66f1a3b6.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_TNC015a_abf3608afd9b5c83bf8ed17a5ac61040e9c83261.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_TNC016a_13decf694dbf004e611c8e362e23b6fa7852ee4b.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_TNC017a_2d5a6c489bf573e2f762eb2e17ca5478271fcc64.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_TNC018a_2d5a31aeb27af29f52739c37061da96fcb058e96.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_TNC020a_2f0624a284401ad0e40680435fc57de3873e0a2c.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_single_sites/A1_TNC021a_89668bbfb0d89473b8efff14b7b6625bb58060dd.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_NAT4_ozgf.fs100.ch18.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_NAT4_ozgf.fs100.ch18.tgz
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/A1_pred_corr.csv
-/deepSTRF/datasets/audio/NAT4/primary data processing/data_files_here/PEG_pred_corr.csv
-/deepSTRF/datasets/audio/NS1_DRC/data/spikesandwav/
+*.iml
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
