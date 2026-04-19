@@ -37,13 +37,15 @@ html_static_path = ['_static']
 html_logo = "_static/deepstrf_logo.png"
 
 
-from recommonmark.parser import CommonMarkParser
-
-source_parsers = {
-    '.md': CommonMarkParser
+# Markdown is handled by myst_parser; .ipynb by nbsphinx.
+source_suffix = {
+    '.rst': 'restructuredtext',
+    '.md': 'markdown',
+    '.ipynb': 'jupyter_notebook',
 }
 
-source_suffix = ['.rst', '.md']
+# Don't re-execute notebooks at build time (we commit pre-run outputs).
+nbsphinx_execute = 'never'
 
 
 
