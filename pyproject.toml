@@ -118,3 +118,17 @@ version = { attr = "deepSTRF._version.__version__" }
 where = ["."]
 include = ["deepSTRF*"]
 exclude = ["tests*", "docs*", "scripts*"]
+
+# -----------------------------------------------------------------------------
+# pytest
+# -----------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = [
+    "-ra",               # short summary for everything except passed
+    "--strict-markers",  # unknown @pytest.mark.foo -> error
+    "--strict-config",
+]

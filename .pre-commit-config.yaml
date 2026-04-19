@@ -1,0 +1,26 @@
+# Pre-commit hooks for deepSTRF.
+# Activate once per clone with:
+#     pip install -e ".[dev]"
+#     pre-commit install
+# After that, hooks run automatically on every `git commit`.
+
+repos:
+  # Basic hygiene: trailing whitespace, end-of-file newline, large files guard.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=5000]  # refuse staging a file >5 MB (data should never be staged)
+
+  # Strip outputs from dataset-exploration notebooks so they don't balloon.
+  # Scoped to test_*.ipynb only — fit_*.ipynb keep their outputs (they show
+  # meaningful model-fit results and are small enough to ship as-is).
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.7.1
+    hooks:
+      - id: nbstripout
+        files: ^docs/_source/ipynb/test_.*\.ipynb$
