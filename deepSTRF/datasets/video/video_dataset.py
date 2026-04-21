@@ -15,19 +15,13 @@ class VideoNeuralDataset(NeuralDataset):
 
     """
 
-    def __init__(self, 
-                 path: str,
-                 ):
-        super().__init__(path)
-    
+    def __init__(self, path: str, dt_ms: float):
+        super().__init__(path, dt_ms)
+
     def get_dt(self):
         """ Returns the time step """
         return self.dt
 
-    def get_pop_metadata(self):
-        """Retrieve metadata for each currently selected neuron"""
-        return [self.nrn_meta[i] for i in self.I]
-    
     def normalize_videos(self, video_tensor):
         """Normalize the video stimuli by dividing it by the time dimension."""
         # shape of video_tensor (N_seqs, C, H, W, T) or (N_neurons, N_seqs, C, H, W, T)
