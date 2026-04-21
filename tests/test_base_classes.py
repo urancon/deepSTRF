@@ -126,32 +126,55 @@ def test_audio_neural_dataset_validate_requires_F():
 # NeuralModel
 # -----------------------------------------------------------------------------
 
-def test_neural_model_is_nn_module():
+def _make_concrete_neural_model(**kwargs):
+    """Minimal concrete NeuralModel subclass for testing non-abstract behavior."""
     from deepSTRF.models.neural_model import NeuralModel
+
+    class _Concrete(NeuralModel):
+        def forward(self, stimulus):
+            return stimulus
+
+    return _Concrete(**kwargs)
+
+
+def test_neural_model_is_nn_module_and_abc():
+    from abc import ABC
+    from deepSTRF.models.neural_model import NeuralModel
+
     assert issubclass(NeuralModel, nn.Module)
+    assert issubclass(NeuralModel, ABC)
 
 
-def test_neural_model_instantiation_and_defaults():
+def test_neural_model_cannot_instantiate_without_forward():
+    """ABC enforcement: bare NeuralModel() must fail because forward is abstract."""
     from deepSTRF.models.neural_model import NeuralModel
 
-    m = NeuralModel()
-    assert m.O == 1
+    with pytest.raises(TypeError):
+        NeuralModel()
 
-    m2 = NeuralModel(out_neurons=7)
+
+def test_neural_model_concrete_instantiation_and_defaults():
+    m = _make_concrete_neural_model()
+    assert m.O == 1
+    assert isinstance(m.output_activation, nn.Module)
+
+    m2 = _make_concrete_neural_model(out_neurons=7)
     assert m2.O == 7
 
 
-def test_neural_model_forward_is_abstract():
-    """The base class should raise NotImplementedError on forward()."""
-    from deepSTRF.models.neural_model import NeuralModel
-
-    m = NeuralModel()
-    with pytest.raises(NotImplementedError):
-        m.forward(torch.zeros(1))
-
-
 def test_neural_model_count_trainable_params_zero_by_default():
-    """The bare NeuralModel has no trainable params (only an Identity output activation)."""
-    from deepSTRF.models.neural_model import NeuralModel
-    m = NeuralModel()
+    """A bare concrete model has no trainable params (only Identity output activation)."""
+    m = _make_concrete_neural_model()
     assert m.count_trainable_params() == 0
+
+
+def test_neural_model_validate_passes_on_valid_instance():
+    m = _make_concrete_neural_model()
+    m.validate()  # must not raise
+
+
+def test_neural_model_validate_fails_on_bad_state():
+    m = _make_concrete_neural_model()
+    m.O = 0
+    with pytest.raises(AssertionError):
+        m.validate()

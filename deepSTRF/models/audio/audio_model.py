@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from torch.nn.parameter import Parameter
 
 from deepSTRF.models.neural_model import NeuralModel
@@ -7,9 +8,9 @@ from deepSTRF.models.prefiltering import get_CFs, freq_to_tau, tau_to_a, AdapTra
 
 class AudioNeuralModel(NeuralModel):
     """
-    General mother class for datasets of AUDIO sensory neural responses
+    General mother class for ENCODING models of AUDIO sensory neural responses.
 
-    TODO: description
+    The forward() method takes as input a single-channel spectrogram of shape (B, C=1, F, T)
 
     TODO: is it the best way (i.e., syntax) to integrate prefiltering schemes ?
     The constructor prepares the instanciation of the cochleagram prefiltering block, which comes before the
@@ -17,16 +18,10 @@ class AudioNeuralModel(NeuralModel):
     prefiltering_dict = {'prefiltering': 'AdapTrans', 'dt': 1.0', 'min_freq': 500, 'max_freq': 20000, 'scale': 'mel'}
     prefiltering: None (default), 'adaptrans' (recommended), 'willmore'
 
-
-
-    The forward() method:
-     - takes as input a single-channel spectrogram of shape (B, C=1, F, T)
-     - outputs a population activity over time of shape (B, N, R=1, T)
-
     """
 
-    def __init__(self, n_frequency_bands, temporal_window_size, out_neurons: int = 1, prefiltering: dict = None, *args, **kwargs):
-        super().__init__(out_neurons, *args, **kwargs)
+    def __init__(self, n_frequency_bands, temporal_window_size, out_neurons: int = 1, output_activation: nn.Module = nn.Identity(), prefiltering: dict = None, *args, **kwargs):
+        super().__init__(out_neurons, output_activation, *args, **kwargs)
 
         # general attributes for AUDIO response models
         self.F = n_frequency_bands
@@ -37,7 +32,7 @@ class AudioNeuralModel(NeuralModel):
             self.prefiltering = False
             self.C_in = 1
         else:
-            assert isinstance(prefiltering, dict) and 'type' in prefiltering.keys(), "Unvalid format for 'prefiltering'argument. Expected dict with 'type' key."
+            assert isinstance(prefiltering, dict) and 'type' in prefiltering.keys(), "Invalid format for 'prefiltering'argument. Expected dict with 'type' key."
             prefiltering_type = prefiltering['type']
 
             if prefiltering_type.lower() == 'adaptrans':
@@ -72,9 +67,18 @@ class AudioNeuralModel(NeuralModel):
                 raise NotImplementedError(
                     f"Unknown prefiltering {prefiltering_type}. Currently supported spectrogram prefiltering are 'adaptrans' and 'willmore'.")
 
+    def validate(self):
+        super().validate()
+        assert isinstance(self.F, int) and self.F > 0, \
+            f"self.F must be a positive int (got {self.F!r})"
+        assert isinstance(self.T, int) and self.T > 0, \
+            f"self.T must be a positive int (got {self.T!r})"
+        assert self.C_in in (1, 2), \
+            f"self.C_in must be 1 or 2 (got {self.C_in!r})"
+
     def STRF_gradmap(self, T=None):
         """
-            Get the Spectro-Temporal Receptive Field (STRF) of the OUTPUT neurons, with a history of T timesteps, as
+            Get the SPECTRO-Temporal Receptive Field (STRF) of the OUTPUT neurons, with a history of T timesteps, as
              the changes in the stimulus that elicit an increase in output activity.
 
             cf. Rançon et al. (2025), "Temporal recurrence as a general mechanism to explain neural responses in
@@ -82,8 +86,9 @@ class AudioNeuralModel(NeuralModel):
 
             Returns a (N, 1, F, T) tensor
 
-            # TODO: handle multiple input channels (on & off) because of adaptrans ?
-            # TODO: allow custom losses ? (e.g. population ? sustained activity rather than last spike ?)
+            TODO:
+             - handle multiple input channels (on & off) because of adaptrans ?
+             - allow custom losses ? (e.g. sustained activity rather than last spike ?)
         """
         B = self.O      # use the batch dimension to parallelize
 
