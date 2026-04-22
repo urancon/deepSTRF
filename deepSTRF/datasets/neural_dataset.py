@@ -11,18 +11,50 @@ from torch.utils.data.dataset import Dataset
 
 
 class NeuralDataset(Dataset, ABC):
-    """General mother class for handling datasets of sensory neural responses.
+    """General base class for datasets of sensory neural responses.
 
-    Subclasses must populate the following attributes in their ``__init__``,
-    then call ``self.validate()`` as the last line:
-        - ``self.stims``          — list or tensor of stimuli (modality-specific shape)
-        - ``self.responses``      — list of lists of response tensors, indexed [s][n]
-        - ``self.stim_meta``      — list of per-stimulus metadata (tuple or dict)
-        - ``self.neuron_metadata`` — list of per-neuron metadata (dict or tuple)
-        - ``self.N_neurons``      — total number of neurons
+    deepSTRF datasets are **triply ragged** (variable stim duration, variable
+    repeat count per (stim, neuron), sparse stim/neuron coverage). They are
+    stored as Python lists of tensors, with NaN used as the single channel
+    for encoding missingness. See ``docs/_source/md/data_paradigm.md`` for
+    the full rationale, collate behaviour, and recommended loss pattern.
 
-    After populating these, the subclass should call ``self.compute_nrn_masks()``
-    (which fills ``self.nrn_masks``) before iteration.
+    Subclass contract
+    -----------------
+    A concrete subclass must populate the following attributes in its
+    ``__init__`` and then call ``self.compute_nrn_masks()`` followed by
+    ``self.validate()`` as its last two lines:
+
+    - ``self.stims``           — list of length ``S``, each element a stimulus
+                                  tensor of modality-specific shape
+                                  (audio: ``(1, F, T_s)``, video:
+                                  ``(1, H, W, T_s)``). ``T_s`` may vary.
+    - ``self.responses``       — list of length ``S``, each element itself a
+                                  list of length ``N``. ``responses[s][n]`` is
+                                  a ``(R_{s,n}, T_s)`` float tensor of spike
+                                  counts per repeat × time bin, or a
+                                  ``(1, 1)`` NaN tensor if neuron ``n`` did
+                                  not hear stim ``s``.
+    - ``self.stim_meta``       — list of length ``S``, per-stim metadata
+                                  (tuple or dict).
+    - ``self.neuron_metadata`` — list of length ``N``, per-neuron metadata.
+    - ``self.N_neurons``       — int, must equal ``len(self.neuron_metadata)``.
+
+    Derived attributes set by ``compute_nrn_masks()``:
+
+    - ``self.nrn_masks`` — ``(S, N)`` bool tensor. ``nrn_masks[s, n]`` is
+      ``True`` iff neuron ``n`` has real data for stim ``s``. Used by
+      ``__len__``, ``__getitem__``, and the selection helpers.
+
+    Key invariants
+    --------------
+    - **Stim tensors never contain NaN.** Batch-level collate zero-pads them
+      on the right along ``T``.
+    - **Response tensors may contain NaN.** Use ``self.nrn_masks`` (dataset
+      level) or the derived ``valid_mask`` from collate (batch level).
+    - Response-side preprocessing (``smooth_responses``, ``normalize_responses``,
+      any user-written transform) must be NaN-aware — either use
+      ``nanmean`` / ``nanstd`` / etc., or apply the mask before reducing.
     """
 
     def __init__(self, path: str, dt_ms: float):
