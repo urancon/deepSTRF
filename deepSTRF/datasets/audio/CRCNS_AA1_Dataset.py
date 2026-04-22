@@ -7,6 +7,13 @@ import torchaudio
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 
 
+# TODO (misc.):
+#  - find a way to use pre-onset activity ?
+#  - make concatenable ?
+#  - use sorted() for repeatability across platforms
+#  - mutualize time_binning(), load_spike_file(), apply_hanning_window() over (CRCNS-AAx) datasets ?
+
+
 def get_animals_ids(data_path):
     """
     Takes in the path of the 'CRCNS_AA1/data/' folder, goes through 'Field_L/' and 'MLd', and outputs a list of unique
@@ -57,44 +64,77 @@ def get_stim_ids(data_path):
 
 class CRCNS_AA1_Dataset(AudioNeuralDataset):
     """
-    TODO: description
-
-    TODO:
-     - find a way to use pre-onset activity ?
-     - get_F() method
+    A PyTorch dataset for handling neural data from the CRCNS-AA1 dataset.
 
 
+    =============== SOURCE ================
 
-    50 cells in field L
-    50 cells in field MLd
+    See original papers for details:
+     - "Tuning for Spectro-temporal Modulations: a Mechanism for Auditory Discrimination of Natural Sound" by Woolley et al. (2005)
+     - "Modulation and phase spectrum of natural sounds enhance neural discrimination performed by single auditory neurons" by Hsu et al. (2004)
+     - "Modulation spectra of natural sounds and ethological theories of auditory processing" by Singh and Theunissen (2003)
+
+    Data available at: https://crcns.org/data-sets/aa/aa-1/about
+
+
+    =============== DETAILS ================
+
+    More details can be found in the dataset source, our dedicated readme file, or in the original papers.
+    But in a nutshell:
+     - extracellular, spike-sorted single units of anesthetized male zebra finches
+     - 50 cells in field L, 50 in MLd
+     - 10 clips of conspecific vocalizations and 20 clips of flat ripples, up to 5 s duration.
+     - 10 trials on average
+
+
+    =============== STRUCTURE ================
+
+    Follows the standard deepSTRF data paradigm (see docs/_source/md/data_paradigm.md):
+     - self.stims                       list of length S, each (1, F, T_s)
+     - self.responses                   list of length S of list of length N,
+                                        responses[s][n] of shape (R_{s,n}, T_s)
+                                        or (1, 1) NaN if neuron n did not hear stim s
+     - self.stim_meta                   list of length S, ('stim_name', 'stim_type')
+     - self.neuron_metadata             list of length N, ('cell_id', 'animal_id', 'area')
+     - self.nrn_masks                   (S, N) bool tensor, derived by compute_nrn_masks()
+
+
+    =============== REMARKS ================
 
     only cell 'pipu1018_2_A' in 'MLd' does not have responses to 'conspecific' stims
     only cell 'pipu1018_2_B' in 'Field_L' does not have responses to 'conspecific' stims
 
     """
 
-    def __init__(self, path: str, areas=('Field_L', 'MLd'), stimuli=('conspecific', 'flatrip'), animals='all',
-                 neuron_indexes='all', dt=1, smooth=True):
+    def __init__(self, path: str, areas=('Field_L', 'MLd'), stimuli=('conspecific', 'flatrip'), animals='all', dt_ms=1, smooth=True, n_mels=32, compression='cubic'):
         """
-        TODO: update description
+        Initializes the AA1 Dataset
 
-        smooth --> smooth with 21 ms Hanning window
+        Specific units can be selected according to the stimulus they were presented, their animal, and recording site.
 
-        TODO: use sorted() for repeatability across platforms
-
+        Parameters:
+            path (str): Path to the 'CRCNS_AA2/data/' folder containing files as indicated in our readme
+            areas (tuple of str): recording sites of interest, can be 'Field_L' or 'MLd'
+            stimuli (tuple of str): stimulus types of interest, can be 'conspecific' or 'flatrip'
+            dt (float): time step size in ms
+            n_mels (int): number of mel frequency bands the stimulus should have in spectrogram form
+            compression: compression function to apply to the stimulus spectrogram
         """
 
-        super().__init__(path)
+        super().__init__(path, dt_ms)
 
+        # general
         self.species = 'zebra finch'
+        self.behavioral_state = 'anesthetized'
+
         # hop_length (samples) | dt (ms)
         # 320 | 10
         # 160 | 5
         # 32  | 1
-        self.dt = dt
-        hl = dt * 32
-        transform = torchaudio.transforms.MelSpectrogram(sample_rate=32000, n_fft=10*hl, hop_length=hl, n_mels=32)   # n_fft=800
-        self.F = 32
+        self.F = n_mels
+        hl = dt_ms * 32
+        transform = torchaudio.transforms.MelSpectrogram(sample_rate=32000, n_fft=10 * hl, hop_length=hl, n_mels=self.F)  # n_fft=800
+        self.compression = compression
 
         #######################
         # 1. get metadata
@@ -125,13 +165,15 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
             cells += AREA_CELLs[area]
             cell_areas += ([area] * len(AREA_CELLs[area]))
 
-        # filter cell by animal
+        # filter cells by animal
         if animals == 'all':
-            animals = ANIMAL_IDs
-        cells = [cell for cell in cells if cell.split('_')[0] in animals]
+            self.animals = ANIMAL_IDs
+        else:
+            self.animals = animals
+        cells = [cell for cell in cells if cell.split('_')[0] in self.animals]
         cell_animals = [cell.split('_')[0] for cell in cells]
 
-        # filter stimuli by stimulus type
+        # filter stimuli by type
         stims = []
         stim_types = []
         for stim_type in stimuli:
@@ -166,12 +208,11 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
         # 3. cells & stims selection
         ################################
 
-        self.spectrograms = []      # --> S * (1, F, T)
-        self.responses = []         # --> S * (N, R, T)
-        self.nrn_masks = []         # --> S * (N,)
-        self.stim_meta = []         # --> S * ['stim_name', 'stim_type']
-        stim_meta = list(zip(stims, stim_types))                    # S * ['stim_name', 'stim_type']
-        self.nrn_meta = list(zip(cells, cell_animals, cell_areas))  # --> N * ['cell_id', 'animal_id', 'area']
+        self.stims = []             # --> list of S tensors of shape (1, F, T_s)
+        self.responses = []         # --> list of S lists of N tensors of shape (R_{s,n}, T_s)
+        self.stim_meta = []         # --> list of S tuples (stim_name, stim_type)
+        stim_meta = list(zip(stims, stim_types))
+        self.neuron_metadata = list(zip(cells, cell_animals, cell_areas))  # --> list of N tuples (cell_id, animal_id, area)
 
         for s, (stim_name, stim_type) in enumerate(stim_meta):
 
@@ -180,19 +221,27 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
             stims_dir = os.path.join(path, f"all_stims/{stim_type}/")
 
             wav, sr = torchaudio.load(os.path.join(stims_dir, stim_name), normalize=True)  # sample rate: 32 kHz (mono)
-            spec = torch.log10(transform(wav))  # (T,) --> (1, F, T-)
+            assert sr == 32000, f"found wav sr of {sr}, expected 32000"
+            spec = transform(wav)  # (T,) --> (1, F, T-)
+            if self.compression == 'cubic':
+                spec = torch.pow(spec, 1.0 / 3)
+            elif self.compression == 'log1p':
+                spec = torch.log1p(spec)
+            elif self.compression == 'none':
+                pass
+            T = spec.shape[-1]  # nbr of timesteps of current stim, in spectrogram form
 
             # =========== load the resps ============
 
             pop_resps = []
             no_data_nrn_idces = []
 
-            for n, (cell_name, animal_id, area) in enumerate(self.nrn_meta):  # TODO: for loop on self.nrn_meta
+            for n, (cell_name, animal_id, area) in enumerate(self.neuron_metadata):
 
                 # some cells may not have any response for the current stim type;
                 # if that is the case --> null response directly
                 if stim_type not in os.listdir(os.path.join(path, f'{area}_cells/', cell_name)):
-                    resp = torch.zeros(20, 1000)  # TODO: use torch.full(..., fill_value=torch.nan) instead ?
+                    resp = torch.full((1,1), fill_value=float('nan'))
                     no_data_nrn_idces.append(n)
 
                 # if they do have responses to this stim_type:
@@ -214,7 +263,7 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
                     # some neurons may have responses to stims of this type, but not this one in particular;
                     # in this case --> null response
                     if no_stim:
-                        resp = torch.zeros(20, 1000)  # TODO: use torch.full(..., fill_value=torch.nan) instead ?
+                        resp = torch.full((1,1), fill_value=float('nan'))
                         no_data_nrn_idces.append(n)
 
                     #  3. if they do indeed have a response to this specific stim, get the response
@@ -222,74 +271,53 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
                         spike_file = os.path.join(spike_dir, f'spike{i}')
                         try:
                             resp = load_spike_file(spike_file, dt=self.dt)  # (R, T)
+
+                            # crop responses to the right such that they have the same time dimension as the stimulus duration
+                            # TODO:
+                            #   - alternatively, pad VALID responses to the right to Tmax = the longest response duration
+                            #   - then, edit the collate_fn in order to pad spectrograms to the right with zeros so that they match the size of the longest recorded response
+                            #   - this would allow to keep spontaneous activity after stimulus offset
+                            # if the response of the neuron is shorter than the sound (i.e., last spike recorded before end of sound),
+                            # then pad to the right (future) with zeros (i.e., no spikes)
+                            if resp.shape[-1] <= T:
+                                Pt = T - resp.shape[-1]
+                                resp = torch.nn.functional.pad(resp, pad=(0, Pt), mode='constant', value=0.)
+                            # if the response of the neuron is longer than the sound (because spikes were detected after sound
+                            # termination), just keep the part of the response associated with the stim
+                            else:
+                                resp = resp[:, :T]
+
+                            # finally, apply a 21 ms hanning window to smooth the PSTHs
+                            if smooth:
+                                Kt_hanning = (21 // dt_ms) if ((21 // dt_ms % 2) == 1) else (21 // dt_ms) + 1  # odd kernel
+                                resp = apply_hanning_window(resp.unsqueeze(0), hanning_size=Kt_hanning)[0]
+
                         # some neurons have a 'stimXX' file, but not the corresponding 'spikeXX' file
                         except FileNotFoundError:
-                            resp = torch.zeros(20, 1000)  # TODO: use torch.full(..., fill_value=torch.nan) instead ?
+                            resp = torch.full((1,1), fill_value=float('nan'))
                             no_data_nrn_idces.append(n)
 
                 # add the cell's response, whether it is null or not, to the population activity for this stim
+                # at the end of the for loop on cells, pop_resps is [N * (R_n, T_ns)]
                 pop_resps.append(resp)
 
-            # make a neuron mask for this stim: 1 --> response data for this neuron, 0 --> no response data
+            # assert population response is well-formed
             assert len(pop_resps) == self.N_neurons
-            mask = torch.ones(self.N_neurons)
-            mask[no_data_nrn_idces] = 0
-            mask = mask.bool()
 
-            # if none of the neurons have emitted a spike, do not keep this stim and its response
-            if mask.sum() == 0:
+            # if none of the neurons heard this stim at all, skip it
+            if len(no_data_nrn_idces) == self.N_neurons:
                 continue
 
-            # if activity (spikes) have been recorded, keep it and continue the processing
-            else:
+            # otherwise keep the stim and its per-neuron responses
+            # (self.nrn_masks is built by self.compute_nrn_masks() below, not here)
+            self.stims.append(spec)
+            self.responses.append(pop_resps)
+            self.stim_meta.append((stim_name, stim_type))
 
-                # pad responses so that their tensors all have the same time dimension as the stimulus duration;
-                # also remove extra trials to the responses of very few units   TODO: add null trials instead ??
-                T = spec.shape[-1]  # nbr of timesteps of curr stim
-                R = min([resps.shape[-2] for resps in
-                         pop_resps])  # min nbr of repeats in the pop for this stim   # TODO: change this !! no discarding of data !!!
-                for n in range(self.N_neurons):
-                    # if the response of the neuron is shorter than the sound, pad to the right (future)
-                    if pop_resps[n].shape[-1] <= T:
-                        Pt = T - pop_resps[n].shape[-1]
-                        pop_resps[n] = torch.nn.functional.pad(pop_resps[n], pad=(0, Pt), mode='constant', value=0.)
-                    # if the response of the neuron is longer than the sound (because spikes were detected after sound
-                    # termination), just keep the part of the response associated with the stim
-                    else:
-                        pop_resps[n] = pop_resps[n][:, :T]
-                    # only keep the minimum number of trials    TODO: add null trials  up to the max number of trials instead ??
-                    pop_resps[n] = pop_resps[n][:R, :]
+        # populate self.nrn_masks (S, N) bool from the NaN sentinels, then validate
+        self.compute_nrn_masks()
+        self.validate()
 
-                assert len(mask) == len(pop_resps), f"{len(mask)}, {len(pop_resps)}"
-
-                pop_resps = torch.stack(pop_resps, dim=0)  # (N, R, T)
-
-                # finally, apply a 21 ms hanning window to smooth the PSTHs
-                if smooth:
-                    Kt_hanning = (21 // dt) if ((21 // dt % 2) == 1) else (21 // dt) + 1  # odd kernel
-                    pop_resps = apply_hanning_window(pop_resps, hanning_size=Kt_hanning)
-
-                self.responses.append(pop_resps)
-                self.nrn_masks.append(mask)
-                self.spectrograms.append(spec)
-                self.stim_meta.append((stim_name, stim_type))
-
-    def __len__(self):
-        """
-        Returns the number of samples in the dataset.
-        """
-        return len(self.spectrograms)
-
-    def __getitem__(self, sound_index):
-        """Retrieves a single sample from the dataset."""
-        spectro = self.spectrograms[sound_index]            # (1, F, T)
-        responses = self.responses[sound_index][self.I]     # (N, R, T)
-        nrn_mask = self.nrn_masks[sound_index][self.I]      # (N,)
-        return spectro, responses, nrn_mask
-
-    def get_pop_metadata(self):
-        # TODO: return an array of metadata containing for each neuron: area and animal
-        raise NotImplementedError
 
 
 def time_binning(spike_times, dt=1.):
