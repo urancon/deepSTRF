@@ -90,48 +90,86 @@ class ResponseSmoothingTransform(torch.nn.Module):
         return f"ResponseSmoothingTransform(dt_ms={self.dt_ms}, window_size_ms={self.window_size_ms})"
 
 
-def aa4_collate(batch):
-    # TODO:
-    #  1) make more general, to all AudioNeuralDatasets, not just AA4
-    #  2) make more general, to all NeuralDatasets, not just Audio ones
-    """Collate function for CRCNS_AA4_Dataset DataLoader."""
-    specs_list, resps_list, masks_list, metas_list = zip(*batch)
-    # specs_list: list length B of (1,F,T_s)
-    # resps_list: list length B of list length N of (R_n,T_s)
-    # masks_list: list length B of (N,)
-    B = len(specs_list)
-    N = masks_list[0].shape[0]
-    # pad specs along time dim (dim=2)
-    specs = fill_missing_data(specs_list, dims=2, value=0.0)
-    # pad responses along trial dim (dim=1) and time dim (dim=2)
-    # first flatten responses to list per batch and neuron
-    # we want shape (B, N, R_max, T_max)
-    # prepare per-stim per-neuron zipping
-    Rmax = 0
-    Tmax = specs.shape[-1]
-    # collect all response tensors, pad time to Tmax
-    padded_resps = []
+def neural_collate(batch):
+    """Collate fn for any :class:`~deepSTRF.datasets.neural_dataset.NeuralDataset`.
+
+    Pads variable-duration stims with zeros along the last (time) axis and
+    variable-duration / variable-repeat-count responses with NaN along both
+    the repeat and the time axes. Derives a fine-grained ``valid_mask`` from
+    the NaN sentinels so downstream loss code can use boolean indexing or
+    multiplicative masking without re-scanning.
+
+    Parameters
+    ----------
+    batch : list of 4-tuples
+        Each tuple is ``(stim, per_neuron_responses, per_neuron_mask, stim_meta)``
+        as yielded by ``NeuralDataset.__getitem__`` for a single item:
+            * ``stim`` — a stim tensor of shape ``(..., T_s)`` (modality-specific
+              leading dims, e.g. ``(1, F, T_s)`` for audio).
+            * ``per_neuron_responses`` — list of length ``N_selected``; each
+              element is a ``(R_{s,n}, T_s)`` spike-count tensor or a
+              ``(1, 1)`` NaN sentinel.
+            * ``per_neuron_mask`` — ``(N_selected,)`` bool tensor (currently
+              ignored; the fine-grained ``valid_mask`` returned by this
+              function subsumes it).
+            * ``stim_meta`` — per-stim metadata dict.
+
+    Returns
+    -------
+    stims : torch.Tensor
+        ``(B, ..., T_max)`` float tensor, zero-padded along the last axis.
+        Contains no NaN.
+    responses : torch.Tensor
+        ``(B, N_selected, R_max, T_max)`` float tensor. NaN-padded along
+        both the repeat (``R``) and time (``T``) axes. Fully-NaN slabs mark
+        (stim, neuron) pairs with no recorded data.
+    valid_mask : torch.Tensor
+        ``(B, N_selected, R_max, T_max)`` bool tensor. ``~responses.isnan()``,
+        cached here so downstream loss code does not have to recompute.
+    stim_metas : list
+        Length-``B`` list of the per-item stim_meta dicts.
+    """
+    stims_list, resps_list, _masks_list, metas_list = zip(*batch)
+    B = len(stims_list)
+    N = len(resps_list[0])
+
+    # pad stims along their time axis (last dim) with zeros.
+    # fill_missing_data operates over any shape; we ask it to pad the last axis.
+    stims = fill_missing_data(stims_list, dims=-1, value=0.0)
+    T_max = stims.shape[-1]
+
+    # pad each response to (R_n, T_max) along T first, tracking R_max.
+    R_max = 0
+    padded_per_item = []
     for b in range(B):
-        per_stim = resps_list[b]
-        # pad each neuron's resp to time
         padded = []
         for n in range(N):
-            r = per_stim[n]
-            # pad time dim to Tmax
-            pad_t = torch.full((r.shape[0], Tmax), float('nan'), dtype=r.dtype, device=r.device)
+            r = resps_list[b][n]
+            pad_t = torch.full((r.shape[0], T_max), float('nan'),
+                               dtype=r.dtype, device=r.device)
             pad_t[:, :r.shape[1]] = r
             padded.append(pad_t)
-            Rmax = max(Rmax, pad_t.shape[0])
-        padded_resps.append(padded)
-    # now pad trial dim to Rmax
-    resps = torch.full((B, N, Rmax, Tmax), float('nan'), dtype=specs.dtype, device=specs.device)
+            R_max = max(R_max, pad_t.shape[0])
+        padded_per_item.append(padded)
+
+    # pad the repeat axis to R_max — fill the (B, N, R, T) grid.
+    responses = torch.full((B, N, R_max, T_max), float('nan'),
+                           dtype=stims.dtype, device=stims.device)
     for b in range(B):
         for n in range(N):
-            pr = padded_resps[b][n]
-            resps[b, n, :pr.shape[0], :] = pr
-    # masks: stack
-    masks = torch.stack(masks_list, dim=0)
-    return specs, resps, masks, list(metas_list)
+            pr = padded_per_item[b][n]
+            responses[b, n, :pr.shape[0], :] = pr
+
+    # derive fine-grained mask once per batch — the training loop gets it
+    # "for free" and does not need to scan again.
+    valid_mask = ~responses.isnan()
+
+    return stims, responses, valid_mask, list(metas_list)
+
+
+# Deprecated alias. Will be removed once all internal callers (notebooks,
+# main.py, utils/__init__.py exports) have migrated to `neural_collate`.
+aa4_collate = neural_collate
 
 
 def concatenate_datasets(ds1: CRCNS_AA4_Dataset, ds2: CRCNS_AA4_Dataset) -> CRCNS_AA4_Dataset:

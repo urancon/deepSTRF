@@ -110,15 +110,13 @@ alternative used by HuggingFace / fairseq.
 
 ## 5. Batching: what the collate produces
 
-Use the collate function in `deepSTRF/utils/data.py` (currently
-`aa4_collate`, to be generalized to `neural_collate`) with a PyTorch
-`DataLoader`:
+Use `neural_collate` from `deepSTRF.utils.data` with a PyTorch `DataLoader`:
 
 ```python
 from torch.utils.data import DataLoader
-from deepSTRF.utils.data import aa4_collate   # TODO: rename to neural_collate
+from deepSTRF.utils.data import neural_collate
 
-loader = DataLoader(dataset, batch_size=8, shuffle=True, collate_fn=aa4_collate)
+loader = DataLoader(dataset, batch_size=8, shuffle=True, collate_fn=neural_collate)
 ```
 
 One yielded batch is a 4-tuple:
@@ -128,11 +126,11 @@ One yielded batch is a 4-tuple:
 | `stims`       | `(B, 1, F, T_max)` (audio)    | Float tensor. Zero-padded on the right along `T`. **Never contains NaN.**                 |
 | `responses`   | `(B, N, R_max, T_max)`        | Float tensor. NaN-padded on the right along `R` and `T`; full-NaN slab where neuron n didn't hear stim s. |
 | `valid_mask`  | `(B, N, R_max, T_max)` `bool` | `~responses.isnan()`. Derived once per batch. Canonical "this position holds real data."  |
-| `stim_metas`  | `list` length `B`             | Per-stim metadata, same tuple/dict as stored in `dataset.stim_meta`.                      |
+| `stim_metas`  | `list` length `B`             | Per-stim metadata dicts, same as stored in `dataset.stim_meta`.                           |
 
-The `(B, N)` coarse mask previously emitted by `aa4_collate` is redundant
-with `valid_mask` and will be dropped; recover as
-`valid_mask.any(dim=(-1, -2))` if ever needed.
+If you need the coarser "did this neuron hear this stim" per batch-item
+mask, recover it as `valid_mask.any(dim=(-1, -2))` — a `(B, N)` bool
+tensor.
 
 ## 6. Recommended training-loop loss pattern
 
