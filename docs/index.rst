@@ -14,6 +14,7 @@ Welcome to the official documentation of the deepSTRF repository !
    :caption: Quickstart
 
    _source/md/README_installation.md
+   _source/md/data_paradigm.md
    _source/md/README_tutorial.md
    _source/md/README_formats.md
    _source/md/README_publications.md
