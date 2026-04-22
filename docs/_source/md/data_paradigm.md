@@ -30,10 +30,10 @@ A concrete `NeuralDataset` subclass populates six attributes:
 |-----------------------|------------------------------------|---------------------------------------------------------------------------------------------------|
 | `self.stims`          | `list` of length `S`               | Each element is a stimulus tensor of modality-specific shape. Audio: `(1, F, T_s)`. Video: `(1, H, W, T_s)`. `T_s` varies. |
 | `self.responses`      | `list[list]` of length `S × N`     | `responses[s][n]` is a float tensor of shape `(R_{s,n}, T_s)` (spike counts per repeat × time). |
-| `self.stim_meta`      | `list` of length `S`               | Per-stim metadata (tuple or dict): name, type, original sample rate, etc.                         |
-| `self.neuron_metadata`| `list` of length `N`               | Per-neuron metadata (tuple or dict): cell ID, animal, area, etc.                                  |
+| `self.stim_meta`      | `list` of length `S`               | Per-stim metadata **dict**: e.g. `{"name": "...", "type": "...", ...}`. Fields vary per dataset.  |
+| `self.neuron_metadata`| `list` of length `N`               | Per-neuron metadata **dict**: e.g. `{"cell_id": "...", "animal_id": "...", "area": "..."}`.       |
 | `self.N_neurons`      | `int`                              | Total neurons; equals `len(self.neuron_metadata)`.                                                |
-| `self.nrn_masks`      | `(S, N)` bool `torch.Tensor`       | **Derived.** Built once by `compute_nrn_masks()` at the end of `__init__`.                        |
+| `self.nrn_masks`      | `(S, N)` bool `torch.Tensor`       | **Derived `@property`.** Computed on the fly from the NaN sentinels in `self.responses` — single source of truth, cannot go out of sync. |
 
 `self.dt` (time-bin width in ms) and `self.path` (data location) are set by
 the base class constructor from the `dt_ms` and `path` arguments.
@@ -48,15 +48,18 @@ derived boolean mask exposed for ergonomics.
 
 Convention: `responses[s][n]` is a `(R=1, T=1)` all-NaN tensor.
 
-This is detected by `compute_nrn_masks()`, which sets `nrn_masks[s, n] =
-False` iff `responses[s][n].isnan().any()`. So after init:
+The `nrn_masks` property on the dataset derives this on the fly — it
+sets `nrn_masks[s, n] = False` iff `responses[s][n].isnan().any()`. So
+at any time:
 
 ```python
 dataset.nrn_masks[s, n]    # True iff neuron n has real data for stim s
 ```
 
 Subclasses must produce the `(1, 1)` NaN sentinel tensor for structurally
-missing entries, **not** skip the entry or leave it unset.
+missing entries, **not** skip the entry or leave it unset — the mask is
+derived from responses, so failing to record the sentinel loses the
+missingness information entirely.
 
 ### 3.2 Temporal padding: `T_s` varies across stims within a batch
 
@@ -169,8 +172,9 @@ per_neuron  = per_element.sum(dim=(0, 2)) / valid.float().sum(dim=(0, 2))
 5. **Models emit predictions for every batched position** — including
    zero-padded stim regions and uncorded neuron-stim pairs. The loss, not
    the model, handles masking.
-6. **Subclasses of `NeuralDataset` must call `self.compute_nrn_masks()` and
-   `self.validate()` as the last two lines of `__init__`.**
+6. **Subclasses of `NeuralDataset` must call `self.validate()` as the
+   last line of `__init__`** (the old `self.compute_nrn_masks()` call is
+   no longer needed — `nrn_masks` is a `@property` derived from responses).
 
 ## 8. Gotchas
 

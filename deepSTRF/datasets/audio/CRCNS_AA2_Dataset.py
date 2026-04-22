@@ -155,8 +155,8 @@ class CRCNS_AA2_Dataset(AudioNeuralDataset):
     AA2-specific metadata contents:
      - self.stims                       list of S tensors (1, F, T_s), mel-spectrograms
      - self.responses                   list of S lists of N tensors (R_{s,n}, T_s)
-     - self.stim_meta                   list of S tuples (stim_name, stim_type)
-     - self.neuron_metadata             list of N tuples (cell_id, animal_id, area)
+     - self.stim_meta                   list of S dicts {"name", "type"}
+     - self.neuron_metadata             list of N dicts {"cell_id", "animal_id", "area"}
 
     """
     def __init__(self, path: str, areas=('Field_L', 'mld', 'OV', 'CM', 'None'),
@@ -264,9 +264,13 @@ class CRCNS_AA2_Dataset(AudioNeuralDataset):
 
         self.stims = []             # --> list of S tensors of shape (1, F, T_s)
         self.responses = []         # --> list of S lists of N tensors of shape (R_{s,n}, T_s)
-        self.stim_meta = []         # --> list of S tuples (stim_name, stim_type)
+        self.stim_meta = []         # --> list of S dicts {name, type}
         stim_meta = list(zip(stims, stim_types))
-        self.neuron_metadata = list(zip(cells, cell_animals, cell_areas))  # --> list of N tuples (cell_id, animal_id, area)
+        # list of N dicts {cell_id, animal_id, area}
+        self.neuron_metadata = [
+            {"cell_id": c, "animal_id": a, "area": r}
+            for c, a, r in zip(cells, cell_animals, cell_areas)
+        ]
 
         for s, (stim_name, stim_type) in enumerate(stim_meta):
 
@@ -353,10 +357,9 @@ class CRCNS_AA2_Dataset(AudioNeuralDataset):
                 continue
 
             # otherwise keep the stim and its per-neuron responses
-            # (self.nrn_masks is built by self.compute_nrn_masks() below, not here)
             self.stims.append(spec)
             self.responses.append(pop_resps)
-            self.stim_meta.append((stim_name, stim_type))
+            self.stim_meta.append({"name": stim_name, "type": stim_type})
 
         # smooth PSTHs with a 21 ms Hanning window (Hsu / Borst / Theunissen 2004)
         if smooth:
