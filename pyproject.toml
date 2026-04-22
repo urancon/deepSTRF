@@ -46,6 +46,7 @@ dependencies = [
     "scipy>=1.10",
     "torch>=2.0,<3",
     "torchaudio>=2.0",
+    "torchcodec>=0.1",  # backend for torchaudio.load() since torchaudio 2.2+
     "torchvision>=0.15",
     "pytorch-lightning>=2.0",
     "matplotlib>=3.5",
