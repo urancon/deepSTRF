@@ -4,7 +4,6 @@ import numpy as np
 from typing import List, Union, Sequence
 
 from deepSTRF.datasets import NeuralDataset
-from deepSTRF.datasets.audio import CRCNS_AA4_Dataset
 
 
 
@@ -172,74 +171,114 @@ def neural_collate(batch):
 aa4_collate = neural_collate
 
 
-def concatenate_datasets(ds1: CRCNS_AA4_Dataset, ds2: CRCNS_AA4_Dataset) -> CRCNS_AA4_Dataset:
+def concat_neural_datasets(datasets: Sequence[NeuralDataset]) -> NeuralDataset:
+    """Concatenate neural datasets along BOTH the stim and neuron axes.
+
+    Given ``k`` datasets with ``(S_i, N_i)`` stimuli and neurons each, returns
+    a single dataset with ``S = sum(S_i)`` stimuli and ``N = sum(N_i)`` neurons.
+    The response grid is block-diagonal: real data where a stimulus belongs
+    to a given source dataset *and* the neuron belongs to the same source,
+    ``(1, 1)`` NaN sentinels everywhere else. This cross-block missingness is
+    paradigm-compliant — ``nrn_masks`` (the derived property) then reflects
+    the block-diagonal coverage automatically.
+
+    Primary use case: building "chimeric" datasets that pool recordings
+    across species / labs / preparations (e.g. CRCNS AA1 + AA2 + NS1 for
+    auditory), so that a single model can be fit to the union.
+
+    Parameters
+    ----------
+    datasets : sequence of NeuralDataset
+        Two or more instances. They must be of compatible types and share
+        ``dt`` (bin width) and any modality-specific dimensions (``F`` for
+        audio, ``(H, W)`` for video). Compatibility is checked by each
+        class's ``_concat_check_compat`` hook; mismatches raise
+        ``AssertionError``. Resampling to align ``dt`` or ``F`` is the
+        caller's responsibility and must be done before concatenation.
+
+    Returns
+    -------
+    NeuralDataset
+        A fresh instance. Its concrete type is the most-specific class that
+        is a superclass of every input (``type(datasets[0])`` when all
+        inputs share a type, otherwise walks the MRO). Neuron selection is
+        reset (``self.I = []``).
+
+    Notes
+    -----
+    Concatenation is eager — the output holds its own full ``(S, N)`` grid
+    of response references in memory. At deepSTRF scales (S, N in the low
+    hundreds) this is negligible; cross-block entries are single-element
+    ``(1, 1)`` NaN tensors that cost ~8 bytes each. A lazy wrapper-class
+    alternative exists but would complicate ``self.responses[s][n]``
+    access for uncertain benefit at this scale.
+
+    Neuron / stim UID uniqueness across inputs is *not* validated — deepSTRF
+    trusts the caller to pass mutually exclusive sources, since that is
+    the only semantically meaningful case (pooling a dataset's subset with
+    its superset is degenerate — use constructor arguments instead).
     """
-    TODO: make ds1 and ds2 AudioNeuralDatasets or even NeuralDataset --> move what makes CRCNS_AA4_Dataset so special
-     (i.e., its structure and attributes, but which ones ?) up a level.
+    assert len(datasets) >= 1, "concat_neural_datasets needs at least one dataset"
+    if len(datasets) == 1:
+        return datasets[0]
 
-     TODO: fuse stimuli or neurons if they have the same uid, or the same metadata dict
+    first = datasets[0]
+    for other in datasets[1:]:
+        assert isinstance(other, NeuralDataset), \
+            f"All entries must be NeuralDataset instances (got {type(other).__name__})"
+        first._concat_check_compat(other)
 
-    Concatenate two CRCNS_AA4_Dataset instances with disjoint neurons and stimuli.
-    Returns a new dataset with combined stimuli and neurons, padding missing responses.
-    Select all neurons of both datasets by default.
-    """
-    # create new instance without calling __init__
-    new_ds = object.__new__(CRCNS_AA4_Dataset)  # TODO: rather instanciate an AudioNeuralDataset while calling its constructor ?
-    # copy configuration
-    new_ds.dt = ds1.dt
-    new_ds.F = ds1.F
+    # determine concrete output type: most-specific common ancestor.
+    types = [type(d) for d in datasets]
+    if len(set(types)) == 1:
+        out_cls = types[0]
+    else:
+        out_cls = NeuralDataset
+        for cls in types[0].__mro__:
+            if cls is object:
+                break
+            if all(isinstance(d, cls) for d in datasets):
+                out_cls = cls
+                break
 
-    # TODO: careful here, do not take attribute solely from ds1 !
-    new_ds.smooth = ds1.smooth  # TODO: caution --> attribute name
-    new_ds.stim_types = ds1.stim_types.union(ds2.stim_types)  # TODO: caution --> attribute name
+    # N cumulative sum, used both for row-offset when laying out responses
+    # and for the total N_neurons.
+    N_cum = [0]
+    for d in datasets:
+        N_cum.append(N_cum[-1] + d.N_neurons)
+    total_N = N_cum[-1]
 
-    new_ds.animals = list(ds1.animals) + [a for a in ds2.animals if a not in ds1.animals]
+    # build the result as a bare instance (skip __init__, which would
+    # re-trigger data loading). All required attributes are set below.
+    out = out_cls.__new__(out_cls)
+    NeuralDataset.__init__(out, path="+".join(d.path for d in datasets), dt_ms=first.dt)
+    out._concat_copy_attrs(first)
 
-    # combine stimuli
-    new_ds.stims = ds1.stims + ds2.stims
-    new_ds.stim_meta = ds1.stim_meta + ds2.stim_meta
-    S1, S2 = len(ds1.stims), len(ds2.stims)
-    # combine neuron metadata
-    new_ds.nrn_meta = ds1.nrn_meta + ds2.nrn_meta
-    N1, N2 = len(ds1.nrn_meta), len(ds2.nrn_meta)
-    new_ds.N_neurons = N1 + N2
+    # merge the core list-of-X attributes.
+    out.stims = [s for d in datasets for s in d.stims]
+    out.stim_meta = [m for d in datasets for m in d.stim_meta]
+    out.neuron_metadata = [m for d in datasets for m in d.neuron_metadata]
+    out.N_neurons = total_N
 
-    # build new responses and masks
-    new_responses = []
-    new_masks = []
-    nan_tensor = torch.full((1,1), float('nan'))
-    # ds1 stimuli: pad ds1 responses with ds2 neurons missing
-    for i in range(S1):
-        resp1 = ds1.responses[i]
-        mask1 = ds1.nrn_masks[i]
-        # pad responses
-        combined = []
-        for r in resp1:
-            combined.append(r)
-        for _ in range(N2):
-            combined.append(nan_tensor)
-        # pad mask
-        new_mask = torch.cat([mask1, torch.zeros(N2, dtype=torch.bool)], dim=0)
-        new_responses.append(combined)
-        new_masks.append(new_mask)
-    # ds2 stimuli: pad ds2 responses with ds1 neurons missing
-    for j in range(S2):
-        resp2 = ds2.responses[j]
-        mask2 = ds2.nrn_masks[j]
-        combined = []
-        for _ in range(N1):
-            combined.append(nan_tensor)
-        for r in resp2:
-            combined.append(r)
-        new_mask = torch.cat([torch.zeros(N1, dtype=torch.bool), mask2], dim=0)
-        new_responses.append(combined)
-        new_masks.append(new_mask)
+    # build block-diagonal response grid.
+    # for each source dataset k and each of its stims, emit a row of length
+    # total_N where the k-th block holds real responses and the rest is NaN.
+    nan = torch.full((1, 1), float('nan'))
+    responses: List[list] = []
+    for k, d in enumerate(datasets):
+        prefix = [nan] * N_cum[k]
+        suffix = [nan] * (total_N - N_cum[k + 1])
+        for s_idx in range(len(d.stim_meta)):
+            responses.append(prefix + list(d.responses[s_idx]) + suffix)
+    out.responses = responses
 
-    new_ds.responses = new_responses
-    new_ds.nrn_masks = new_masks
-    # default SELECT list
-    new_ds.I = list(range(N1+N2))
-    return new_ds
+    out.validate()
+    return out
+
+
+def concatenate_datasets(ds1: NeuralDataset, ds2: NeuralDataset) -> NeuralDataset:
+    """Deprecated — use ``concat_neural_datasets([ds1, ds2])`` instead."""
+    return concat_neural_datasets([ds1, ds2])
 
 
 def fill_missing_data(stims: Sequence[torch.Tensor],

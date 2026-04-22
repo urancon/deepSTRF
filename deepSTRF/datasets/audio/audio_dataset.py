@@ -18,6 +18,17 @@ class AudioNeuralDataset(NeuralDataset):
         """Return the number of frequency bins in the spectrograms."""
         return self.F
 
+    def _concat_check_compat(self, other):
+        super()._concat_check_compat(other)
+        assert isinstance(other, AudioNeuralDataset), \
+            f"Cannot concatenate AudioNeuralDataset with {type(other).__name__}"
+        assert self.F == other.F, \
+            f"F mismatch: {self.F} vs {other.F}. Re-instantiate with matching n_mels."
+
+    def _concat_copy_attrs(self, source):
+        super()._concat_copy_attrs(source)
+        self.F = source.F
+
     def validate(self):
         super().validate()
         assert isinstance(self.F, int) and self.F > 0, \

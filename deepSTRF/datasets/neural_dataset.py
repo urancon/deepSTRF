@@ -233,6 +233,45 @@ class NeuralDataset(Dataset, ABC):
         # TODO
         raise NotImplementedError
 
+    def __add__(self, other):
+        """Concatenate two datasets on BOTH the stim and neuron axes (sugar for :func:`deepSTRF.utils.data.concat_neural_datasets`).
+
+        Returns a new dataset with ``S_a + S_b`` stimuli and ``N_a + N_b``
+        neurons. Cross-block ``(stim_a, neuron_b)`` and ``(stim_b, neuron_a)``
+        responses are filled with the canonical ``(1, 1)`` NaN sentinel —
+        ``nrn_masks`` (derived property) then reflects the block-diagonal
+        coverage automatically. See ``concat_neural_datasets`` for the full
+        semantics and ``_concat_check_compat`` for per-modality compatibility
+        requirements.
+        """
+        if not isinstance(other, NeuralDataset):
+            return NotImplemented
+        # lazy import to avoid circular dep with utils.data
+        from deepSTRF.utils.data import concat_neural_datasets
+        return concat_neural_datasets([self, other])
+
+    def _concat_check_compat(self, other: "NeuralDataset") -> None:
+        """Assert that ``other`` is compatible for concatenation with ``self``.
+
+        Subclasses should call ``super()._concat_check_compat(other)`` and
+        then add their own checks (e.g. ``AudioNeuralDataset`` checks that
+        ``self.F == other.F``).
+        """
+        assert self.dt == other.dt, \
+            f"dt mismatch: {self.dt} vs {other.dt}. Resample responses to a common bin width before concatenating."
+
+    def _concat_copy_attrs(self, source: "NeuralDataset") -> None:
+        """Copy modality-specific attributes from ``source`` onto ``self``.
+
+        Called by ``concat_neural_datasets`` on the bare result instance after
+        the merged core attributes (``stims``, ``responses``, ``stim_meta``,
+        ``neuron_metadata``, ``N_neurons``, ``dt``, ``I``, ``path``) are set.
+        Subclasses override to propagate things like ``self.F`` (audio) or
+        ``self.H, self.W`` (video). Base implementation is a no-op.
+        """
+        # base has no modality-specific attributes to copy
+        pass
+
     def validate(self):
         """Check that the instance is deepSTRF-compatible.
 

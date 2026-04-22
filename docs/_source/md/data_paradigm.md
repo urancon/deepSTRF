@@ -195,7 +195,59 @@ per_neuron  = per_element.sum(dim=(0, 2)) / valid.float().sum(dim=(0, 2))
 - **Spike-count dtype must be float.** Storing responses as `int` would
   prevent NaN encoding.
 
-## 9. When the paradigm might need to evolve
+## 9. Dataset concatenation
+
+The NaN-sentinel convention carries a bonus: concatenating neural datasets
+along *both* the stim and neuron axes is essentially free — the cross-block
+`(stim_A, neuron_B)` entries are just the same `(1, 1)` NaN tensor used
+elsewhere for structural missingness, and the derived `nrn_masks` property
+correctly reports the block-diagonal coverage.
+
+Use `deepSTRF.utils.data.concat_neural_datasets`:
+
+```python
+from deepSTRF.utils.data import concat_neural_datasets
+
+combined = concat_neural_datasets([aa1, aa2])      # N-ary
+combined = aa1 + aa2                                # pairwise sugar via __add__
+```
+
+For `k` input datasets with `(S_i, N_i)` each, the result has `S = Σ S_i`
+stimuli and `N = Σ N_i` neurons, arranged block-diagonally:
+
+```
+              neurons of A │ neurons of B │ neurons of C
+stims of A │    real data  │      NaN     │      NaN
+stims of B │      NaN      │   real data  │      NaN
+stims of C │      NaN      │      NaN     │   real data
+```
+
+Primary use case: **chimeric datasets** pooling recordings across species,
+labs, or preparations (e.g. CRCNS AA1 + AA2 + NS1 for auditory). A single
+model can then be fit to the union, potentially learning computational
+principles that generalise across the sources.
+
+**Compatibility requirements** (hard asserts, not auto-adapted):
+
+- All inputs share `dt_ms` (bin width).
+- Modality-specific dimensions match — `F` for audio, `(H, W)` for video.
+  Each class overrides `_concat_check_compat` to add its own checks.
+- If resampling is needed to align these, the caller must do it explicitly
+  before calling `concat_neural_datasets` — deepSTRF intentionally does not
+  resample implicitly.
+
+**Return type** is the most-specific common ancestor: same class when all
+inputs share one (e.g. AA1 + AA1 → `CRCNS_AA1_Dataset`), otherwise walks
+the MRO (e.g. AA1 + NS1 → `AudioNeuralDataset`).
+
+**Caller invariants** deepSTRF does not check:
+
+- Neuron and stim UIDs are assumed mutually exclusive across sources.
+  Pooling a dataset with its own subset is degenerate — use constructor
+  arguments instead. Duplicate UIDs across sources are silently accepted
+  but produce a misleading view of coverage.
+
+## 10. When the paradigm might need to evolve
 
 - Migration to `torch.nested` tensors once the ecosystem matures — would
   remove explicit padding, possibly with model-side support gaps.
