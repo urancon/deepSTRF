@@ -22,8 +22,7 @@ class NeuralDataset(Dataset, ABC):
     Subclass contract
     -----------------
     A concrete subclass must populate the following attributes in its
-    ``__init__`` and then call ``self.compute_nrn_masks()`` followed by
-    ``self.validate()`` as its last two lines:
+    ``__init__`` and then call ``self.validate()`` as its last line:
 
     - ``self.stims``           — list of length ``S``, each element a stimulus
                                   tensor of modality-specific shape
@@ -35,16 +34,17 @@ class NeuralDataset(Dataset, ABC):
                                   counts per repeat × time bin, or a
                                   ``(1, 1)`` NaN tensor if neuron ``n`` did
                                   not hear stim ``s``.
-    - ``self.stim_meta``       — list of length ``S``, per-stim metadata
-                                  (tuple or dict).
-    - ``self.neuron_metadata`` — list of length ``N``, per-neuron metadata.
+    - ``self.stim_meta``       — list of length ``S``, per-stim metadata dicts.
+    - ``self.neuron_metadata`` — list of length ``N``, per-neuron metadata dicts.
     - ``self.N_neurons``       — int, must equal ``len(self.neuron_metadata)``.
 
-    Derived attributes set by ``compute_nrn_masks()``:
+    Derived attributes (no explicit population needed):
 
-    - ``self.nrn_masks`` — ``(S, N)`` bool tensor. ``nrn_masks[s, n]`` is
-      ``True`` iff neuron ``n`` has real data for stim ``s``. Used by
-      ``__len__``, ``__getitem__``, and the selection helpers.
+    - ``self.nrn_masks`` — ``(S, N)`` bool tensor, derived on the fly from
+      the NaN sentinels in ``self.responses``. ``nrn_masks[s, n]`` is
+      ``True`` iff neuron ``n`` has real data for stim ``s``. Implemented
+      as a ``@property`` so it is always consistent with the current
+      ``self.responses`` — no risk of the mask going out of sync.
 
     Key invariants
     --------------
@@ -72,9 +72,6 @@ class NeuralDataset(Dataset, ABC):
         # selected-neuron indices (defaults to empty; filled by select_* or on first __getitem__)
         self.I = []
 
-        # boolean mask (S, N) of which neuron saw which stimulus; populated by compute_nrn_masks()
-        self.nrn_masks = None
-
     def get_N(self):
         """Return the total number of selectable neurons."""
         return self.N_neurons
@@ -87,12 +84,29 @@ class NeuralDataset(Dataset, ABC):
         """Retrieve metadata for each currently selected neuron."""
         return [self.neuron_metadata[i] for i in self.I]
 
+    @property
+    def nrn_masks(self) -> torch.Tensor:
+        """Derived ``(S, N)`` bool tensor: True iff neuron n has real data for stim s.
+
+        Computed on the fly from the NaN sentinels in ``self.responses`` —
+        single source of truth, cannot go out of sync. Cheap at deepSTRF
+        scales (S, N in the hundreds). For a bare dataset (no populated
+        responses), returns an empty ``(0, N_neurons)`` tensor.
+        """
+        S = len(self.responses)
+        if S == 0:
+            return torch.zeros((0, self.N_neurons), dtype=torch.bool)
+        rows = [
+            torch.tensor(
+                [not self.responses[s][n].isnan().any().item() for n in range(self.N_neurons)],
+                dtype=torch.bool,
+            )
+            for s in range(S)
+        ]
+        return torch.stack(rows)
+
     def __len__(self):
         """Return number of stimuli for which at least one SELECTED neuron has a valid response."""
-        if self.nrn_masks is None:
-            raise RuntimeError(
-                "nrn_masks is not populated. Call self.compute_nrn_masks() at the end of __init__."
-            )
         if not self.I:
             return 0
         count = 0
@@ -114,11 +128,6 @@ class NeuralDataset(Dataset, ABC):
             nrn_masks: Tensor or list of Tensors [(len(self.I),)]
             stim_meta: metadata or list of metadata
         """
-        if self.nrn_masks is None:
-            raise RuntimeError(
-                "nrn_masks is not populated. Call self.compute_nrn_masks() at the end of __init__."
-            )
-
         if isinstance(idx, int):
             indices = [idx]
             single = True
@@ -137,13 +146,12 @@ class NeuralDataset(Dataset, ABC):
 
         stims = [self.stims[i] for i in indices]
         metas = [self.stim_meta[i] for i in indices]
+        all_masks = self.nrn_masks   # snapshot property once (O(S*N) per access)
         resps = []
         masks = []
         for i in indices:
-            all_resps = self.responses[i]
-            all_mask = self.nrn_masks[i]
-            resps.append([all_resps[n] for n in self.I])
-            masks.append(all_mask[self.I])
+            resps.append([self.responses[i][n] for n in self.I])
+            masks.append(all_masks[i][self.I])
 
         if single:
             return stims[0], resps[0], masks[0], metas[0]
@@ -193,21 +201,6 @@ class NeuralDataset(Dataset, ABC):
         raise NotImplementedError
 
     # TODO: method to select stims --> getitem() will only give out these stims
-
-    def compute_nrn_masks(self):
-        """Compute the ``self.nrn_masks`` attribute:
-        a ``(S, N)`` boolean tensor with False when stimulus s was not presented to neuron n.
-        """
-        nrn_masks = []
-        for s in range(len(self.stim_meta)):
-            temp_mask = []
-            for n in range(len(self.neuron_metadata)):
-                if not self.responses[s][n].isnan().any():
-                    temp_mask.append(torch.ones(1).bool())
-                else:
-                    temp_mask.append(torch.zeros(1).bool())
-            nrn_masks.append(torch.cat(temp_mask))   # (N,)
-        self.nrn_masks = torch.stack(nrn_masks)      # (S, N)
 
     def smooth_responses(self, window_ms: float = 21.0) -> None:
         """Temporally smooth each non-NaN response in place with a Hanning window.
@@ -263,10 +256,5 @@ class NeuralDataset(Dataset, ABC):
             f"must equal self.N_neurons ({self.N_neurons})"
         )
 
-        if self.nrn_masks is not None:
-            assert self.nrn_masks.dtype == torch.bool, \
-                f"self.nrn_masks must be a bool tensor (got dtype {self.nrn_masks.dtype})"
-            assert tuple(self.nrn_masks.shape) == (S, self.N_neurons), (
-                f"self.nrn_masks shape {tuple(self.nrn_masks.shape)} "
-                f"must be (S={S}, N={self.N_neurons})"
-            )
+        # self.nrn_masks is a derived @property; its shape and dtype are
+        # guaranteed by construction, so no separate check is needed.

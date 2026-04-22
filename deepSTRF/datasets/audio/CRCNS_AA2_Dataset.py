@@ -362,6 +362,6 @@ class CRCNS_AA2_Dataset(AudioNeuralDataset):
         if smooth:
             self.smooth_responses(window_ms=21.0)
 
-        # build self.nrn_masks (S, N) from NaN sentinels, then validate
-        self.compute_nrn_masks()
+        # self.nrn_masks is a derived @property on the base class — no need
+        # to populate it here
         self.validate()

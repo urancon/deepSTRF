@@ -57,7 +57,7 @@ def test_neural_dataset_public_methods_exist():
         "get_N",
         "get_S",
         "get_neuron_metadata",
-        "compute_nrn_masks",
+        "nrn_masks",   # @property, reachable via hasattr
         "validate",
     ]:
         assert hasattr(NeuralDataset, name), f"NeuralDataset is missing method {name!r}"
@@ -76,7 +76,9 @@ def test_neural_dataset_base_attributes_after_init():
     assert ds.neuron_metadata == []
     assert ds.N_neurons == 0
     assert ds.I == []
-    assert ds.nrn_masks is None
+    # nrn_masks is a derived @property: empty-responses state yields a (0, 0) bool tensor
+    assert tuple(ds.nrn_masks.shape) == (0, 0)
+    assert ds.nrn_masks.dtype == torch.bool
 
 
 def test_neural_dataset_validate_fails_on_empty():
@@ -103,7 +105,6 @@ def test_neural_dataset_validate_succeeds_on_populated_fixture():
                 [torch.zeros(1, 10), torch.zeros(1, 10)],
             ]
             self.neuron_metadata = [{"uid": "n0"}, {"uid": "n1"}]
-            self.compute_nrn_masks()
             self.validate()
 
     fx = _Fixture()  # must not raise
