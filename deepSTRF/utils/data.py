@@ -1,8 +1,93 @@
 import torch
+import torch.nn.functional as F
+import numpy as np
 from typing import List, Union, Sequence
 
 from deepSTRF.datasets import NeuralDataset
 from deepSTRF.datasets.audio import CRCNS_AA4_Dataset
+
+
+
+def hanning_smooth(response: torch.Tensor, window_ms: float, dt_ms: float) -> torch.Tensor:
+    """Convolve `response` along its last (time) axis with a Hanning window.
+
+    Parameters
+    ----------
+    response : torch.Tensor
+        Response tensor of any shape; the last axis is assumed to be time.
+    window_ms : float
+        Full width of the Hanning window in ms. Rounded to the nearest odd
+        number of ``dt_ms`` bins (``dt_ms``-floor, then +1 if even).
+    dt_ms : float
+        Time-bin width of ``response``, in ms.
+
+    Returns
+    -------
+    torch.Tensor
+        Smoothed response, same shape as input.
+
+    Notes
+    -----
+    Padded with zeros on both sides (``F.pad(..., mode='constant')``), so
+    edge bins get attenuated. The kernel is the raw ``np.hanning(K)``, i.e.
+    NOT sum-normalized — matches the legacy behaviour used by the Hsu /
+    Borst / Theunissen (2004) PSTH smoothing step in the CRCNS-AA datasets.
+
+    NaN-unsafe: NaN values propagate to neighbouring time bins under the
+    window. Callers (e.g. ``NeuralDataset.smooth_responses``) must filter
+    fully-NaN responses before calling.
+    """
+    assert window_ms > 0 and dt_ms > 0, "window_ms and dt_ms must be positive"
+    K = int(window_ms // dt_ms)
+    if K < 1:
+        K = 1
+    if K % 2 == 0:
+        K += 1
+    kernel = torch.tensor(np.hanning(K), dtype=response.dtype, device=response.device).view(1, 1, K)
+    pad = (K - 1) // 2
+
+    orig_shape = response.shape
+    flat = response.reshape(-1, 1, orig_shape[-1])  # (*, 1, T)
+    flat = F.pad(flat, (pad, pad), mode='constant', value=0.0)
+    smoothed = F.conv1d(flat, kernel)
+    return smoothed.view(orig_shape)
+
+
+class ResponseSmoothingTransform(torch.nn.Module):
+    """
+        Temporally convolves responses with a Hanning window of typically ~20 or ~40 ms.
+
+        cf. Hsu, A., Borst, A., & Theunissen, F. E. (2004).
+            Quantifying variability in neural responses and its application for the validation of model predictions.
+            Network: Computation in Neural Systems, 15(2), 91–109. https://doi.org/10.1088/0954-898X_15_2_002
+
+    """
+
+    def __init__(self, dt_ms=1, window_size_ms=21, *args, **kwargs):
+        super().__init__()
+        self.dt_ms = dt_ms
+        self.window_size_ms = window_size_ms
+        Kt_hanning = (self.window_size_ms // self.dt_ms) if ((self.window_size_ms // self.dt_ms % 2) == 1) else (self.window_size_ms // self.dt_ms) + 1  # odd kernel size
+        self.hanning_window = torch.tensor(np.hanning(Kt_hanning)).unsqueeze(0).unsqueeze(0)
+        self.padding_size = (Kt_hanning - 1) // 2
+
+    def forward(self, responses, dt=1):
+        # responses shape should be (B, N, R, T)  # TODO: add batch size (B)
+        N, R, T = responses.shape  # TODO: add batch size (B)
+        padded_responses = F.pad(responses, (self.pad_size, self.pad_size), mode='constant')
+
+        # Apply the Hanning window using convolution
+        padded_responses = padded_responses.flatten(0, 1).unsqueeze(1)  # (N, R, T) --> (N*R, 1, T)
+        smoothed_responses = F.conv1d(padded_responses, self.hanning_window)
+        smoothed_responses = smoothed_responses.unflatten(0, (N, R))[:, :, 0, :]  # (N*R, 1, T) --> (N, R, T)
+
+        return smoothed_responses
+
+    def __repr__(self):
+        return f"ResponseSmoothingTransform(dt_ms={self.dt_ms}, window_size_ms={self.window_size_ms})"
+
+    def __str__(self):
+        return f"ResponseSmoothingTransform(dt_ms={self.dt_ms}, window_size_ms={self.window_size_ms})"
 
 
 def aa4_collate(batch):
@@ -54,17 +139,22 @@ def concatenate_datasets(ds1: CRCNS_AA4_Dataset, ds2: CRCNS_AA4_Dataset) -> CRCN
     TODO: make ds1 and ds2 AudioNeuralDatasets or even NeuralDataset --> move what makes CRCNS_AA4_Dataset so special
      (i.e., its structure and attributes, but which ones ?) up a level.
 
+     TODO: fuse stimuli or neurons if they have the same uid, or the same metadata dict
+
     Concatenate two CRCNS_AA4_Dataset instances with disjoint neurons and stimuli.
     Returns a new dataset with combined stimuli and neurons, padding missing responses.
     Select all neurons of both datasets by default.
     """
     # create new instance without calling __init__
-    new_ds = object.__new__(CRCNS_AA4_Dataset)  # TODO: rather instanciate an AudioNeuralDataset while calling its constructor
+    new_ds = object.__new__(CRCNS_AA4_Dataset)  # TODO: rather instanciate an AudioNeuralDataset while calling its constructor ?
     # copy configuration
     new_ds.dt = ds1.dt
     new_ds.F = ds1.F
-    new_ds.smooth = ds1.smooth
-    new_ds.stim_types = ds1.stim_types.union(ds2.stim_types)
+
+    # TODO: careful here, do not take attribute solely from ds1 !
+    new_ds.smooth = ds1.smooth  # TODO: caution --> attribute name
+    new_ds.stim_types = ds1.stim_types.union(ds2.stim_types)  # TODO: caution --> attribute name
+
     new_ds.animals = list(ds1.animals) + [a for a in ds2.animals if a not in ds1.animals]
 
     # combine stimuli

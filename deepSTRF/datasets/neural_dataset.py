@@ -209,10 +209,31 @@ class NeuralDataset(Dataset, ABC):
             nrn_masks.append(torch.cat(temp_mask))   # (N,)
         self.nrn_masks = torch.stack(nrn_masks)      # (S, N)
 
-    def smooth_responses(self, window_length: int):
-        """Temporally smooth the neural responses with a Hanning window."""
-        # TODO: implement (window_length in ms, we already have self.dt)
-        raise NotImplementedError
+    def smooth_responses(self, window_ms: float = 21.0) -> None:
+        """Temporally smooth each non-NaN response in place with a Hanning window.
+
+        Parameters
+        ----------
+        window_ms : float, default 21.0
+            Full width of the Hanning window in ms. Rounded to the nearest odd
+            number of ``self.dt`` bins.
+
+        Notes
+        -----
+        Follows Hsu, Borst & Theunissen (2004) for reducing PSTH estimator
+        variance — a common preprocessing step across spike-count datasets.
+        ``(1, 1)`` NaN-sentinel responses (neurons that did not hear a given
+        stim) are preserved unchanged.
+        """
+        # lazy import to avoid a circular dep (utils.data imports from datasets)
+        from deepSTRF.utils.data import hanning_smooth
+
+        for s in range(len(self.responses)):
+            for n in range(self.N_neurons):
+                r = self.responses[s][n]
+                if r.isnan().any():
+                    continue
+                self.responses[s][n] = hanning_smooth(r, window_ms=window_ms, dt_ms=self.dt)
 
     def normalize_responses(self):
         """Normalize each neuron's activity so that its maximum PSTH across stimuli is 1."""
