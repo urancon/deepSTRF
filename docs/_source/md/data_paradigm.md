@@ -174,17 +174,64 @@ per_neuron  = per_element.sum(dim=(0, 2)) / valid.float().sum(dim=(0, 2))
    last line of `__init__`** (the old `self.compute_nrn_masks()` call is
    no longer needed — `nrn_masks` is a `@property` derived from responses).
 7. **`__len__` and `__getitem__` honour the current neuron selection.**
-   They expose only the stimuli for which at least one selected neuron
-   (in `self.I`) has valid response data. Index `0` is the *first
-   iterable* stim under the current selection, not necessarily
-   `self.stims[0]`. With a `DataLoader`, iterating
-   `range(len(ds))` is therefore guaranteed to visit only stims with at
-   least some real selected-neuron data — cross-block stims of a
-   concatenated dataset disappear automatically when you select only
-   one source's neurons. To address raw stim *i*, read
-   `self.stims[i]`, `self.responses[i]` directly.
+   See §8 below — the contract deserves its own section.
 
-## 8. Gotchas
+## 8. Iteration filters by the current neuron selection
+
+Both `len(ds)` and `ds[i]` operate on the *iterable subset of stimuli* —
+the stimuli for which at least one currently selected neuron (in `self.I`)
+has valid response data. Stimuli that have only NaN responses against the
+selection are hidden.
+
+Why this matters:
+
+- **DataLoader compatibility.** PyTorch iterates `range(len(ds))` and
+  calls `ds[i]` for each. The two have to agree, or the loader requests
+  indices that map to fully-NaN items. The filter is what makes them
+  agree.
+- **Concatenated datasets are safe.** When you concatenate sources A and
+  B and then select only A's neurons, B's stimuli are *automatically*
+  hidden — their responses against A's neurons are all NaN, so they
+  don't survive the filter. No special-case logic in the training loop.
+- **Selecting on stim attributes is implicit too.** Selecting only the
+  neurons that heard a particular stim type narrows iteration to those
+  stims, by transitivity. This subsumes most one-off "iterate only the
+  stims that match X" needs.
+
+### Concrete consequences
+
+```python
+ds = concat_neural_datasets([aa1, aa2])     # 30 + 117 stims, 100 + 494 neurons
+len(ds)                                      # 147 — full population by default
+
+ds.select_population(list(range(100)))       # only AA1's neurons
+len(ds)                                      # 30 — AA2's stims now hidden
+ds[0]                                        # the FIRST iterable stim under selection
+                                             #  i.e. AA1's stim 0; same as before selection
+ds[29]                                       # AA1's stim 29 — last iterable
+ds[30]                                       # IndexError, not a fully-NaN AA2 stim
+
+ds.select_pop_by_nrn_attr("area", "MLd")     # MLd neurons across A and B
+len(ds)                                      # however many stims any MLd neuron heard
+```
+
+### Raw access vs iteration
+
+The stored attributes (`self.stims`, `self.responses`, `self.stim_meta`,
+`self.neuron_metadata`, `self.nrn_masks`) are *not* filtered. They keep
+the dataset's full structure regardless of `self.I`. To address a raw
+stim by its absolute index, read those attributes directly:
+
+```python
+ds.stims[42]                # raw stim 42, regardless of selection
+ds.responses[42]            # all neurons' responses to stim 42
+ds.nrn_masks[42]            # which neurons have data for stim 42
+```
+
+The selection filter applies only at the iteration interface (`__len__`,
+`__getitem__`).
+
+## 9. Gotchas
 
 - **Non-causal models on zero-padded stims.** A bidirectional RNN, a
   Transformer without an attention mask, or a CNN with center-weighted
@@ -205,7 +252,7 @@ per_neuron  = per_element.sum(dim=(0, 2)) / valid.float().sum(dim=(0, 2))
 - **Spike-count dtype must be float.** Storing responses as `int` would
   prevent NaN encoding.
 
-## 9. Dataset concatenation
+## 10. Dataset concatenation
 
 The NaN-sentinel convention enables a bonus feature: concatenating neural
 datasets along *both* the stim and neuron axes is essentially free — the
@@ -223,7 +270,7 @@ feature page (rationale, compatibility rules, chimeric-model use case)
 and [`examples/dataset_concatenation.ipynb`](../../examples/dataset_concatenation.ipynb)
 for a runnable demo.
 
-## 10. When the paradigm might need to evolve
+## 11. When the paradigm might need to evolve
 
 - Migration to `torch.nested` tensors once the ecosystem matures — would
   remove explicit padding, possibly with model-side support gaps.

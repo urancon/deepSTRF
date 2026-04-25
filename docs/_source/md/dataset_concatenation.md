@@ -107,6 +107,36 @@ Subclass-specific methods that don't make sense on the merged object
 `stims`, `responses`, `stim_meta`, `neuron_metadata`, `nrn_masks`,
 `select_*`, `__len__`, `__getitem__` — works identically.
 
+## Iterating only one source's data
+
+`__len__` and `__getitem__` filter by the current neuron selection — they
+expose only stimuli for which at least one currently selected neuron has
+valid response data (see [`data_paradigm.md`](data_paradigm.md) §8 for
+the general rule). This makes selecting a sub-population on a chimeric
+dataset Just Work: the cross-block stims, which are full-NaN against the
+selected neurons, are hidden automatically.
+
+```python
+combined = aa1 + aa2     # 30 + 117 = 147 stims, 100 + 494 = 594 neurons
+len(combined)            # 147 — full pool by default
+
+# select only AA1's neurons -> AA2's stims disappear from iteration
+combined.select_population(list(range(aa1.N_neurons)))
+len(combined)            # 30
+combined[0]              # an AA1 stim, with valid responses for the selection
+combined[30]             # IndexError, not a fully-NaN AA2 stim
+
+# select MLd neurons across both sources (AA1 has 'MLd', AA2 has 'mld')
+mld = [n for n, m in enumerate(combined.neuron_metadata)
+       if m["area"].lower() == "mld"]
+combined.select_population(mld)
+len(combined)            # all stims that any MLd neuron heard, in either source
+```
+
+A `DataLoader` over the chimeric dataset under any of these selections
+visits only the relevant stims — no manual filtering, no risk of training
+on a fully-NaN batch item.
+
 ## Caller invariants we don't enforce
 
 - **Neuron and stim UIDs should be mutually exclusive across sources.**
