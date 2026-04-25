@@ -177,3 +177,29 @@ def test_dataloader_over_concat_skips_cross_block_stims():
         per_item_has_data = valid_mask.any(dim=(1, 2, 3))  # (B,) bool
         assert per_item_has_data.all(), \
             "DataLoader yielded a batch item with no valid (s,n,r,t) data anywhere"
+
+
+def test_select_pop_by_nrn_attr_tolerates_mixed_schemas():
+    """Concatenating sources with different ``neuron_metadata`` keys must not break filtering.
+
+    Real-world case: AA1 has ``area`` but AA4 doesn't. ``select_pop_by_nrn_attr("area",
+    "Field_L")`` on the concatenation should pick only AA1's matching neurons and
+    silently skip AA4's neurons (which lack the key) — not raise ``KeyError``.
+    """
+    from deepSTRF.utils.data import concat_neural_datasets
+
+    a = _fake_audio_dataset(N=4, S=2)
+    b = _fake_audio_dataset(N=3, S=2)
+    # tag a's neurons with an extra attribute that b doesn't have
+    for n, md in enumerate(a.neuron_metadata):
+        md["region"] = "Field_L" if n < 2 else "MLd"
+    # b has no 'region' key
+
+    c = concat_neural_datasets([a, b])
+    selected = c.select_pop_by_nrn_attr("region", "Field_L")
+    assert selected == [0, 1], \
+        f"only a's first two neurons match region=Field_L, got {selected}"
+
+    # filter by a key that NO neuron has -> empty result, no KeyError
+    selected_none = c.select_pop_by_nrn_attr("nonexistent_key", "anything")
+    assert selected_none == []

@@ -196,13 +196,21 @@ class NeuralDataset(Dataset, ABC):
     def select_pop_by_nrn_attr(self, attribute_name: str, value):
         """Select neurons whose ``neuron_metadata[attribute_name] == value``.
 
+        Neurons whose metadata dict does not contain ``attribute_name`` are
+        silently skipped — this lets a single filter call work against a
+        concatenated dataset that pools sources with different metadata
+        schemas (e.g. AA1's ``area`` is not present on AA4 neurons; calling
+        ``select_pop_by_nrn_attr("area", "Field_L")`` on the concatenation
+        keeps only AA1 neurons in Field L, with no ``KeyError``).
+
         TODO:
          - allow multiple conditions (AND / OR), eg with attribute_name and value as lists
             ==> additional argument? "and", "or"
         """
+        _MISSING = object()
         selected_nrn_indices = []
         for n, nrn_metadata in enumerate(self.neuron_metadata):
-            if nrn_metadata[attribute_name] == value:
+            if nrn_metadata.get(attribute_name, _MISSING) == value:
                 selected_nrn_indices.append(n)
         self.I = selected_nrn_indices
         return selected_nrn_indices
