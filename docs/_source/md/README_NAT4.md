@@ -1,6 +1,6 @@
 # A Natural Sound Dataset: A1 & PEG (NAT4)
 
-**Dataset Source:** [A1 & PEG Dataset](https://doi.org/10.1101/2022.06.10.495698)
+**Dataset Source:** [NAT4 Dataset](https://doi.org/10.5281/zenodo.8044773)
 
 **Original Papers:**
 - ["Can deep learning provide a generalizable model for dynamic sound encoding in auditory cortex?"](https://doi.org/10.1101/2022.06.10.495698) by Jacob R. Pennington, Stephen V. David.
@@ -18,21 +18,17 @@
 - Valid Neurons Criteria: Auditory neurons (see the papers for further details)
 
 **Available Data:**
-- *Needs NEMS0 on Python Data Processing.*
-- Two recording objects from NEMS0. Each recording contains:
-  - Spectrograms of the entire recording.
-  - Responses of the entire recording.
-  - Names of sounds and names of neurons.
+- One population recording per area (`<area>_NAT4_ozgf.fs100.ch18.tgz`)
+  packaging the full population time series with the 18 val stimuli
+  pre-averaged over 20 reps in the first 27 s, then 575 est stimuli at
+  R=1 each. CSV + JSON inside the tarball.
+- One per-site recording per recording session
+  (`<area>_single_sites/<site>.tgz`) with raw 1 ms-resolution spike
+  times stored as HDF5 — used for trial-resolved val responses (R=20).
+- Per-area `<area>_pred_correlation.csv` flagging the 777 A1 and 339
+  PEG neurons that the dataset's authors classified as auditory.
 
-**Information on:**
-- Identification of the 18 high-repetition sounds.
-- Identification of the 777 valid A1 neurons and 339 valid PEG neurons.
-
-**Processing Needed:**
-1. Remove non-valid neurons.
-2. Use NEMS0 functions to separate high (val) and low (est) repetition data.
-3. Retain only the sounds corresponding to the appropriate data from "est" and "val".
-4. Transform data into matrices.
+**deepSTRF parses the NAT4 archive directly — NEMS0 is no longer required.**
 
 
 ## Benchmark results
@@ -47,20 +43,35 @@
 |          |      StateNet      |    🥉    |                   LSTM, pop                   |      40,271      |             38.9 / 54.7             | [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110) |
 
 
-## Setup using our scripts:
+## Setup
 
-- Create an environment with the `NEMS0` library
-```shell
-conda create -n NEMS0 python=3.7
-conda activate NEMS0
-git clone https://github.com/lbhb/NEMS0
-pip install -e NEMS0
+Easiest path — auto-download from Zenodo into the platformdirs cache:
+
+```python
+from deepSTRF.datasets.audio import NAT4_Dataset
+
+ds_a1  = NAT4_Dataset(area='A1',  download=True)   # ~108 MB
+ds_peg = NAT4_Dataset(area='PEG', download=True)   #  ~50 MB
 ```
-- Go to the [official Zenodo dataset repository](https://zenodo.org/record/8044773) and download the data.
-- put the data files into the **data/** folder. That is: 
-  * unzipped **"A1_Single_Sites"** + **"PEG_Single_Sites"** folders
-  * **"A1_NAT4_ozgf.fs100.ch18.tgz"** + **"PEG_NAT4_ozgf.fs100.ch18.tgz"** archives
-  * **"A1_pred_correlation.csv"** + **"PEG_pred_correlation.csv"** tables
-- Launch `NAT4_preprocessing.py`, which creates 2 files, named **"nat4_a1.pt"** and **"nat4_peg.pt"**. 
-The latter two files constitute the final preprocessed dataset files.
-- The `NAT4Dataset()` class can be used with the path ti the **data/** folder  containing these two files.
+
+Default cache dir is `platformdirs.user_cache_dir('deepSTRF')/NAT4`,
+overridable via `$DEEPSTRF_DATA_DIR`. To use a custom path explicitly:
+
+```python
+ds = NAT4_Dataset('/path/to/your/data/', area='A1', download=True)
+```
+
+`download=True` is idempotent — it skips files / dirs that already
+exist, so re-instantiating the dataset is cheap.
+
+If you already have the data laid out manually, just pass the path:
+
+```python
+ds = NAT4_Dataset('/path/to/your/data/', area='A1')
+```
+
+Expected files in the data dir:
+* `A1_NAT4_ozgf.fs100.ch18.tgz` (or already-extracted directory)
+* `A1_single_sites/` (extracted from `A1_single_sites.zip`)
+* `A1_pred_correlation.csv`
+* (likewise for PEG)

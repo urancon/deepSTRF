@@ -1,34 +1,27 @@
-import gc
 import os
 from typing import Optional
 
 from tqdm import tqdm
 
-import torch
+import numpy as np
 import pandas as pd
-
-try:
-    from nems0.recording import load_recording
-    from nems0 import xforms, preprocessing, epoch
-    _NEMS_AVAILABLE = True
-except ImportError:
-    _NEMS_AVAILABLE = False
+import torch
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
+from deepSTRF.datasets.audio._nat4_native import (
+    epoch_names_matching,
+    extract_epoch,
+    load_per_site_recording,
+    load_pop_recording,
+    normalize_log1p_minmax_inplace,
+    normalize_minmax_inplace,
+)
 from deepSTRF.utils.data_download import (
     default_cache_dir,
     unzip,
     zenodo_download,
 )
 
-
-_NEMS_INSTALL_HINT = (
-    "NAT4_Dataset currently relies on the NEMS0 library to read its .tgz\n"
-    "recording format. Install it with:\n"
-    "    pip install 'deepSTRF[nems]'\n"
-    "See https://github.com/LBHB/NEMS0 for details. A native (NEMS-free)\n"
-    "loader is on the roadmap (cf. IDEAS.md)."
-)
 
 # NAT4 Zenodo record (https://doi.org/10.5281/zenodo.8044773), public.
 NAT4_ZENODO_RECORD = 8044773
@@ -37,20 +30,15 @@ NAT4_ZENODO_RECORD = 8044773
 def download_nat4(area: str, dest: Optional[str] = None) -> str:
     """Download the NAT4 release from Zenodo into ``dest``.
 
-    Fetches:
-     - ``<area>_NAT4_ozgf.fs100.ch18.tgz``     (population recording, ~30 MB for A1)
-     - ``<area>_pred_correlation.csv``         (per-cell auditory-responsive flag)
-     - ``<area>_single_sites.zip``             (per-site .tgz files, ~70 MB for A1)
-
-    The single-sites zip is unpacked into ``<dest>/<area>_single_sites/`` so
-    the loader finds the per-site tgz files where it expects them.
+    Fetches the population .tgz, the per-cell auditory CSV, and the per-site
+    .zip. The single-sites zip is unpacked into ``<dest>/<area>_single_sites/``
+    so the loader finds the per-site .tgzs where it expects them.
 
     Idempotent: skips files / dirs that already exist.
 
     Parameters
     ----------
     area : {'A1', 'PEG'}
-        Cortical area.
     dest : str, optional
         Defaults to ``default_cache_dir('NAT4')`` (overridable via
         ``$DEEPSTRF_DATA_DIR``).
@@ -105,13 +93,16 @@ class NAT4_Dataset(AudioNeuralDataset):
       ``concat_neural_datasets([a1, peg])``.
     - 595 stimuli total: 18 high-rep (``val``, 20 trials) + 577 low-rep
       (``est``, 1 trial). Each clip is 1.5 s.
-    - Time bin: ``dt_ms = 10`` (responses are stored at fs=100 in NEMS;
-      val responses are downsampled from 1 ms by summing over 10 ms).
+    - Time bin: ``dt_ms = 10`` (the population recording is precomputed at
+      fs=100 with val pre-averaged over 20 reps; per-site spike trains are
+      at fs=1000 and downsampled to 10 ms by summing).
     - Spectrogram: F = 18 ozgf bands, T = 150 frames per stim.
 
-    NB: this loader currently parses the NEMS recording format via the
-    optional ``nems0`` extra (``pip install 'deepSTRF[nems]'``). A native,
-    NEMS-free re-implementation is on the roadmap (cf. IDEAS.md).
+    The loader reads the published NAT4 archive directly with native CSV
+    / JSON / HDF5 parsers — no NEMS0 dependency. The 4 NEMS calls used by
+    the legacy loader (``load_recording``, ``epoch_names_matching``,
+    ``xforms.normalize_sig``, ``preprocessing.split_pop_rec_by_mask``)
+    are reimplemented in ``deepSTRF.datasets.audio._nat4_native``.
 
 
     =============== STRUCTURE ================
@@ -123,8 +114,9 @@ class NAT4_Dataset(AudioNeuralDataset):
                                         est stims have shape (R=1, T=150),
                                         val stims have shape (R=20, T=150);
                                         ``(1, 1)`` NaN sentinel for the (s, n)
-                                        pairs flagged as null in the est set
-                                        (neuron not recorded for that stim).
+                                        pairs where the cell wasn't recorded
+                                        for that stim (cells from sites that
+                                        only saw a subset of the stim bank).
      - self.stim_meta                   list of S dicts {"name", "subset"}
                                         where subset is 'est' or 'val'.
      - self.neuron_metadata             list of N dicts {"cell_id", "area",
@@ -145,23 +137,18 @@ class NAT4_Dataset(AudioNeuralDataset):
         area : {'A1', 'PEG'}
             Cortical area.
         dt_ms : float, default 10.0
-            Time-bin width in ms. NEMS-side rasterization is at fs=100 (10 ms);
-            val responses are summed from fs=1000 down to dt_ms by integer
-            divisor (so any ``dt_ms`` that divides 10 ms evenly is fine, but
-            non-default values are not currently exposed because the
-            spectrogram is precomputed at 10 ms in the .tgz).
+            Time-bin width in ms. Currently must equal 10.0; the population
+            recording is precomputed at fs=100 and the per-site downsampling
+            assumes a fixed 10x ratio from fs=1000.
         smooth : bool, default False
             If True, smooth PSTHs with a 21 ms Hanning window. Off by default
             here because NAT4 trials are typically used as-is for STRF
             fitting (unlike CRCNS-AA where smoothing is the published norm).
         download : bool, default False
             If True and the data is missing under ``path``, fetch it from
-            Zenodo (record 8044773). Installs the optional [nems] extra is
-            still required to parse the .tgz once it lands.
+            Zenodo (record 8044773).
         """
 
-        if not _NEMS_AVAILABLE:
-            raise ImportError(_NEMS_INSTALL_HINT)
         assert area in ("A1", "PEG"), \
             f"Unexpected area {area!r}, choose between 'A1' or 'PEG'"
         assert dt_ms == 10.0, (
@@ -180,38 +167,48 @@ class NAT4_Dataset(AudioNeuralDataset):
         self.species = 'ferret'
         self.F = 18
 
-        # =========  LOAD THE POPULATION RECORDING (est set)  ===========
+        # =========  LOAD THE POPULATION RECORDING (used for est, R=1)  ===========
 
-        datafile = os.path.join(path, f'{area}_NAT4_ozgf.fs100.ch18.tgz')
-        rec = load_recording(datafile)
+        # Accept either the .tgz archive OR an already-extracted directory.
+        tgz_path = os.path.join(path, f'{area}_NAT4_ozgf.fs100.ch18.tgz')
+        dir_path = os.path.join(path, f'{area}_NAT4_ozgf.fs100.ch18')
+        if os.path.exists(tgz_path):
+            datafile = tgz_path
+        elif os.path.isdir(dir_path):
+            datafile = dir_path
+        else:
+            raise FileNotFoundError(
+                f"NAT4 expects either {tgz_path} or {dir_path}/. "
+                f"Pass download=True to fetch the .tgz from Zenodo, or "
+                f"place the data manually."
+            )
+        rec = load_pop_recording(datafile)
 
-        context = {'rec': rec}
-        # log-compress + minmax normalize the spectrogram (matches the
-        # preprocessing baked into the published Pennington & David models).
-        context.update(xforms.normalize_sig(sig='stim', norm_method='minmax', log_compress=1, **context))
-        context.update(xforms.normalize_sig(sig='resp', norm_method='minmax', **context))
-        context.update(preprocessing.split_pop_rec_by_mask(**context))
+        # log1p + minmax for the spectrogram, plain minmax for the response —
+        # matches the preprocessing baked into the published Pennington &
+        # David models. Both operations are global (single (min, max) per
+        # signal across all of T × K).
+        normalize_log1p_minmax_inplace(rec)
+        normalize_minmax_inplace(rec)
 
-        cells = context['rec']['resp'].chans
-        val_sounds = epoch.epoch_names_matching(context['rec']['resp'].epochs, "^STIM_00cat")
-        est_sounds = epoch.epoch_names_matching(context['rec']['resp'].epochs, "^STIM_cat")
+        cells = rec.chans
+        val_sounds = epoch_names_matching(rec.epochs, "^STIM_00cat")
+        est_sounds = epoch_names_matching(rec.epochs, "^STIM_cat")
 
         # =========  STIM SPECTROGRAMS (est first, then val)  ===========
 
         self.stim_meta = []
         self.stims = []
-
         for est_sound in est_sounds:
-            spec = context['rec']['stim'].extract_epoch(est_sound)  # (1, F, T)
-            self.stims.append(torch.from_numpy(spec))
+            spec = extract_epoch(rec, 'stim', est_sound)  # (R=1, F, T)
+            self.stims.append(torch.from_numpy(spec[0]).unsqueeze(0).float())  # (1, F, T)
             self.stim_meta.append({'name': est_sound, 'subset': 'est'})
-
         for val_sound in val_sounds:
-            spec = context['rec']['stim'].extract_epoch(val_sound)
-            self.stims.append(torch.from_numpy(spec))
+            spec = extract_epoch(rec, 'stim', val_sound)
+            self.stims.append(torch.from_numpy(spec[0]).unsqueeze(0).float())
             self.stim_meta.append({'name': val_sound, 'subset': 'val'})
 
-        # =========  NEURON METADATA (auditory flag from CSV)  ===========
+        # =========  NEURON METADATA (auditory flag from the per-area CSV)  ===========
 
         self.neuron_metadata = []
         list_neurons = pd.read_csv(os.path.join(path, f'{area}_pred_correlation.csv'))
@@ -225,67 +222,55 @@ class NAT4_Dataset(AudioNeuralDataset):
         self.N_neurons = len(self.neuron_metadata)
 
         # =========  EST RESPONSES (1 trial per stim, full population)  ===========
-        # Cells that did not see a given est stim get a (1, 1) NaN sentinel
-        # rather than a (1, T) trace of zeros — paradigm-compliant.
-        # NEMS' extract_epoch returns (R, N, T) with NaN-for-missing for the
-        # cross-site cells (they share the same time grid via stitching).
+        # Cells that didn't see a given est stim get a (1, 1) NaN sentinel
+        # rather than a (1, T) trace of NaNs / zeros.
 
-        est_responses_per_stim = []  # list of S_est lists of N (R=1, T) tensors / NaN
+        est_responses_per_stim = []  # list of S_est lists of N (1, T) tensors / NaN
         for est_sound in est_sounds:
-            arr = context['rec']['resp'].extract_epoch(est_sound)  # (1, N, T) numpy
+            arr = extract_epoch(rec, 'resp', est_sound)  # (R=1, N, T)
             stim_resps = []
             for n in range(self.N_neurons):
-                trace = arr[:, n, :]   # (1, T)
-                # NEMS marks unrecorded (cell, stim) pairs with NaN; collapse
-                # those whole-NaN traces to the canonical (1, 1) sentinel so
-                # downstream code can rely on the deepSTRF paradigm.
-                if torch.from_numpy(trace).isnan().all():
+                trace = arr[:, n, :]  # (1, T)
+                if np.isnan(trace).all():
                     stim_resps.append(torch.full((1, 1), float('nan')))
                 else:
-                    stim_resps.append(torch.from_numpy(trace))
+                    stim_resps.append(torch.from_numpy(trace).float())
             est_responses_per_stim.append(stim_resps)
 
         del rec
-        del context
-        gc.collect()
 
         # =========  VAL RESPONSES (20 trials per stim, per-site stitching)  ===========
+        # The pop rec averages val over 20 reps and only keeps R=1; for trial-
+        # resolved data we go to the per-site .tgzs at fs=1000 and downsample.
 
         val_files = sorted(os.listdir(os.path.join(path, f'{area}_single_sites')))
 
-        # Accumulate (S_val, R, N_subpop, T) per site, then stitch across cells.
-        per_site_val = []
-        val_cells_in_order = []
+        per_site_val = []          # list of (S_val, R, N_subpop, T) tensors
+        val_cells_in_order = []    # cell-id order across stitched per-site recs
         for filename in tqdm(val_files, desc=f'NAT4 {area} val sites'):
-            # 'TNC*' sites do not have est data, but they DO have val data.
-            # We still want their val responses stitched in — they appear
-            # in the population's chans list and est-set rows are NaN-sentinels.
-            datafile = os.path.join(path, f'{area}_single_sites', filename)
-            single_site_rec = load_recording(datafile)
-            val_cells_in_order += single_site_rec['resp'].chans
+            site_path = os.path.join(path, f'{area}_single_sites', filename)
+            site_rec = load_per_site_recording(site_path)
+            val_cells_in_order += list(site_rec.chans)
 
             site_responses = []
             for val_sound in val_sounds:
-                resp = single_site_rec['resp'].rasterize()
-                arr = resp.extract_epoch(val_sound)   # (R=20, N_subpop, T_ms=1500)
+                # extract at fs=1000 -> (R=20, N_subpop, T_ms=1500)
+                arr = extract_epoch(site_rec, 'resp', val_sound)
                 R, N_subpop, T_ms = arr.shape
                 # downsample 1 ms -> 10 ms by summing
                 arr = arr.reshape(R, N_subpop, -1, 10).sum(axis=-1)
-                site_responses.append(torch.from_numpy(arr))
-                del resp
+                site_responses.append(torch.from_numpy(arr).float())
             per_site_val.append(torch.stack(site_responses))  # (S_val, R, N_subpop, T)
-            del single_site_rec
-            gc.collect()
+            del site_rec
 
         val_full = torch.cat(per_site_val, dim=2)         # (S_val, R, N_total_in_val_order, T)
         val_full = val_full.permute(0, 2, 1, 3)           # (S_val, N, R, T)
 
-        # Cells in the val concatenation are not in the same order as the
-        # population's `cells` list, but the SET is the same. Reindex.
+        # Cells in the per-site stitching order are not in the same order as
+        # the population's `cells` list (and the val concatenation may include
+        # cells the pop rec doesn't have, or vice versa). Reindex onto `cells`;
+        # any pop-rec cell missing from the val concat gets a NaN sentinel.
         index_map = {u: i for i, u in enumerate(val_cells_in_order)}
-        # Cells in the population list that are NOT in val_cells_in_order
-        # were never presented val stims (e.g. some TNC cells were
-        # est-only) — give them NaN sentinels.
         S_val = val_full.shape[0]
         val_responses_per_stim = []
         for s in range(S_val):
