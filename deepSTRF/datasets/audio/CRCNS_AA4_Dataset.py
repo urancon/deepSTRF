@@ -1,5 +1,6 @@
 import os
 import re
+from typing import Optional, Sequence
 
 import h5py
 import numpy as np
@@ -8,6 +9,11 @@ import torchaudio
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 from deepSTRF.datasets.audio._crcns_aa_loaders import time_binning
+from deepSTRF.utils.data_download import (
+    crcns_download,
+    default_cache_dir,
+    untar,
+)
 
 
 def _get_subgroups(group):
@@ -37,6 +43,56 @@ _AA4_SORTTYPE_FIXES = {"singl": "single"}
 
 
 AA4_ANIMAL_IDS = ('BlaBro09xxF', 'GreBlu9508M', 'LblBlu2028M', 'WhiBlu5396M', 'WhiWhi4522M', 'YelBlu6903F')
+
+
+def download_aa4(dest: Optional[str] = None,
+                 animals: Sequence[str] = AA4_ANIMAL_IDS,
+                 username: Optional[str] = None,
+                 password: Optional[str] = None) -> str:
+    """Download CRCNS-AA4 archives from the NERSC mirror into ``dest``.
+
+    AA4 is split into one ``.tar.gz`` per animal (each is hundreds of MB);
+    by default this fetches all 6, but ``animals`` can be narrowed to a
+    subset. The CRCNSCode tutorial archive is also fetched (small, ~1 MB).
+
+    Idempotent: skips an archive if its animal directory already exists,
+    skips the CRCNSCode archive if ``CRCNSCode/`` already exists.
+
+    Parameters
+    ----------
+    dest : str, optional
+        Defaults to ``default_cache_dir('AA4')`` (``$DEEPSTRF_DATA_DIR``
+        overrides).
+    animals : sequence of str, default all 6
+        Animals to download. Must be a subset of ``AA4_ANIMAL_IDS``.
+    username, password : str, optional
+        Default to ``$CRCNS_USERNAME`` / ``$CRCNS_PASSWORD``.
+    """
+    dest_path = str(default_cache_dir("AA4") if dest is None else dest)
+    os.makedirs(dest_path, exist_ok=True)
+
+    for animal in animals:
+        assert animal in AA4_ANIMAL_IDS, \
+            f"Unknown AA4 animal {animal!r}. Valid: {AA4_ANIMAL_IDS}"
+        if os.path.isdir(os.path.join(dest_path, animal)):
+            continue
+        archive_name = f"{animal}.tar.gz"
+        archive_path = os.path.join(dest_path, archive_name)
+        if not os.path.exists(archive_path):
+            crcns_download(f"aa-4/{archive_name}", archive_path,
+                           username=username, password=password)
+        untar(archive_path, dest_path)  # tarball already wraps in <animal>/
+
+    # CRCNSCode tutorial — small, useful pointer to the original loaders
+    code_dir = os.path.join(dest_path, "CRCNSCode")
+    if not os.path.isdir(code_dir):
+        archive_path = os.path.join(dest_path, "CRCNSCode.tar.gz")
+        if not os.path.exists(archive_path):
+            crcns_download("aa-4/CRCNSCode.tar.gz", archive_path,
+                           username=username, password=password)
+        untar(archive_path, dest_path)
+
+    return dest_path
 
 
 class CRCNS_AA4_Dataset(AudioNeuralDataset):
@@ -107,16 +163,21 @@ class CRCNS_AA4_Dataset(AudioNeuralDataset):
 
     """
 
-    def __init__(self, path: str, animals='all', stimuli=('song', 'call', 'mlnoise'),
-                 dt_ms=1.0, smooth=True, n_mels=32, compression='cubic'):
+    def __init__(self, path: Optional[str] = None, animals='all',
+                 stimuli=('song', 'call', 'mlnoise'),
+                 dt_ms=1.0, smooth=True, n_mels=32, compression='cubic',
+                 download: bool = False,
+                 username: Optional[str] = None,
+                 password: Optional[str] = None):
         """
         Initializes the AA4 Dataset.
 
         Parameters
         ----------
-        path : str
-            Path to the 'CRCNS_AA4/data/' folder containing one subfolder per animal
-            (with `.h5` cell files + a `wavfiles/` directory of stimulus `.wav`s).
+        path : str, optional
+            Path to the 'CRCNS_AA4/data/' folder containing one subfolder
+            per animal (with `.h5` cell files + a `wavfiles/` directory
+            of stimulus `.wav`s). Defaults to the platformdirs cache.
         animals : 'all' or sequence of str
             Animals to load (any subset of `AA4_ANIMAL_IDS`).
         stimuli : sequence of str
@@ -130,7 +191,23 @@ class CRCNS_AA4_Dataset(AudioNeuralDataset):
             Number of mel frequency bands of the stimulus spectrogram.
         compression : {'cubic', 'log1p', 'none'}
             Compression applied to the spectrogram (saturation effect of hair cells).
+        download : bool, default False
+            If True and an animal's data is missing under ``path``, fetch
+            its tarball (~hundreds of MB per animal) from the NERSC mirror
+            and untar in place. Only the animals listed in ``animals`` are
+            downloaded — useful for quick iteration on a subset.
+        username, password : str, optional
+            CRCNS credentials. Default to ``$CRCNS_USERNAME`` /
+            ``$CRCNS_PASSWORD``. Prefer env vars over passing literals.
         """
+
+        if path is None:
+            path = str(default_cache_dir("AA4"))
+
+        animals_to_load = AA4_ANIMAL_IDS if animals == 'all' else tuple(animals)
+        if download:
+            download_aa4(path, animals=animals_to_load,
+                         username=username, password=password)
 
         super().__init__(path, dt_ms)
 
@@ -138,7 +215,7 @@ class CRCNS_AA4_Dataset(AudioNeuralDataset):
         self.species = 'zebra finch'
         self.F = n_mels
         self.compression = compression
-        self.animals = AA4_ANIMAL_IDS if animals == 'all' else tuple(animals)
+        self.animals = animals_to_load
         self.stim_types = set(stimuli)
 
         ###########################################
