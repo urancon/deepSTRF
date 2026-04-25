@@ -103,6 +103,23 @@ def test_osf_download_resolves_url(monkeypatch, tmp_path):
     assert out == tmp_path / "X.mat"
 
 
+def test_zenodo_download_resolves_url(monkeypatch, tmp_path):
+    """zenodo_download(record_id, name, dest) hits the records API URL."""
+    from deepSTRF.utils import data_download as dd
+
+    captured = {}
+
+    def fake_stream(url, dest_path, **kwargs):
+        captured["url"] = url
+        Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(dest_path).write_bytes(b"")
+        return Path(dest_path)
+
+    monkeypatch.setattr(dd, "stream_download", fake_stream)
+    dd.zenodo_download(8044773, "A1_NAT4_ozgf.fs100.ch18.tgz", tmp_path / "x.tgz")
+    assert captured["url"] == "https://zenodo.org/api/records/8044773/files/A1_NAT4_ozgf.fs100.ch18.tgz/content"
+
+
 def test_github_raw_download_resolves_url(monkeypatch, tmp_path):
     """github_raw_download builds a raw.githubusercontent.com URL."""
     from deepSTRF.utils import data_download as dd

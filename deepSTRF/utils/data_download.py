@@ -7,6 +7,7 @@ Public surface:
     - ``untar(tar_path, dest_dir, strip_components=)``  — tar.gz / .tar / .tar.bz2 unpack
     - ``osf_download(guid, dest)``                      — public OSF storage files
     - ``github_raw_download(repo, path, dest, ref=)``   — public GitHub raw files
+    - ``zenodo_download(record_id, filename, dest)``    — public Zenodo records
     - ``crcns_download(file_path, dest, username=, password=)`` — CRCNS (free account)
 """
 
@@ -242,6 +243,26 @@ def crcns_download(
 
     tmp.replace(dest)
     return dest
+
+
+def zenodo_download(
+    record_id: Union[int, str],
+    filename: str,
+    dest_path: Union[str, Path],
+    **kwargs,
+) -> Path:
+    """Download a single file from a public Zenodo record.
+
+    Resolves to ``https://zenodo.org/api/records/<record_id>/files/<filename>/content``
+    — the canonical URL for fetching a file from a Zenodo record. Public
+    records are accessible without auth.
+
+    Example
+    -------
+    >>> zenodo_download(8044773, "A1_NAT4_ozgf.fs100.ch18.tgz", "/tmp/X.tgz")
+    """
+    url = f"https://zenodo.org/api/records/{record_id}/files/{filename}/content"
+    return stream_download(url, dest_path, **kwargs)
 
 
 def github_raw_download(
