@@ -159,8 +159,15 @@ def crcns_download(
     Status: experimental. The auth + URL conventions were reverse-engineered
     from probing the public NERSC mirror; we do not have a contract from
     CRCNS that they'll stay stable. If the portal layout changes, this
-    helper will break and is intentionally isolated from the dataset
-    constructors so it can be reverted with one commit.
+    helper breaks. Verified 2026-04-25 against the AA1 archive
+    (``aa-1/crcns-aa1.zip``).
+
+    Example
+    -------
+    >>> import os
+    >>> os.environ["CRCNS_USERNAME"] = "..."
+    >>> os.environ["CRCNS_PASSWORD"] = "..."
+    >>> crcns_download("aa-1/crcns-aa1.zip", "/tmp/aa1.zip")
     """
     import os as _os
 

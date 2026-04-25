@@ -1,14 +1,55 @@
 import os
+from typing import Optional
+
 import torch
 import torchaudio
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 from deepSTRF.datasets.audio._crcns_aa_loaders import load_spike_file, parse_cell_name
+from deepSTRF.utils.data_download import crcns_download, default_cache_dir, unzip
 
 
 # TODO (misc.):
 #  - find a way to use pre-onset activity ?
 #  - make concatenable ?
+
+
+# CRCNS-AA1 ships as a single zip archive on the NERSC mirror.
+# After unzip -> 'all_stims/', 'Field_L_cells/', 'MLd_cells/' at the
+# directory root (flat — no wrapping top-level folder).
+AA1_NERSC_PATH = "aa-1/crcns-aa1.zip"
+
+
+def download_aa1(dest: Optional[str] = None,
+                 username: Optional[str] = None,
+                 password: Optional[str] = None) -> str:
+    """Download the CRCNS-AA1 archive from the NERSC mirror into ``dest``.
+
+    Idempotent: skips the archive if already present, and skips unzipping
+    if ``Field_L_cells/`` already exists in ``dest``. Returns the dataset
+    directory.
+
+    Parameters
+    ----------
+    dest : str, optional
+        Defaults to the platformdirs cache (overridable via
+        ``$DEEPSTRF_DATA_DIR``).
+    username, password : str, optional
+        Default to ``$CRCNS_USERNAME`` / ``$CRCNS_PASSWORD``. Free CRCNS
+        account at https://crcns.org/register.
+    """
+    dest_path = str(default_cache_dir("AA1") if dest is None else dest)
+    os.makedirs(dest_path, exist_ok=True)
+
+    zip_path = os.path.join(dest_path, "crcns-aa1.zip")
+    if not os.path.exists(zip_path):
+        crcns_download(AA1_NERSC_PATH, zip_path,
+                       username=username, password=password)
+
+    if not os.path.isdir(os.path.join(dest_path, "Field_L_cells")):
+        unzip(zip_path, dest_path, strip_root=True)
+
+    return dest_path
 
 
 def get_animals_ids(data_path):
@@ -110,20 +151,39 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
 
     """
 
-    def __init__(self, path: str, areas=('Field_L', 'MLd'), stimuli=('conspecific', 'flatrip'), animals='all', dt_ms=1, smooth=True, n_mels=32, compression='cubic'):
+    def __init__(self, path: Optional[str] = None, areas=('Field_L', 'MLd'),
+                 stimuli=('conspecific', 'flatrip'), animals='all', dt_ms=1,
+                 smooth=True, n_mels=32, compression='cubic',
+                 download: bool = False):
         """
-        Initializes the AA1 Dataset
+        Initializes the AA1 Dataset.
 
-        Specific units can be selected according to the stimulus they were presented, their animal, and recording site.
-
-        Parameters:
-            path (str): Path to the 'CRCNS_AA2/data/' folder containing files as indicated in our readme
-            areas (tuple of str): recording sites of interest, can be 'Field_L' or 'MLd'
-            stimuli (tuple of str): stimulus types of interest, can be 'conspecific' or 'flatrip'
-            dt (float): time step size in ms
-            n_mels (int): number of mel frequency bands the stimulus should have in spectrogram form
-            compression: compression function to apply to the stimulus spectrogram
+        Parameters
+        ----------
+        path : str, optional
+            Path to the AA1 data folder (containing ``Field_L_cells/``,
+            ``MLd_cells/``, ``all_stims/``). Defaults to the platformdirs
+            cache (``$DEEPSTRF_DATA_DIR`` overrides).
+        areas : tuple of str
+            Recording sites: 'Field_L' or 'MLd'.
+        stimuli : tuple of str
+            Stimulus types: 'conspecific' or 'flatrip'.
+        dt_ms : float
+            Time step size in ms.
+        n_mels : int
+            Number of mel frequency bands.
+        compression : str
+            Spectrogram compression ('cubic', 'log1p', 'none').
+        download : bool, default False
+            If True and the data is missing under ``path``, fetch the
+            ~17 MB CRCNS-AA1 archive from the NERSC mirror (free CRCNS
+            account required; see ``crcns_download``) and unzip in place.
         """
+
+        if path is None:
+            path = str(default_cache_dir("AA1"))
+        if download:
+            download_aa1(path)
 
         super().__init__(path, dt_ms)
 
