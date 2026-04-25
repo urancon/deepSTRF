@@ -1,4 +1,5 @@
 import os
+import re
 
 import h5py
 import numpy as np
@@ -23,6 +24,16 @@ def _decode_attr(val) -> str:
             return val[0].decode()
         except (AttributeError, IndexError, TypeError):
             return str(val)
+
+
+# Filename format from the AA4 PDF:
+#   Site<S>_L<Lz>R<Rz>_e<elec>_s<online_sortid>[_ss<offline_sortid>].h5
+# (e.g. "Site1_L1400R1400_e10_s0_ss1.h5"); some files omit the trailing _ss<n>.
+_AA4_SUBSORT_RE = re.compile(r"_ss(\d+)$")
+
+# Some cells in the data have a typo'd sortType ("singl" instead of "single").
+# Normalise so downstream filters don't have to care.
+_AA4_SORTTYPE_FIXES = {"singl": "single"}
 
 
 AA4_ANIMAL_IDS = ('BlaBro09xxF', 'GreBlu9508M', 'LblBlu2028M', 'WhiBlu5396M', 'WhiWhi4522M', 'YelBlu6903F')
@@ -63,12 +74,36 @@ class CRCNS_AA4_Dataset(AudioNeuralDataset):
     AA4-specific metadata contents:
      - self.stims                       list of S tensors (1, F, T_s), mel-spectrograms
      - self.responses                   list of S lists of N tensors (R_{s,n}, T_s)
-     - self.stim_meta                   list of S dicts {"name", "type", "class"}
-                                        — "name" is the stimulus md5 (the canonical
-                                        identifier; the wav filename is per-animal
-                                        and not unique across the corpus)
-     - self.neuron_metadata             list of N dicts {"cell_id", "animal_id", "sex",
-                                        "ldepth", "rdepth"}
+     - self.stim_meta                   list of S dicts {"name", "type", "class",
+                                        "duration_s"} — "name" is the stimulus md5
+                                        (the canonical identifier; the wav filename
+                                        is per-animal and not unique across the
+                                        corpus); "duration_s" is the stim_duration
+                                        attr from the h5 (seconds)
+     - self.neuron_metadata             list of N dicts with the following keys:
+                                          - "cell_id"      basename of the h5 file (no extension)
+                                          - "animal_id"    one of AA4_ANIMAL_IDS
+                                          - "sex"          'M' or 'F' (last char of animal_id)
+                                          - "site"         recording site label, e.g. "Site1"
+                                          - "electrode"    int 1-32 — channel index across both
+                                                           electrode arrays at this site (each
+                                                           array is 16 channels in one hemisphere
+                                                           in 5/6 birds; 1 array in the 6th)
+                                          - "ldepth"       left-array depth (µm) at this site
+                                          - "rdepth"       right-array depth (µm)
+                                          - "sort_type"    'single', 'multi', or 'noise'/'tdt'
+                                                           (the latter two are filtered out)
+                                          - "sort_id"      online-sort id (int)
+                                          - "subsort_id"   offline spike-sorting id (int) —
+                                                           parsed from the trailing ``_ss<N>`` of
+                                                           the filename; ``None`` if absent
+
+    Note: the dataset paper does NOT publish a per-cell brain-area assignment
+    (cf. PDF §Methods: "units were not precisely assigned one of the above
+    areas") — the depth + electrode-array geometry is the only anatomical
+    proxy. The PDF also does not document which electrode IDs (1-16 vs 17-32)
+    correspond to the left vs right hemisphere; users wishing to derive
+    "hemisphere" from "electrode" should confirm with the dataset authors.
 
     """
 
@@ -161,16 +196,25 @@ class CRCNS_AA4_Dataset(AudioNeuralDataset):
                 h5_path = os.path.join(animal_path, fname)
                 cell_id = os.path.splitext(fname)[0]
                 with h5py.File(h5_path, 'r') as celldata:
-                    sortType = _decode_attr(celldata.attrs.get('sortType', b''))
-                    if sortType in ('tdt', 'noise'):
+                    sort_type = _decode_attr(celldata.attrs.get('sortType', b''))
+                    if sort_type in ('tdt', 'noise'):
                         continue
+                    sort_type = _AA4_SORTTYPE_FIXES.get(sort_type, sort_type)
+
+                    subsort_match = _AA4_SUBSORT_RE.search(cell_id)
+                    subsort_id = int(subsort_match.group(1)) if subsort_match else None
 
                     nrn_meta = {
                         'cell_id': cell_id,
                         'animal_id': animal,
                         'sex': sex,
+                        'site': _decode_attr(celldata.attrs.get('site', b'')),
+                        'electrode': int(celldata.attrs.get('electrode', 0)),
                         'ldepth': float(celldata.attrs.get('ldepth', np.nan)),
                         'rdepth': float(celldata.attrs.get('rdepth', np.nan)),
+                        'sort_type': sort_type,
+                        'sort_id': int(celldata.attrs.get('sortid', 0)),
+                        'subsort_id': subsort_id,
                     }
                     responses = {}
 
@@ -188,6 +232,7 @@ class CRCNS_AA4_Dataset(AudioNeuralDataset):
 
                             stim_md5 = _decode_attr(stim_grp.attrs.get('stim_md5', b''))
                             stim_class = _decode_attr(stim_grp.attrs.get('stim_class', b''))
+                            stim_dur_s = float(stim_grp.attrs.get('stim_duration', np.nan))
 
                             # register unique stimulus on first encounter
                             if stim_md5 not in stim_meta_map:
@@ -200,6 +245,7 @@ class CRCNS_AA4_Dataset(AudioNeuralDataset):
                                     'name': stim_md5,
                                     'type': stim_type,
                                     'class': stim_class,
+                                    'duration_s': stim_dur_s,
                                 }
                                 stim_spec_map[stim_md5] = spec
 
