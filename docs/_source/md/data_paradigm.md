@@ -173,6 +173,16 @@ per_neuron  = per_element.sum(dim=(0, 2)) / valid.float().sum(dim=(0, 2))
 6. **Subclasses of `NeuralDataset` must call `self.validate()` as the
    last line of `__init__`** (the old `self.compute_nrn_masks()` call is
    no longer needed — `nrn_masks` is a `@property` derived from responses).
+7. **`__len__` and `__getitem__` honour the current neuron selection.**
+   They expose only the stimuli for which at least one selected neuron
+   (in `self.I`) has valid response data. Index `0` is the *first
+   iterable* stim under the current selection, not necessarily
+   `self.stims[0]`. With a `DataLoader`, iterating
+   `range(len(ds))` is therefore guaranteed to visit only stims with at
+   least some real selected-neuron data — cross-block stims of a
+   concatenated dataset disappear automatically when you select only
+   one source's neurons. To address raw stim *i*, read
+   `self.stims[i]`, `self.responses[i]` directly.
 
 ## 8. Gotchas
 

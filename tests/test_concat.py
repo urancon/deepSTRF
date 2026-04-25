@@ -110,3 +110,70 @@ def test_concat_add_returns_notimplemented_for_non_dataset():
     a = _fake_audio_dataset(N=2, S=3)
     with pytest.raises(TypeError):
         _ = a + 42
+
+
+def test_concat_getitem_only_yields_iterable_stims_under_selection():
+    """Selecting only source A's neurons must hide source B's stims from __len__/__getitem__.
+
+    This is the property that makes concatenated datasets safe with DataLoader:
+    iterating range(len(ds)) must never produce a stim whose responses are
+    fully NaN under the current neuron selection.
+    """
+    from deepSTRF.utils.data import concat_neural_datasets
+
+    a = _fake_audio_dataset(N=2, S=3)
+    b = _fake_audio_dataset(N=3, S=2)
+    c = concat_neural_datasets([a, b])
+
+    # all 5 stims iterable when all neurons selected (default after validate)
+    assert len(c) == 5
+
+    # select only A's neurons -> only A's stims iterable
+    c.select_population([0, 1])
+    assert len(c) == 3
+    seen_metas = [c[i][3] for i in range(len(c))]
+    assert seen_metas == c.stim_meta[:3]
+
+    # every yielded item must have at least one non-NaN response
+    for i in range(len(c)):
+        _, resps, _, _ = c[i]
+        assert any(not r.isnan().any() for r in resps), \
+            f"item {i} has fully-NaN responses under selection {c.I}"
+
+    # accessing beyond the iterable range must raise, not silently return a NaN slab
+    with pytest.raises(IndexError):
+        _ = c[len(c)]
+
+    # select only B's neurons -> only B's stims iterable
+    c.select_population([2, 3, 4])
+    assert len(c) == 2
+    seen_metas = [c[i][3] for i in range(len(c))]
+    assert seen_metas == c.stim_meta[3:]
+    for i in range(len(c)):
+        _, resps, _, _ = c[i]
+        assert any(not r.isnan().any() for r in resps)
+
+
+def test_dataloader_over_concat_skips_cross_block_stims():
+    """Sanity check that a real DataLoader over a concat dataset skips cross-block stims."""
+    from torch.utils.data import DataLoader
+    from deepSTRF.utils.data import concat_neural_datasets, neural_collate
+
+    a = _fake_audio_dataset(N=2, S=3)
+    b = _fake_audio_dataset(N=3, S=2)
+    c = concat_neural_datasets([a, b])
+    c.select_population([0, 1])  # only A's neurons
+
+    loader = DataLoader(c, batch_size=2, shuffle=False, collate_fn=neural_collate)
+    batches = list(loader)
+
+    # 3 iterable stims, batch_size 2 -> 2 batches (sizes 2 and 1)
+    assert len(batches) == 2
+    total_items = sum(b_[0].shape[0] for b_ in batches)
+    assert total_items == 3
+
+    # every batch must contain only A's stims (i.e. valid_mask has at least one True per item)
+    for stims, responses, valid_mask, metas in batches:
+        per_item_has_data = valid_mask.any(dim=(1, 2, 3))  # (B,) bool
+        assert per_item_has_data.all(), \
+            "DataLoader yielded a batch item with no valid (s,n,r,t) data anywhere"

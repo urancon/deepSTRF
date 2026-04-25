@@ -105,53 +105,69 @@ class NeuralDataset(Dataset, ABC):
         ]
         return torch.stack(rows)
 
+    def _selected(self) -> list:
+        """Effective neuron selection. Falls back to all neurons when ``self.I`` is empty."""
+        return list(self.I) if self.I else list(range(self.N_neurons))
+
+    @property
+    def _iter_idx(self) -> list:
+        """Stim indices visible to iteration: those with >=1 valid response among selected neurons.
+
+        This is the canonical filter that ``__len__`` and ``__getitem__`` agree on.
+        For a concatenated dataset, selecting only one source's neurons makes
+        only that source's stims iterable — cross-block stims (full-NaN for
+        the selected neurons) are filtered out automatically.
+        """
+        masks = self.nrn_masks  # (S, N) bool
+        if masks.shape[0] == 0:
+            return []
+        sel_mask = masks[:, self._selected()].any(dim=1)  # (S,) bool
+        return sel_mask.nonzero(as_tuple=True)[0].tolist()
+
     def __len__(self):
-        """Return number of stimuli for which at least one SELECTED neuron has a valid response."""
-        if not self.I:
-            return 0
-        count = 0
-        for mask in self.nrn_masks:
-            if any(mask[i].item() for i in self.I):
-                count += 1
-        return count
+        """Number of stimuli with at least one valid response among the currently selected neurons."""
+        return len(self._iter_idx)
 
     def __getitem__(self, idx):
-        """Retrieve stimulus-response pairs for given stimulus index or indices,
-        only for selected neurons (self.I).
+        """Retrieve stimulus-response pairs for the iteration index ``idx`` (or indices).
 
-        Args:
-            idx (int, slice, list of int): stimulus index or indices.
+        ``idx`` indexes into the *iterable* stim space — the subset of stimuli
+        for which at least one currently-selected neuron has valid response
+        data. This makes ``__getitem__`` consistent with ``__len__`` and with
+        PyTorch ``DataLoader`` semantics (which iterates ``range(len(ds))``).
 
-        Returns:
-            stim: Tensor or list of Tensors
-            responses: list or list of lists of Tensors [(R, T)], only for neurons in self.I
-            nrn_masks: Tensor or list of Tensors [(len(self.I),)]
-            stim_meta: metadata or list of metadata
+        Returns
+        -------
+        stim, responses, mask, stim_meta
+            Tuple for a scalar index, or 4 lists for slice / list indexing.
+            ``responses`` and ``mask`` are restricted to the selected neurons.
         """
+        iter_idx = self._iter_idx  # snapshot once; O(S * |I|) per call
+
         if isinstance(idx, int):
-            indices = [idx]
+            n_iter = len(iter_idx)
+            i = idx + n_iter if idx < 0 else idx
+            if not (0 <= i < n_iter):
+                raise IndexError(
+                    f"Dataset index {idx} out of range (len={n_iter} under current selection)"
+                )
+            indices = [iter_idx[i]]
             single = True
         elif isinstance(idx, slice):
-            indices = list(range(*idx.indices(len(self.stims))))
+            indices = [iter_idx[i] for i in range(*idx.indices(len(iter_idx)))]
             single = False
         elif isinstance(idx, (list, tuple)):
-            indices = list(idx)
+            indices = [iter_idx[i] for i in idx]
             single = False
         else:
             raise TypeError(f"Invalid index type {type(idx)}")
 
-        # default: select entire population if no explicit selection
-        if not self.I:
-            self.I = list(range(self.N_neurons))
-
+        selected = self._selected()
+        all_masks = self.nrn_masks   # snapshot property once
         stims = [self.stims[i] for i in indices]
         metas = [self.stim_meta[i] for i in indices]
-        all_masks = self.nrn_masks   # snapshot property once (O(S*N) per access)
-        resps = []
-        masks = []
-        for i in indices:
-            resps.append([self.responses[i][n] for n in self.I])
-            masks.append(all_masks[i][self.I])
+        resps = [[self.responses[i][n] for n in selected] for i in indices]
+        masks = [all_masks[i][selected] for i in indices]
 
         if single:
             return stims[0], resps[0], masks[0], metas[0]
