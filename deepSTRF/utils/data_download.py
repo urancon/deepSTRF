@@ -69,7 +69,11 @@ def stream_download(
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
 
-    with requests.get(url, stream=True, timeout=60, allow_redirects=True) as resp:
+    # (connect, read): 30s to establish, then 10 min between recvs. The read
+    # timeout has to be generous because slow upstream mirrors (CRCNS / NERSC,
+    # OSF on a busy day) can pause for tens of seconds between chunks while
+    # the file is fetched from cold storage.
+    with requests.get(url, stream=True, timeout=(30, 600), allow_redirects=True) as resp:
         resp.raise_for_status()
         total = int(resp.headers.get("Content-Length") or 0)
 
@@ -194,7 +198,9 @@ def crcns_download(
         "submit": "Login",
     }
 
-    with requests.post(url, data=form, stream=True, timeout=60, allow_redirects=True) as resp:
+    # (connect, read): see comment in stream_download — NERSC is regularly
+    # slow to start streaming a CRCNS archive (cold-storage fetch).
+    with requests.post(url, data=form, stream=True, timeout=(30, 600), allow_redirects=True) as resp:
         resp.raise_for_status()
 
         # NERSC returns 200 + the login form HTML on auth failure (no 401).
