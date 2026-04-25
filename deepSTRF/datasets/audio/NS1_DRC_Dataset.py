@@ -1,10 +1,12 @@
 import os
+from typing import Optional
 
 import numpy as np
 import scipy.io as sio
 import torch
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
+from deepSTRF.utils.data_download import default_cache_dir, osf_download, unzip
 
 
 # Stimulus duration is 4995 ms = 999 bins at the 5 ms binning the original
@@ -12,6 +14,17 @@ from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 # at this temporal resolution.
 NS1_RAW_LEN_MS = 4995
 NS1_NAT_SOUNDS = 20
+
+# OSF storage GUIDs for the public NS1 release (https://osf.io/ayw2p/).
+# Resolved with deepSTRF.utils.data_download.osf_download(<guid>, dest).
+# Note: the OSF release does NOT include the precomputed spectrogram tensor
+# ``test_data_5ms.mat``; it must be supplied separately. See ``download_ns1``
+# below for how this is handled.
+NS1_OSF_FILES = {
+    "MetadataSHEnCneurons.mat": "gdwyd",
+    "spikesandwav.zip":         "5nxga",
+    "ReadMe.rtf":               "f3rtm",
+}
 
 # Indices of the 4 natural-speech stimuli, per Rahman et al. (2020) Fig. S2.
 # 0-indexed; the original (1-indexed) sound numbers are 9, 10, 11, 12.
@@ -32,6 +45,51 @@ NS1_TYPE_OVERRIDES = {
 # the dataset (callers can sub-select by stim index).
 NS1_RAHMAN_TRAINVAL_INDICES = [0, 1, 2, 4, 5, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18]
 NS1_RAHMAN_TEST_INDICES = [3, 6, 9, 19]
+
+
+def download_ns1(dest: Optional[str] = None) -> str:
+    """Download the public NS1 release from OSF into ``dest``.
+
+    Idempotent: skips files that already exist; returns the destination path.
+
+    Parameters
+    ----------
+    dest : str, optional
+        Where to put the downloaded files. Defaults to the platformdirs cache
+        (overridable via ``$DEEPSTRF_DATA_DIR``).
+
+    Returns
+    -------
+    str
+        Absolute path to the dataset directory.
+
+    Notes
+    -----
+    The OSF release at https://osf.io/ayw2p/ contains
+    ``MetadataSHEnCneurons.mat`` and ``spikesandwav.zip`` (155 MB, unzipped
+    in place). It does NOT contain ``test_data_5ms.mat`` (the precomputed
+    34-mel × 5 ms × 999 frame spectrogram tensor). That file currently has
+    to be obtained separately; ``NS1_Dataset`` will raise a clear error if
+    it is missing. A future change should compute spectrograms directly
+    from the raw wavs in ``spikesandwav/SH.En.C/`` so the dataset is fully
+    self-contained from OSF (cf. IDEAS.md).
+    """
+    dest_path = str(default_cache_dir("NS1") if dest is None else dest)
+    os.makedirs(dest_path, exist_ok=True)
+
+    for fname, guid in NS1_OSF_FILES.items():
+        target = os.path.join(dest_path, fname)
+        if os.path.exists(target):
+            continue
+        osf_download(guid, target)
+
+    # unzip spikesandwav.zip if not already unpacked
+    spikes_dir = os.path.join(dest_path, "spikesandwav")
+    zip_path = os.path.join(dest_path, "spikesandwav.zip")
+    if os.path.isfile(zip_path) and not os.path.isdir(spikes_dir):
+        unzip(zip_path, dest_path)
+
+    return dest_path
 
 
 class NS1_Dataset(AudioNeuralDataset):
@@ -88,14 +146,16 @@ class NS1_Dataset(AudioNeuralDataset):
 
     """
 
-    def __init__(self, path: str, dt_ms: float = 5.0, smooth: bool = True):
+    def __init__(self, path: Optional[str] = None, dt_ms: float = 5.0,
+                 smooth: bool = True, download: bool = False):
         """
         Parameters
         ----------
-        path : str
-            Path to the ``NS1_DRC/data/`` folder containing
-            ``test_data_5ms.mat``, ``MetadataSHEnCneurons.mat``, and the
-            ``spikesandwav/`` subdirectory of per-neuron spike .mat files.
+        path : str, optional
+            Path to the NS1 data folder containing ``test_data_5ms.mat``,
+            ``MetadataSHEnCneurons.mat``, and ``spikesandwav/``. If ``None``,
+            defaults to the platformdirs cache (``user_cache_dir('deepSTRF')
+            / 'NS1'`` — overridable via ``$DEEPSTRF_DATA_DIR``).
         dt_ms : float, default 5.0
             Time-bin width in ms. Must equal 5.0 — the bundled spectrogram is
             precomputed at this resolution. Other values would require
@@ -103,7 +163,18 @@ class NS1_Dataset(AudioNeuralDataset):
         smooth : bool, default True
             If True, smooth PSTHs in place with a 21 ms Hanning window
             (Hsu, Borst & Theunissen 2004).
+        download : bool, default False
+            If True and the OSF assets (``MetadataSHEnCneurons.mat``,
+            ``spikesandwav.zip``) are missing under ``path``, fetch them from
+            https://osf.io/ayw2p/ (no account required) and unzip in place.
+            ``test_data_5ms.mat`` is NOT on OSF and is not auto-downloaded;
+            see ``download_ns1`` for the gap.
         """
+
+        if path is None:
+            path = str(default_cache_dir("NS1"))
+        if download:
+            download_ns1(path)
 
         super().__init__(path, dt_ms)
         assert dt_ms == 5.0, (
@@ -116,7 +187,19 @@ class NS1_Dataset(AudioNeuralDataset):
 
         # ----------- 1. load the precomputed spectrograms -----------
         # X_nfht: (S=20, F=34, 1, T=999) at dt=5 ms
-        spec_data = sio.loadmat(os.path.join(path, "test_data_5ms.mat"))
+        spec_path = os.path.join(path, "test_data_5ms.mat")
+        if not os.path.isfile(spec_path):
+            raise FileNotFoundError(
+                f"NS1 expects 'test_data_5ms.mat' at {spec_path}.\n"
+                f"This file is the precomputed 34-mel × 5 ms × 999 frame stim\n"
+                f"spectrogram tensor and is NOT distributed via the OSF release\n"
+                f"(https://osf.io/ayw2p/). Place it manually in the dataset\n"
+                f"directory; auto-downloading the OSF assets via download=True\n"
+                f"will fetch the metadata + spike data but not this file.\n"
+                f"Computing it from the raw wavs in spikesandwav/SH.En.C/ is\n"
+                f"the planned long-term fix (cf. IDEAS.md)."
+            )
+        spec_data = sio.loadmat(spec_path)
         X = spec_data["X_nfht"]
         S, F, _, T = X.shape
         assert S == NS1_NAT_SOUNDS, f"expected {NS1_NAT_SOUNDS} stims, got {S}"
