@@ -47,6 +47,27 @@ def test_unzip_flat(tmp_path):
     assert (out_dir / "sub" / "b.txt").read_text() == "world"
 
 
+def test_untar_strip_components(tmp_path):
+    """untar(strip_components=N) drops N leading path components per member."""
+    import tarfile
+    from deepSTRF.utils.data_download import untar
+
+    tar_path = tmp_path / "wrapped.tar.gz"
+    src = tmp_path / "tree"
+    (src / "crcns" / "aa2" / "all_cells").mkdir(parents=True)
+    (src / "crcns" / "aa2" / "all_cells" / "cell.txt").write_text("hi")
+    (src / "crcns" / "aa2" / "stim_data.csv").write_text("a,b,c")
+    with tarfile.open(tar_path, "w:gz") as tf:
+        tf.add(src / "crcns", arcname="crcns")
+
+    out = tmp_path / "out"
+    untar(tar_path, out, strip_components=2)
+    assert (out / "all_cells" / "cell.txt").read_text() == "hi"
+    assert (out / "stim_data.csv").read_text() == "a,b,c"
+    assert not (out / "crcns").exists()
+    assert not (out / "aa2").exists()
+
+
 def test_unzip_strip_root(tmp_path):
     """unzip(strip_root=True) drops a single common top-level dir."""
     from deepSTRF.utils.data_download import unzip

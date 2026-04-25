@@ -4,6 +4,7 @@ Public surface:
     - ``default_cache_dir(dataset_name) -> Path``       — platformdirs-based default
     - ``stream_download(url, dest_path)``               — resumable streaming download
     - ``unzip(zip_path, dest_dir)``                     — flat unzip with overwrite
+    - ``untar(tar_path, dest_dir, strip_components=)``  — tar.gz / .tar / .tar.bz2 unpack
     - ``osf_download(guid, dest)``                      — public OSF storage files
     - ``github_raw_download(repo, path, dest, ref=)``   — public GitHub raw files
     - ``crcns_download(file_path, dest, username=, password=)`` — CRCNS (free account)
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tarfile
 import zipfile
 from pathlib import Path
 from typing import Optional, Union
@@ -315,5 +317,55 @@ def unzip(zip_path: Union[str, Path], dest_dir: Union[str, Path], *, strip_root:
                 continue
             out.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(m) as src, open(out, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+    return dest_dir
+
+
+def untar(tar_path: Union[str, Path], dest_dir: Union[str, Path],
+          *, strip_components: int = 0) -> Path:
+    """Extract a tar / tar.gz / tar.bz2 archive into ``dest_dir``.
+
+    Mirrors GNU ``tar --strip-components=N``: drops the first ``N`` path
+    components from every member. Useful when an archive wraps everything
+    in nested directories that aren't part of the dataset's own layout
+    — e.g. CRCNS-AA2 archives all wrap content in ``crcns/aa2/`` (strip 2).
+
+    Parameters
+    ----------
+    tar_path, dest_dir : path-like
+    strip_components : int, default 0
+        How many leading path components to drop. Members that have fewer
+        components than this are silently skipped.
+
+    Returns
+    -------
+    Path
+        The destination directory.
+    """
+    tar_path = Path(tar_path)
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    with tarfile.open(tar_path, "r:*") as tf:
+        for member in tf.getmembers():
+            parts = member.name.split("/")
+            # GNU tar's --strip-components silently skips members with too
+            # few components (e.g. the root dir entry itself).
+            if strip_components and len(parts) <= strip_components:
+                continue
+            stripped = "/".join(parts[strip_components:])
+            if not stripped:
+                continue
+            out = dest_dir / stripped
+            if member.isdir():
+                out.mkdir(parents=True, exist_ok=True)
+                continue
+            if not (member.isfile() or member.islnk() or member.issym()):
+                continue
+            out.parent.mkdir(parents=True, exist_ok=True)
+            extracted = tf.extractfile(member)
+            if extracted is None:
+                continue
+            with extracted as src, open(out, "wb") as dst:
                 shutil.copyfileobj(src, dst)
     return dest_dir
