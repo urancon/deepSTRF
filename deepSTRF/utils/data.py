@@ -166,11 +166,6 @@ def neural_collate(batch):
     return stims, responses, valid_mask, list(metas_list)
 
 
-# Deprecated alias. Will be removed once all internal callers (notebooks,
-# main.py, utils/__init__.py exports) have migrated to `neural_collate`.
-aa4_collate = neural_collate
-
-
 def concat_neural_datasets(datasets: Sequence[NeuralDataset]) -> NeuralDataset:
     """Concatenate neural datasets along BOTH the stim and neuron axes.
 
