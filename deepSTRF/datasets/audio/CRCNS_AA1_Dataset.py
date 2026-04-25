@@ -154,7 +154,9 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
     def __init__(self, path: Optional[str] = None, areas=('Field_L', 'MLd'),
                  stimuli=('conspecific', 'flatrip'), animals='all', dt_ms=1,
                  smooth=True, n_mels=32, compression='cubic',
-                 download: bool = False):
+                 download: bool = False,
+                 username: Optional[str] = None,
+                 password: Optional[str] = None):
         """
         Initializes the AA1 Dataset.
 
@@ -178,12 +180,17 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
             If True and the data is missing under ``path``, fetch the
             ~17 MB CRCNS-AA1 archive from the NERSC mirror (free CRCNS
             account required; see ``crcns_download``) and unzip in place.
+        username, password : str, optional
+            CRCNS credentials. Default to ``$CRCNS_USERNAME`` /
+            ``$CRCNS_PASSWORD``. Prefer the env vars over passing
+            literals — anything in source / a notebook ends up in
+            history / logs / VCS.
         """
 
         if path is None:
             path = str(default_cache_dir("AA1"))
         if download:
-            download_aa1(path)
+            download_aa1(path, username=username, password=password)
 
         super().__init__(path, dt_ms)
 
