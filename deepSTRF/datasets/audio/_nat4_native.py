@@ -178,8 +178,12 @@ def load_per_site_recording(tgz_path: str) -> _Recording:
             for n, cell in enumerate(chans):
                 spikes_s = h5[cell][...]  # spike times in seconds
                 # bin to (fs=1000) integer time-bin indices, drop spikes
-                # past the rasterized signal's end.
-                idx = np.round(spikes_s * fs).astype(np.int64)
+                # past the rasterized signal's end. Floor (NOT round) to
+                # match NEMS' ``PointProcess.rasterize``: ``b = int(np.floor
+                # (t * fs))``. Different rounding rules disagree on spikes
+                # that fall exactly on a bin boundary; floor is the
+                # reference convention.
+                idx = np.floor(spikes_s * fs).astype(np.int64)
                 idx = idx[(idx >= 0) & (idx < T_total)]
                 # multiple spikes may fall in the same 1ms bin (rare);
                 # np.add.at handles that correctly.
