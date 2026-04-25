@@ -90,7 +90,8 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
     AA1-specific metadata contents:
      - self.stims                       list of S tensors (1, F, T_s), mel-spectrograms
      - self.responses                   list of S lists of N tensors (R_{s,n}, T_s)
-     - self.stim_meta                   list of S dicts {"name", "type"}
+     - self.stim_meta                   list of S dicts {"name", "type",
+                                        "sample_rate", "n_samples", "duration_s"}
      - self.neuron_metadata             list of N dicts {"cell_id", "animal_id", "area"}
 
 
@@ -221,6 +222,7 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
 
             wav, sr = torchaudio.load(os.path.join(stims_dir, stim_name), normalize=True)  # sample rate: 32 kHz (mono)
             assert sr == 32000, f"found wav sr of {sr}, expected 32000"
+            n_samples_wav = wav.shape[-1]
             spec = transform(wav)  # (T,) --> (1, F, T-)
             if self.compression == 'cubic':
                 spec = torch.pow(spec, 1.0 / 3)
@@ -302,7 +304,13 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
             # otherwise keep the stim and its per-neuron responses
             self.stims.append(spec)
             self.responses.append(pop_resps)
-            self.stim_meta.append({"name": stim_name, "type": stim_type})
+            self.stim_meta.append({
+                "name": stim_name,
+                "type": stim_type,
+                "sample_rate": float(sr),
+                "n_samples": int(n_samples_wav),
+                "duration_s": n_samples_wav / float(sr),
+            })
 
         # smooth PSTHs with a 21 ms Hanning window (Hsu / Borst / Theunissen 2004)
         if smooth:

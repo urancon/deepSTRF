@@ -64,6 +64,32 @@ def get_stims_ids_from_csv(file_path):
     return stim_dict
 
 
+def load_stim_data_csv(file_path):
+    """Read CRCNS-AA2 ``stim_data.csv`` into a ``{wav_filename: {...}}`` dict.
+
+    Each value is ``{"sample_rate": Hz, "bit_depth": int, "n_samples": int,
+    "duration_s": float}``. Returned even for stims classified as "unknown" /
+    "bengalese", since the dataset class will simply not select those by
+    default.
+    """
+    info = {}
+    with open(file_path, 'r') as file:
+        reader = csv.reader(file)
+        for row in reader:
+            if len(row) < 5:
+                continue
+            wav, sr_str, bd_str, n_str, _cls = (c.strip() for c in row[:5])
+            sr = float(sr_str)
+            n_samples = int(n_str)
+            info[wav] = {
+                "sample_rate": sr,
+                "bit_depth": int(bd_str),
+                "n_samples": n_samples,
+                "duration_s": n_samples / sr if sr > 0 else float("nan"),
+            }
+    return info
+
+
 def get_area_cells(file_path):
     """
     From the cell_regions.csv file, returns a dictionary with area labels as keys and lists of cell names as values.
@@ -155,7 +181,9 @@ class CRCNS_AA2_Dataset(AudioNeuralDataset):
     AA2-specific metadata contents:
      - self.stims                       list of S tensors (1, F, T_s), mel-spectrograms
      - self.responses                   list of S lists of N tensors (R_{s,n}, T_s)
-     - self.stim_meta                   list of S dicts {"name", "type"}
+     - self.stim_meta                   list of S dicts {"name", "type",
+                                        "sample_rate", "n_samples", "duration_s"}
+                                        (last three from data/stim_data.csv)
      - self.neuron_metadata             list of N dicts {"cell_id", "animal_id", "area"}
 
     """
@@ -200,6 +228,9 @@ class CRCNS_AA2_Dataset(AudioNeuralDataset):
 
         # get all stims
         STIM_IDs = get_stim_ids_from_folders(os.path.join(path, 'all_cells/'), verbose=False)  # dict with stim types as keys and list of wav names as values
+
+        # per-wav metadata (sample_rate, n_samples, duration_s, bit_depth)
+        STIM_INFO = load_stim_data_csv(os.path.join(path, 'stim_data.csv'))
 
 
         ################################
@@ -359,7 +390,14 @@ class CRCNS_AA2_Dataset(AudioNeuralDataset):
             # otherwise keep the stim and its per-neuron responses
             self.stims.append(spec)
             self.responses.append(pop_resps)
-            self.stim_meta.append({"name": stim_name, "type": stim_type})
+            wav_info = STIM_INFO.get(stim_name, {})
+            self.stim_meta.append({
+                "name": stim_name,
+                "type": stim_type,
+                "sample_rate": wav_info.get("sample_rate"),
+                "n_samples": wav_info.get("n_samples"),
+                "duration_s": wav_info.get("duration_s"),
+            })
 
         # smooth PSTHs with a 21 ms Hanning window (Hsu / Borst / Theunissen 2004)
         if smooth:
