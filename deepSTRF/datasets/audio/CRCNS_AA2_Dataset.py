@@ -4,8 +4,70 @@ import csv
 import torch
 import torchaudio
 
+from typing import Optional
+
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 from deepSTRF.datasets.audio._crcns_aa_loaders import load_spike_file, parse_cell_name
+from deepSTRF.utils.data_download import (
+    crcns_download,
+    default_cache_dir,
+    untar,
+)
+
+
+# CRCNS-AA2 ships as 3 tar.gz archives on the NERSC mirror, all wrapping
+# their content in ``crcns/aa2/`` (strip 2 components on extract). After
+# extraction the layout is the flat one CRCNS_AA2_Dataset expects:
+#   <dest>/all_cells/<cell>/<stim_type>/{spike*, stim*}
+#   <dest>/all_stims/*.wav
+#   <dest>/{cell_regions.csv, cell_stim_classes.csv, stim_data.csv,
+#           crcns-aa2-README.txt}
+AA2_NERSC_FILES = (
+    "aa-2/crcns-aa2-docs.tar.gz",
+    "aa-2/crcns-aa2-all_cells.tar.gz",
+    "aa-2/crcns-aa2-all_stims.tar.gz",
+)
+
+
+def download_aa2(dest: Optional[str] = None,
+                 username: Optional[str] = None,
+                 password: Optional[str] = None) -> str:
+    """Download the CRCNS-AA2 archives from the NERSC mirror into ``dest``.
+
+    Idempotent: skips an archive if already on disk, and skips extraction
+    of an archive if its anchor sub-tree (``all_cells/``, ``all_stims/``,
+    or ``stim_data.csv``) already exists.
+
+    Parameters
+    ----------
+    dest : str, optional
+        Defaults to ``default_cache_dir('AA2')`` (overridable via
+        ``$DEEPSTRF_DATA_DIR``).
+    username, password : str, optional
+        Default to ``$CRCNS_USERNAME`` / ``$CRCNS_PASSWORD``.
+    """
+    dest_path = str(default_cache_dir("AA2") if dest is None else dest)
+    os.makedirs(dest_path, exist_ok=True)
+
+    # anchor file/dir per archive — if it exists, the archive has already
+    # been extracted, so we skip both download and extraction.
+    extraction_anchors = {
+        "crcns-aa2-docs.tar.gz":      "stim_data.csv",
+        "crcns-aa2-all_cells.tar.gz": "all_cells",
+        "crcns-aa2-all_stims.tar.gz": "all_stims",
+    }
+    for nersc_path in AA2_NERSC_FILES:
+        archive_name = os.path.basename(nersc_path)
+        archive_path = os.path.join(dest_path, archive_name)
+        anchor = extraction_anchors[archive_name]
+        if os.path.exists(os.path.join(dest_path, anchor)):
+            continue
+        if not os.path.exists(archive_path):
+            crcns_download(nersc_path, archive_path,
+                           username=username, password=password)
+        untar(archive_path, dest_path, strip_components=2)
+
+    return dest_path
 
 
 # TODO (misc.):
@@ -190,22 +252,45 @@ class CRCNS_AA2_Dataset(AudioNeuralDataset):
                                         documentation; rig is often None in AA2
 
     """
-    def __init__(self, path: str, areas=('Field_L', 'mld', 'OV', 'CM', 'None'),
-                 stimuli=('conspecific', 'flatrip', 'songrip'), animals='all', dt_ms=1, smooth=True, n_mels=32, compression='cubic'):
+    def __init__(self, path: Optional[str] = None,
+                 areas=('Field_L', 'mld', 'OV', 'CM', 'None'),
+                 stimuli=('conspecific', 'flatrip', 'songrip'),
+                 animals='all', dt_ms=1, smooth=True, n_mels=32,
+                 compression='cubic',
+                 download: bool = False,
+                 username: Optional[str] = None,
+                 password: Optional[str] = None):
         """
         Initializes the AA2 Dataset.
 
-        Specific units can be selected according to the stimulus they were presented, their animal, and recording site.
-
-        Parameters:
-            path (str): Path to the 'CRCNS_AA2/data/' folder containing files as indicated in our readme
-            areas (tuple of str): recording sites of interest, can be 'Field_L', 'L1', 'L2a', 'L2b', 'L3', 'MLd', 'OV',
-             'CM', or 'None'
-            stimuli (tuple of str): stimulus types of interest, can be 'conspecific', 'flatrip' or 'songrip'
-            dt_ms (float): time step size in ms
-            n_mels (int): number of mel frequency bands the stimulus should have in spectrogram form
-            compression: compression function to apply to the stimulus spectrogram
+        Parameters
+        ----------
+        path : str, optional
+            Path to the AA2 data folder. Defaults to the platformdirs cache.
+        areas : tuple of str
+            Recording sites of interest: 'Field_L', 'L1', 'L2a', 'L2b',
+            'L3', 'mld', 'OV', 'CM', or 'None'.
+        stimuli : tuple of str
+            Stimulus types of interest: 'conspecific', 'flatrip', 'songrip'.
+        dt_ms : float
+            Time step size in ms.
+        n_mels : int
+            Number of mel frequency bands.
+        compression : str
+            Spectrogram compression ('cubic', 'log1p', 'none').
+        download : bool, default False
+            If True and the data is missing under ``path``, fetch the
+            ~30 MB worth of CRCNS-AA2 archives from the NERSC mirror
+            (free CRCNS account required) and extract in place.
+        username, password : str, optional
+            CRCNS credentials. Default to ``$CRCNS_USERNAME`` /
+            ``$CRCNS_PASSWORD``. Prefer env vars over passing literals.
         """
+
+        if path is None:
+            path = str(default_cache_dir("AA2"))
+        if download:
+            download_aa2(path, username=username, password=password)
 
         super().__init__(path, dt_ms)
 
