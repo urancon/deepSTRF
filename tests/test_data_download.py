@@ -82,6 +82,24 @@ def test_osf_download_resolves_url(monkeypatch, tmp_path):
     assert out == tmp_path / "X.mat"
 
 
+def test_github_raw_download_resolves_url(monkeypatch, tmp_path):
+    """github_raw_download builds a raw.githubusercontent.com URL."""
+    from deepSTRF.utils import data_download as dd
+
+    captured = {}
+
+    def fake_stream(url, dest_path, **kwargs):
+        captured["url"] = url
+        Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(dest_path).write_bytes(b"")
+        return Path(dest_path)
+
+    monkeypatch.setattr(dd, "stream_download", fake_stream)
+    dd.github_raw_download("monzilur/DNet", "test_data_5ms.mat",
+                           tmp_path / "x.mat", ref="master")
+    assert captured["url"] == "https://raw.githubusercontent.com/monzilur/DNet/master/test_data_5ms.mat"
+
+
 def test_stream_download_skips_existing(tmp_path):
     """stream_download is a no-op if the destination already exists."""
     from deepSTRF.utils.data_download import stream_download

@@ -6,7 +6,12 @@ import scipy.io as sio
 import torch
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
-from deepSTRF.utils.data_download import default_cache_dir, osf_download, unzip
+from deepSTRF.utils.data_download import (
+    default_cache_dir,
+    github_raw_download,
+    osf_download,
+    unzip,
+)
 
 
 # Stimulus duration is 4995 ms = 999 bins at the 5 ms binning the original
@@ -15,15 +20,28 @@ from deepSTRF.utils.data_download import default_cache_dir, osf_download, unzip
 NS1_RAW_LEN_MS = 4995
 NS1_NAT_SOUNDS = 20
 
-# OSF storage GUIDs for the public NS1 release (https://osf.io/ayw2p/).
-# Resolved with deepSTRF.utils.data_download.osf_download(<guid>, dest).
-# Note: the OSF release does NOT include the precomputed spectrogram tensor
-# ``test_data_5ms.mat``; it must be supplied separately. See ``download_ns1``
-# below for how this is handled.
+# OSF storage GUIDs for the public NS1 release (https://osf.io/ayw2p/) —
+# metadata + raw spike data. Resolved with osf_download(<guid>, dest).
 NS1_OSF_FILES = {
     "MetadataSHEnCneurons.mat": "gdwyd",
     "spikesandwav.zip":         "5nxga",
     "ReadMe.rtf":               "f3rtm",
+}
+
+# The precomputed mel-spectrogram tensor (X_nfht: S=20, F=34, hopdim=1, T=999)
+# used by the original Harper/Rahman analyses is NOT on OSF, but it IS in the
+# DNet companion repo (Rahman et al. 2018 PLoS Comp Biol, doi: 10.1371/
+# journal.pcbi.1006618 — github.com/monzilur/DNet). The 5 ms version is
+# ``test_data_5ms.mat`` (5.2 MB); the 1 ms version (``test_data.mat``, 52 MB)
+# is also there but we don't use it. The same file also contains a ``y_nt``
+# variable, but it is a (S, T) trace that does not cleanly match either a
+# single neuron's PSTH nor any population mean of our 119-neuron data — we
+# ignore it and stick with our trial-resolved (R=20, T=999) responses
+# computed from the OSF spike .mat files.
+NS1_DNET_REPO = "monzilur/DNet"
+NS1_DNET_REF = "master"
+NS1_DNET_FILES = {
+    "test_data_5ms.mat": "test_data_5ms.mat",
 }
 
 # Indices of the 4 natural-speech stimuli, per Rahman et al. (2020) Fig. S2.
@@ -48,7 +66,14 @@ NS1_RAHMAN_TEST_INDICES = [3, 6, 9, 19]
 
 
 def download_ns1(dest: Optional[str] = None) -> str:
-    """Download the public NS1 release from OSF into ``dest``.
+    """Download all NS1 data assets into ``dest``.
+
+    Sources:
+     - **OSF** (https://osf.io/ayw2p/, no account): the dataset README, the
+       per-neuron metadata (.mat), and the spike + wav zip (~155 MB total).
+     - **DNet GitHub** (https://github.com/monzilur/DNet, master branch): the
+       precomputed 5 ms mel-spectrogram tensor ``test_data_5ms.mat``
+       (5.2 MB) accompanying Rahman et al. 2018 PLoS Comp Biol. NOT on OSF.
 
     Idempotent: skips files that already exist; returns the destination path.
 
@@ -62,21 +87,11 @@ def download_ns1(dest: Optional[str] = None) -> str:
     -------
     str
         Absolute path to the dataset directory.
-
-    Notes
-    -----
-    The OSF release at https://osf.io/ayw2p/ contains
-    ``MetadataSHEnCneurons.mat`` and ``spikesandwav.zip`` (155 MB, unzipped
-    in place). It does NOT contain ``test_data_5ms.mat`` (the precomputed
-    34-mel × 5 ms × 999 frame spectrogram tensor). That file currently has
-    to be obtained separately; ``NS1_Dataset`` will raise a clear error if
-    it is missing. A future change should compute spectrograms directly
-    from the raw wavs in ``spikesandwav/SH.En.C/`` so the dataset is fully
-    self-contained from OSF (cf. IDEAS.md).
     """
     dest_path = str(default_cache_dir("NS1") if dest is None else dest)
     os.makedirs(dest_path, exist_ok=True)
 
+    # OSF assets
     for fname, guid in NS1_OSF_FILES.items():
         target = os.path.join(dest_path, fname)
         if os.path.exists(target):
@@ -88,6 +103,13 @@ def download_ns1(dest: Optional[str] = None) -> str:
     zip_path = os.path.join(dest_path, "spikesandwav.zip")
     if os.path.isfile(zip_path) and not os.path.isdir(spikes_dir):
         unzip(zip_path, dest_path)
+
+    # DNet GitHub asset(s) — the precomputed spectrogram tensor
+    for dest_name, repo_path in NS1_DNET_FILES.items():
+        target = os.path.join(dest_path, dest_name)
+        if os.path.exists(target):
+            continue
+        github_raw_download(NS1_DNET_REPO, repo_path, target, ref=NS1_DNET_REF)
 
     return dest_path
 
@@ -105,7 +127,10 @@ class NS1_Dataset(AudioNeuralDataset):
      - "Simple transformations capture auditory input to cortex", Rahman et al.
        PNAS (2020).
 
-    Data freely available at https://osf.io/ayw2p/ (no account required).
+    Data freely available — no account required:
+     - https://osf.io/ayw2p/                (metadata, raw spike + wav data)
+     - https://github.com/monzilur/DNet     (precomputed 5 ms mel spectrogram)
+    Both are auto-fetched by ``NS1_Dataset(download=True)``.
 
 
     =============== DETAILS ================
@@ -164,11 +189,12 @@ class NS1_Dataset(AudioNeuralDataset):
             If True, smooth PSTHs in place with a 21 ms Hanning window
             (Hsu, Borst & Theunissen 2004).
         download : bool, default False
-            If True and the OSF assets (``MetadataSHEnCneurons.mat``,
-            ``spikesandwav.zip``) are missing under ``path``, fetch them from
-            https://osf.io/ayw2p/ (no account required) and unzip in place.
-            ``test_data_5ms.mat`` is NOT on OSF and is not auto-downloaded;
-            see ``download_ns1`` for the gap.
+            If True and the data assets are missing under ``path``, fetch
+            them from their public sources (no account required):
+             - OSF (https://osf.io/ayw2p/): metadata + spike data + wavs
+             - DNet GitHub (https://github.com/monzilur/DNet): the
+               precomputed 5 ms mel-spectrogram tensor (``test_data_5ms.mat``).
+            Total ~160 MB, ~16 s on a fast connection. See ``download_ns1``.
         """
 
         if path is None:
@@ -190,14 +216,9 @@ class NS1_Dataset(AudioNeuralDataset):
         spec_path = os.path.join(path, "test_data_5ms.mat")
         if not os.path.isfile(spec_path):
             raise FileNotFoundError(
-                f"NS1 expects 'test_data_5ms.mat' at {spec_path}.\n"
-                f"This file is the precomputed 34-mel × 5 ms × 999 frame stim\n"
-                f"spectrogram tensor and is NOT distributed via the OSF release\n"
-                f"(https://osf.io/ayw2p/). Place it manually in the dataset\n"
-                f"directory; auto-downloading the OSF assets via download=True\n"
-                f"will fetch the metadata + spike data but not this file.\n"
-                f"Computing it from the raw wavs in spikesandwav/SH.En.C/ is\n"
-                f"the planned long-term fix (cf. IDEAS.md)."
+                f"NS1 expects 'test_data_5ms.mat' at {spec_path}. Pass\n"
+                f"download=True to fetch it from the DNet companion repo\n"
+                f"(https://github.com/monzilur/DNet), or place it manually."
             )
         spec_data = sio.loadmat(spec_path)
         X = spec_data["X_nfht"]

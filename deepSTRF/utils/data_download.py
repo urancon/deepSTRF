@@ -117,6 +117,40 @@ def osf_download(file_guid: str, dest_path: Union[str, Path], **kwargs) -> Path:
     return stream_download(f"https://osf.io/download/{file_guid}/", dest_path, **kwargs)
 
 
+def github_raw_download(
+    repo: str,
+    path_in_repo: str,
+    dest_path: Union[str, Path],
+    *,
+    ref: str = "HEAD",
+    **kwargs,
+) -> Path:
+    """Download a file from a GitHub repo's raw content.
+
+    Useful for paper-companion repos that publish small datasets / model
+    artefacts alongside the code (e.g. DNet hosts ``test_data_5ms.mat`` for
+    the Rahman et al. 2018 NS1 reanalysis at
+    https://github.com/monzilur/DNet).
+
+    Parameters
+    ----------
+    repo : str
+        ``"<owner>/<name>"``, e.g. ``"monzilur/DNet"``.
+    path_in_repo : str
+        Path of the file within the repo, e.g. ``"test_data_5ms.mat"``.
+    dest_path : path-like
+    ref : str, default "HEAD"
+        Branch / tag / commit. ``"HEAD"`` resolves the default branch.
+
+    Notes
+    -----
+    Uses the ``raw.githubusercontent.com`` CDN, which has no rate limit for
+    anonymous reads (unlike the GitHub REST API).
+    """
+    url = f"https://raw.githubusercontent.com/{repo}/{ref}/{path_in_repo.lstrip('/')}"
+    return stream_download(url, dest_path, **kwargs)
+
+
 def unzip(zip_path: Union[str, Path], dest_dir: Union[str, Path], *, strip_root: bool = False) -> Path:
     """Unzip ``zip_path`` into ``dest_dir``. Idempotent (overwrites existing files).
 
