@@ -5,7 +5,7 @@ import torch
 import torchaudio
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
-from deepSTRF.datasets.audio._crcns_aa_loaders import load_spike_file
+from deepSTRF.datasets.audio._crcns_aa_loaders import load_spike_file, parse_cell_name
 
 
 # TODO (misc.):
@@ -184,7 +184,10 @@ class CRCNS_AA2_Dataset(AudioNeuralDataset):
      - self.stim_meta                   list of S dicts {"name", "type",
                                         "sample_rate", "n_samples", "duration_s"}
                                         (last three from data/stim_data.csv)
-     - self.neuron_metadata             list of N dicts {"cell_id", "animal_id", "area"}
+     - self.neuron_metadata             list of N dicts {"cell_id", "animal_id",
+                                        "area", "cell_seq", "rig"} — see AA1's
+                                        docstring for the cell-name format
+                                        documentation; rig is often None in AA2
 
     """
     def __init__(self, path: str, areas=('Field_L', 'mld', 'OV', 'CM', 'None'),
@@ -297,11 +300,19 @@ class CRCNS_AA2_Dataset(AudioNeuralDataset):
         self.responses = []         # --> list of S lists of N tensors of shape (R_{s,n}, T_s)
         self.stim_meta = []         # --> list of S dicts {name, type}
         stim_meta = list(zip(stims, stim_types))
-        # list of N dicts {cell_id, animal_id, area}
-        self.neuron_metadata = [
-            {"cell_id": c, "animal_id": a, "area": r}
-            for c, a, r in zip(cells, cell_animals, cell_areas)
-        ]
+        # list of N dicts; cell_seq + rig parsed from the documented AA1/AA2
+        # cell-name format (<animal>_<cell_seq>[_<rig>], cf. AA1 readme PDF —
+        # AA2 inherits the convention).
+        self.neuron_metadata = []
+        for c, a, r in zip(cells, cell_animals, cell_areas):
+            _, cell_seq, rig = parse_cell_name(c)
+            self.neuron_metadata.append({
+                "cell_id": c,
+                "animal_id": a,
+                "area": r,
+                "cell_seq": cell_seq,
+                "rig": rig,
+            })
 
         for s, (stim_name, stim_type) in enumerate(stim_meta):
 

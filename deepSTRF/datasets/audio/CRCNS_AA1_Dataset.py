@@ -3,7 +3,7 @@ import torch
 import torchaudio
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
-from deepSTRF.datasets.audio._crcns_aa_loaders import load_spike_file
+from deepSTRF.datasets.audio._crcns_aa_loaders import load_spike_file, parse_cell_name
 
 
 # TODO (misc.):
@@ -92,7 +92,15 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
      - self.responses                   list of S lists of N tensors (R_{s,n}, T_s)
      - self.stim_meta                   list of S dicts {"name", "type",
                                         "sample_rate", "n_samples", "duration_s"}
-     - self.neuron_metadata             list of N dicts {"cell_id", "animal_id", "area"}
+     - self.neuron_metadata             list of N dicts {"cell_id", "animal_id",
+                                        "area", "cell_seq", "rig"} — cell_seq is
+                                        the sequential cell index parsed from the
+                                        cell folder name (per AA1 readme PDF: the
+                                        n-th cell recorded); rig is the single-
+                                        letter rig label when present, else None
+                                        (cells "4_A" and "4_B" were recorded
+                                        simultaneously, possibly in different
+                                        brain areas)
 
 
     =============== REMARKS ================
@@ -208,11 +216,18 @@ class CRCNS_AA1_Dataset(AudioNeuralDataset):
         self.responses = []         # --> list of S lists of N tensors of shape (R_{s,n}, T_s)
         self.stim_meta = []         # --> list of S dicts {name, type}
         stim_meta = list(zip(stims, stim_types))
-        # list of N dicts {cell_id, animal_id, area}
-        self.neuron_metadata = [
-            {"cell_id": c, "animal_id": a, "area": r}
-            for c, a, r in zip(cells, cell_animals, cell_areas)
-        ]
+        # list of N dicts; cell_seq + rig parsed from the documented
+        # AA1 cell-name format (<animal>_<cell_seq>[_<rig>], cf. AA1 readme PDF)
+        self.neuron_metadata = []
+        for c, a, r in zip(cells, cell_animals, cell_areas):
+            _, cell_seq, rig = parse_cell_name(c)
+            self.neuron_metadata.append({
+                "cell_id": c,
+                "animal_id": a,
+                "area": r,
+                "cell_seq": cell_seq,
+                "rig": rig,
+            })
 
         for s, (stim_name, stim_type) in enumerate(stim_meta):
 

@@ -14,8 +14,36 @@ since these helpers are only meaningful against the CRCNS AA spike-file format.
 
 from __future__ import annotations
 
+import re
+from typing import Optional, Tuple
+
 import torch
 import torch.nn.functional as F
+
+
+# AA1/AA2 cell-name format (per CRCNS-AA1 readme PDF): <animal>_<cell_seq>[_<rig>]
+# where <cell_seq> is the sequential index of the cell as recorded and <rig> is
+# an optional single-letter recording-rig label (A/B). The PDF notes that "4_A
+# and 4_B were recorded simultaneously (probably in two different brain areas)"
+# — i.e. the rig label is anatomically meaningful when present, but it is
+# absent for many cells in AA2.
+_CELL_NAME_RE = re.compile(r"^(?P<animal>[^_]+)_(?P<seq>\d+)(?:_(?P<rig>[A-Z]))?$")
+
+
+def parse_cell_name(cell_name: str) -> Tuple[str, Optional[int], Optional[str]]:
+    """Parse an AA1/AA2 cell folder name into ``(animal_id, cell_seq, rig)``.
+
+    Returns ``(animal_id, None, None)`` for names that do not match the
+    documented schema, so the caller can still fall back to ``cell_id`` as
+    the unique identifier without crashing.
+    """
+    m = _CELL_NAME_RE.match(cell_name)
+    if m is None:
+        return cell_name.split("_", 1)[0], None, None
+    animal = m.group("animal")
+    seq = int(m.group("seq"))
+    rig = m.group("rig")
+    return animal, seq, rig
 
 
 def time_binning(spike_times, dt_ms: float = 1.0) -> torch.Tensor:
