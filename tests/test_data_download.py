@@ -100,6 +100,82 @@ def test_github_raw_download_resolves_url(monkeypatch, tmp_path):
     assert captured["url"] == "https://raw.githubusercontent.com/monzilur/DNet/master/test_data_5ms.mat"
 
 
+class _FakePostResp:
+    """Minimal stand-in for ``requests.Response`` (POST + iter_content + ctx mgr)."""
+
+    def __init__(self, body: bytes, headers=None, status_code: int = 200):
+        self._body = body
+        self.headers = headers or {}
+        self.status_code = status_code
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def iter_content(self, chunk_size=1):
+        # one big chunk is fine for tests
+        for i in range(0, len(self._body), chunk_size):
+            yield self._body[i:i + chunk_size]
+
+
+def test_crcns_download_writes_file(monkeypatch, tmp_path):
+    """Happy path: server returns binary, helper writes it to dest."""
+    from deepSTRF.utils import data_download as dd
+
+    captured = {}
+
+    def fake_post(url, data, **kwargs):
+        captured["url"] = url
+        captured["data"] = data
+        return _FakePostResp(b"\x00\x01\x02\x03binary-payload",
+                             headers={"Content-Length": "20"})
+
+    monkeypatch.setattr(dd.requests, "post", fake_post)
+
+    dest = tmp_path / "out.bin"
+    dd.crcns_download("aa-1/foo.bin", dest, username="u", password="p", progress=False)
+    assert dest.read_bytes().endswith(b"binary-payload")
+    assert captured["url"] == "https://portal.nersc.gov/project/crcns/download/aa-1/foo.bin"
+    assert captured["data"]["fn"] == "aa-1/foo.bin"
+    assert captured["data"]["username"] == "u"
+    assert captured["data"]["password"] == "p"
+
+
+def test_crcns_download_detects_auth_failure(monkeypatch, tmp_path):
+    """If the server returns the login HTML (200 OK), helper must raise."""
+    from deepSTRF.utils import data_download as dd
+
+    login_html = (
+        b"<html><body><form action=''>"
+        b"<input name='username' /><input name='password' type='password' />"
+        b"</form></body></html>"
+    )
+
+    monkeypatch.setattr(dd.requests, "post",
+                        lambda url, data, **kw: _FakePostResp(login_html))
+
+    with pytest.raises(RuntimeError, match="CRCNS auth failed"):
+        dd.crcns_download("aa-1/foo.bin", tmp_path / "out.bin",
+                          username="bad", password="creds", progress=False)
+    # no partial file should be left around
+    assert not (tmp_path / "out.bin").exists()
+
+
+def test_crcns_download_requires_credentials(monkeypatch, tmp_path):
+    from deepSTRF.utils import data_download as dd
+
+    monkeypatch.delenv("CRCNS_USERNAME", raising=False)
+    monkeypatch.delenv("CRCNS_PASSWORD", raising=False)
+    with pytest.raises(RuntimeError, match="CRCNS credentials missing"):
+        dd.crcns_download("aa-1/foo.bin", tmp_path / "out.bin", progress=False)
+
+
 def test_stream_download_skips_existing(tmp_path):
     """stream_download is a no-op if the destination already exists."""
     from deepSTRF.utils.data_download import stream_download

@@ -1,17 +1,12 @@
 """Auto-download utilities for deepSTRF datasets.
 
-Currently supports:
-    - OSF (Open Science Framework) — public projects, no account needed.
-
-CRCNS support is intentionally not here yet: the CRCNS download URLs require
-a free account (HTTP form login + session cookie), so the pattern is
-different. We'll add that under ``crcns_download`` when it lands.
-
 Public surface:
-    - ``default_cache_dir(dataset_name) -> Path``  — platformdirs-based default
-    - ``stream_download(url, dest_path)``          — resumable streaming download
-    - ``osf_download(file_guid, dest_path)``       — convenience for OSF files
-    - ``unzip(zip_path, dest_dir)``                — flat unzip with overwrite
+    - ``default_cache_dir(dataset_name) -> Path``       — platformdirs-based default
+    - ``stream_download(url, dest_path)``               — resumable streaming download
+    - ``unzip(zip_path, dest_dir)``                     — flat unzip with overwrite
+    - ``osf_download(guid, dest)``                      — public OSF storage files
+    - ``github_raw_download(repo, path, dest, ref=)``   — public GitHub raw files
+    - ``crcns_download(file_path, dest, username=, password=)`` — CRCNS (free account)
 """
 
 from __future__ import annotations
@@ -115,6 +110,123 @@ def osf_download(file_guid: str, dest_path: Union[str, Path], **kwargs) -> Path:
     >>> osf_download("gdwyd", "MetadataSHEnCneurons.mat")
     """
     return stream_download(f"https://osf.io/download/{file_guid}/", dest_path, **kwargs)
+
+
+def crcns_download(
+    file_path: str,
+    dest_path: Union[str, Path],
+    *,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    chunk_size: int = 1 << 20,
+    progress: bool = True,
+) -> Path:
+    """Download a single file from the CRCNS NERSC mirror with form auth.
+
+    The CRCNS download portal at ``https://portal.nersc.gov/project/crcns/
+    download/<file_path>`` serves an HTML login form to anonymous GETs. To
+    actually fetch the file, the form must be POSTed to the same URL with
+    ``username`` / ``password`` / ``fn`` / ``submit`` fields. There is no
+    persistent session cookie — auth is per-request, so the same pattern
+    works equally well whether you fetch one file or many.
+
+    Parameters
+    ----------
+    file_path : str
+        Path under ``/download/``, e.g. ``"aa-1/crcns-aa1.zip"`` or
+        ``"aa-4/BlaBro09xxF.tar.gz"``.
+    dest_path : path-like
+    username, password : str, optional
+        Default to ``$CRCNS_USERNAME`` / ``$CRCNS_PASSWORD``. Account is
+        free at https://crcns.org/register.
+    chunk_size, progress
+        As ``stream_download``.
+
+    Returns
+    -------
+    Path
+        Resolved destination.
+
+    Raises
+    ------
+    RuntimeError
+        If credentials are missing, or if the response body still looks like
+        the login form (auth failed silently — the portal returns 200 OK
+        with the login HTML rather than 401 on bad credentials).
+
+    Notes
+    -----
+    Status: experimental. The auth + URL conventions were reverse-engineered
+    from probing the public NERSC mirror; we do not have a contract from
+    CRCNS that they'll stay stable. If the portal layout changes, this
+    helper will break and is intentionally isolated from the dataset
+    constructors so it can be reverted with one commit.
+    """
+    import os as _os
+
+    username = username or _os.environ.get("CRCNS_USERNAME")
+    password = password or _os.environ.get("CRCNS_PASSWORD")
+    if not username or not password:
+        raise RuntimeError(
+            "CRCNS credentials missing. Pass username/password explicitly, or set "
+            "the CRCNS_USERNAME / CRCNS_PASSWORD env vars. Free account at "
+            "https://crcns.org/register."
+        )
+
+    dest = Path(dest_path).expanduser().resolve()
+    if dest.exists():
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+
+    url = f"https://portal.nersc.gov/project/crcns/download/{file_path.lstrip('/')}"
+    form = {
+        "fn": file_path.lstrip("/"),
+        "username": username,
+        "password": password,
+        "submit": "Login",
+    }
+
+    with requests.post(url, data=form, stream=True, timeout=60, allow_redirects=True) as resp:
+        resp.raise_for_status()
+
+        # NERSC returns 200 + the login form HTML on auth failure (no 401).
+        # Sniff the first chunk: the real file is binary; the form is small HTML.
+        first = next(resp.iter_content(chunk_size=chunk_size), b"")
+        if b"<form" in first[:4096] and b"password" in first[:4096]:
+            raise RuntimeError(
+                f"CRCNS auth failed for {file_path!r} (server returned the login form). "
+                f"Check $CRCNS_USERNAME / $CRCNS_PASSWORD."
+            )
+
+        total = int(resp.headers.get("Content-Length") or 0)
+        bar = None
+        if progress:
+            try:
+                from tqdm.auto import tqdm
+                bar = tqdm(total=total or None, unit="B", unit_scale=True,
+                           desc=f"download {dest.name}")
+            except ImportError:
+                bar = None
+
+        try:
+            with open(tmp, "wb") as f:
+                if first:
+                    f.write(first)
+                    if bar is not None:
+                        bar.update(len(first))
+                for chunk in resp.iter_content(chunk_size=chunk_size):
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    if bar is not None:
+                        bar.update(len(chunk))
+        finally:
+            if bar is not None:
+                bar.close()
+
+    tmp.replace(dest)
+    return dest
 
 
 def github_raw_download(
