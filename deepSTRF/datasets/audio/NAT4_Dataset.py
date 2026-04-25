@@ -1,5 +1,7 @@
 import gc
 import os
+from typing import Optional
+
 from tqdm import tqdm
 
 import torch
@@ -13,221 +15,292 @@ except ImportError:
     _NEMS_AVAILABLE = False
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
-
-
-_NEMS_INSTALL_HINT = (
-    "NAT4_Dataset needs the NEMS0 library to read its .tgz recording format. "
-    "Install it with:\n"
-    "    pip install 'deepSTRF[nems]'\n"
-    "See https://github.com/LBHB/NEMS0 for details."
+from deepSTRF.utils.data_download import (
+    default_cache_dir,
+    unzip,
+    zenodo_download,
 )
 
 
-# TODO:
-#  1. load both A1 and PEG at the same time, then select neurons by area with the provided API ?
-#  2. (stim, nrn) pairs with null (R, T) responses --> (R=1, T=1) nan ?
-#  3. smooth resps ?
-#  4. dt_ms ? what determines the size of spectrogram time bins in NEMS ??
-#  5. integrate to NAT4 constructor --> remove preprocessing_script
-#  6. update README
+_NEMS_INSTALL_HINT = (
+    "NAT4_Dataset currently relies on the NEMS0 library to read its .tgz\n"
+    "recording format. Install it with:\n"
+    "    pip install 'deepSTRF[nems]'\n"
+    "See https://github.com/LBHB/NEMS0 for details. A native (NEMS-free)\n"
+    "loader is on the roadmap (cf. IDEAS.md)."
+)
 
+# NAT4 Zenodo record (https://doi.org/10.5281/zenodo.8044773), public.
+NAT4_ZENODO_RECORD = 8044773
+
+
+def download_nat4(area: str, dest: Optional[str] = None) -> str:
+    """Download the NAT4 release from Zenodo into ``dest``.
+
+    Fetches:
+     - ``<area>_NAT4_ozgf.fs100.ch18.tgz``     (population recording, ~30 MB for A1)
+     - ``<area>_pred_correlation.csv``         (per-cell auditory-responsive flag)
+     - ``<area>_single_sites.zip``             (per-site .tgz files, ~70 MB for A1)
+
+    The single-sites zip is unpacked into ``<dest>/<area>_single_sites/`` so
+    the loader finds the per-site tgz files where it expects them.
+
+    Idempotent: skips files / dirs that already exist.
+
+    Parameters
+    ----------
+    area : {'A1', 'PEG'}
+        Cortical area.
+    dest : str, optional
+        Defaults to ``default_cache_dir('NAT4')`` (overridable via
+        ``$DEEPSTRF_DATA_DIR``).
+    """
+    assert area in ("A1", "PEG"), f"area must be 'A1' or 'PEG' (got {area!r})"
+    dest_path = str(default_cache_dir("NAT4") if dest is None else dest)
+    os.makedirs(dest_path, exist_ok=True)
+
+    pop_tgz_name = f"{area}_NAT4_ozgf.fs100.ch18.tgz"
+    pop_tgz_path = os.path.join(dest_path, pop_tgz_name)
+    if not os.path.exists(pop_tgz_path):
+        zenodo_download(NAT4_ZENODO_RECORD, pop_tgz_name, pop_tgz_path)
+
+    csv_name = f"{area}_pred_correlation.csv"
+    csv_path = os.path.join(dest_path, csv_name)
+    if not os.path.exists(csv_path):
+        zenodo_download(NAT4_ZENODO_RECORD, csv_name, csv_path)
+
+    single_sites_dir = os.path.join(dest_path, f"{area}_single_sites")
+    if not os.path.isdir(single_sites_dir):
+        zip_name = f"{area}_single_sites.zip"
+        zip_path = os.path.join(dest_path, zip_name)
+        if not os.path.exists(zip_path):
+            zenodo_download(NAT4_ZENODO_RECORD, zip_name, zip_path)
+        unzip(zip_path, dest_path)
+
+    return dest_path
 
 
 class NAT4_Dataset(AudioNeuralDataset):
+    """A PyTorch dataset for NAT4 (Pennington & David, 2022 / 2023).
+
+
+    =============== SOURCE ================
+
+    See original papers for details:
+     - "Can deep learning provide a generalizable model for dynamic sound
+       encoding in auditory cortex?" Pennington & David. (2022 preprint)
+     - "A convolutional neural network provides a generalizable model of
+       natural sound coding by neural populations in auditory cortex"
+       Pennington & David, PLOS Computational Biology (2023).
+
+    Data freely available at https://doi.org/10.5281/zenodo.8044773 (no
+    account required) — auto-fetched by ``NAT4_Dataset(download=True)``.
+
+
+    =============== DETAILS ================
+
+    - Two cortical areas: ``A1`` (primary, 849 cells of which 777 auditory)
+      and ``PEG`` (secondary, 398 of which 339 auditory). Pass ``area=...``;
+      one instance covers one area. To pool both, instantiate twice and
+      ``concat_neural_datasets([a1, peg])``.
+    - 595 stimuli total: 18 high-rep (``val``, 20 trials) + 577 low-rep
+      (``est``, 1 trial). Each clip is 1.5 s.
+    - Time bin: ``dt_ms = 10`` (responses are stored at fs=100 in NEMS;
+      val responses are downsampled from 1 ms by summing over 10 ms).
+    - Spectrogram: F = 18 ozgf bands, T = 150 frames per stim.
+
+    NB: this loader currently parses the NEMS recording format via the
+    optional ``nems0`` extra (``pip install 'deepSTRF[nems]'``). A native,
+    NEMS-free re-implementation is on the roadmap (cf. IDEAS.md).
+
+
+    =============== STRUCTURE ================
+
+    Follows the standard deepSTRF data paradigm (see docs/_source/md/data_paradigm.md).
+    NAT4-specific metadata contents:
+     - self.stims                       list of S=595 tensors (1, F=18, T=150)
+     - self.responses                   list of S lists of N tensors —
+                                        est stims have shape (R=1, T=150),
+                                        val stims have shape (R=20, T=150);
+                                        ``(1, 1)`` NaN sentinel for the (s, n)
+                                        pairs flagged as null in the est set
+                                        (neuron not recorded for that stim).
+     - self.stim_meta                   list of S dicts {"name", "subset"}
+                                        where subset is 'est' or 'val'.
+     - self.neuron_metadata             list of N dicts {"cell_id", "area",
+                                        "auditory"} — ``auditory`` is the
+                                        per-cell flag from the dataset's
+                                        ``<area>_pred_correlation.csv``.
+
     """
-        A PyTorch dataset for handling neural data from the A1 & PEG Dataset.
-        See original papers for details:
-        - "Can deep learning provide a generalizable model for dynamic sound encoding in auditory cortex?" by Jacob R. Pennington et al. (2022)
-        - "A convolutional neural network provides a generalizable model of natural sound coding by neural populations in auditory cortex" by Jacob R. Pennington et al. (2023)
 
-
-          ============= STRUCTURE ==============
-
-        data is contained in the class attributes 'self.spectrograms' and 'self.responses', which have the following
-        shapes:
-            spectrograms:   (N_sounds, 1, N_bands, N_timebins)
-            responses:      (N_neurons, N_sounds, N_repeats, N_timebins)
-
-
-        Dataset Details:
-        - Stimuli:
-            1.5s each
-            20 repetitions of 18 sounds (so-called 'validation set')
-            1 repetition of 577 sounds (so-called 'estimation set')
-        - Neurons: Total 849 (A1), 398 (PEG) of which 777 (A1), 339 (PEG) are valid auditory neurons
-
-        for population training.
-
-
+    def __init__(self, path: Optional[str] = None, area: str = 'A1',
+                 dt_ms: float = 10.0, smooth: bool = False,
+                 download: bool = False):
         """
-    def __init__(self, path: str, area='A1'):
-        """
-        Initializes the NAT4Dataset.
-
-        Parameters:
-            path (str): Path to the folder containing the datafiles.
-            area (str): the cortical area of the recordings, 'A1' or 'PEG'
+        Parameters
+        ----------
+        path : str, optional
+            Path to the NAT4 data folder. Defaults to the platformdirs cache.
+        area : {'A1', 'PEG'}
+            Cortical area.
+        dt_ms : float, default 10.0
+            Time-bin width in ms. NEMS-side rasterization is at fs=100 (10 ms);
+            val responses are summed from fs=1000 down to dt_ms by integer
+            divisor (so any ``dt_ms`` that divides 10 ms evenly is fine, but
+            non-default values are not currently exposed because the
+            spectrogram is precomputed at 10 ms in the .tgz).
+        smooth : bool, default False
+            If True, smooth PSTHs with a 21 ms Hanning window. Off by default
+            here because NAT4 trials are typically used as-is for STRF
+            fitting (unlike CRCNS-AA where smoothing is the published norm).
+        download : bool, default False
+            If True and the data is missing under ``path``, fetch it from
+            Zenodo (record 8044773). Installs the optional [nems] extra is
+            still required to parse the .tgz once it lands.
         """
 
         if not _NEMS_AVAILABLE:
             raise ImportError(_NEMS_INSTALL_HINT)
+        assert area in ("A1", "PEG"), \
+            f"Unexpected area {area!r}, choose between 'A1' or 'PEG'"
+        assert dt_ms == 10.0, (
+            f"NAT4 spectrograms are precomputed at dt=10 ms; got dt_ms={dt_ms}. "
+            f"Re-rasterizing the responses is straightforward but the "
+            f"spectrogram .tgz would also need re-binning (TODO)."
+        )
 
-        super().__init__(path)
-        assert area == "A1" or area == "PEG", f"Unexpected value '{area}' for argument 'area', choose between 'A1' or 'PEG'"
+        if path is None:
+            path = str(default_cache_dir("NAT4"))
+        if download:
+            download_nat4(area, path)
 
-        # =========  LOAD THE DATA  ===========
+        super().__init__(path, dt_ms)
+        self.area = area
+        self.species = 'ferret'
+        self.F = 18
 
-        datafile = path + f'/{area}_NAT4_ozgf.fs100.ch18.tgz'
+        # =========  LOAD THE POPULATION RECORDING (est set)  ===========
+
+        datafile = os.path.join(path, f'{area}_NAT4_ozgf.fs100.ch18.tgz')
         rec = load_recording(datafile)
 
         context = {'rec': rec}
-        context.update(xforms.normalize_sig(sig='stim', norm_method='minmax', log_compress=1, **context))  # normalize spectrograms (log-compression, important)
-        context.update(xforms.normalize_sig(sig='resp', norm_method='minmax', **context))  # normalize responses
+        # log-compress + minmax normalize the spectrogram (matches the
+        # preprocessing baked into the published Pennington & David models).
+        context.update(xforms.normalize_sig(sig='stim', norm_method='minmax', log_compress=1, **context))
+        context.update(xforms.normalize_sig(sig='resp', norm_method='minmax', **context))
         context.update(preprocessing.split_pop_rec_by_mask(**context))
 
         cells = context['rec']['resp'].chans
         val_sounds = epoch.epoch_names_matching(context['rec']['resp'].epochs, "^STIM_00cat")
         est_sounds = epoch.epoch_names_matching(context['rec']['resp'].epochs, "^STIM_cat")
 
-        # =========  EXTRACT STIMULUS SPECTROGRAMS  ===========
+        # =========  STIM SPECTROGRAMS (est first, then val)  ===========
 
-        # [(S_est + S_val) * {'uid': str, 'subset': str}
         self.stim_meta = []
+        self.stims = []
 
-        est_spectros = []
         for est_sound in est_sounds:
-            est_spectro = context['rec']['stim'].extract_epoch(est_sound)
-            est_spectros.append(torch.from_numpy(est_spectro))
-            self.stim_meta.append({'uid': est_sound, 'subset': 'est'})
-        est_spectros = torch.stack(est_spectros)  # (575, 1, 18, 150) = (S, 1, F, T)
+            spec = context['rec']['stim'].extract_epoch(est_sound)  # (1, F, T)
+            self.stims.append(torch.from_numpy(spec))
+            self.stim_meta.append({'name': est_sound, 'subset': 'est'})
 
-        val_spectros = []
         for val_sound in val_sounds:
-            val_spectro = context['rec']['stim'].extract_epoch(val_sound)  # (1, F=18, T=150)
-            val_spectros.append(torch.from_numpy(val_spectro))
-            self.stim_meta.append({'uid': val_sound, 'subset': 'val'})
-        val_spectros = torch.stack(val_spectros)  # (18, 1, 18, 150) = (S, 1, F, T)
+            spec = context['rec']['stim'].extract_epoch(val_sound)
+            self.stims.append(torch.from_numpy(spec))
+            self.stim_meta.append({'name': val_sound, 'subset': 'val'})
 
-        self.stims = torch.cat([est_spectros, val_spectros], dim=0)  # (S_est + S_val, 1, F, T)
+        # =========  NEURON METADATA (auditory flag from CSV)  ===========
 
-        # =========  MASK FOR 'AUDITORY RESPONSIVE' NEURONS  ===========
-
-        # [N * {'uid': str, 'area': str, 'auditory': bool}]
-        self.pop_metadata = []
-
-        # register the "auditory responsiveness" of neurons, pre-determined by the dataset's authors
-        list_neurons = pd.read_csv(path + f'/{area}_pred_correlation.csv')
+        self.neuron_metadata = []
+        list_neurons = pd.read_csv(os.path.join(path, f'{area}_pred_correlation.csv'))
+        cell_to_aud = dict(zip(list_neurons['cellid'], list_neurons['sig_auditory']))
         for cell in cells:
-            cell_auditory = list_neurons.loc[list_neurons['cellid'] == cell]['sig_auditory'].item()
-            self.pop_metadata.append({'uid': cell, 'area': area, 'auditory': cell_auditory})
+            self.neuron_metadata.append({
+                'cell_id': cell,
+                'area': area,
+                'auditory': bool(cell_to_aud.get(cell, False)),
+            })
+        self.N_neurons = len(self.neuron_metadata)
 
-        # =========  EXTRACT CORRESPONDING RESPONSE TRIALS (ESTIMATION SET) ===========
-        # estimation stimuli were presented only once, sequentially
+        # =========  EST RESPONSES (1 trial per stim, full population)  ===========
+        # Cells that did not see a given est stim get a (1, 1) NaN sentinel
+        # rather than a (1, T) trace of zeros — paradigm-compliant.
+        # NEMS' extract_epoch returns (R, N, T) with NaN-for-missing for the
+        # cross-site cells (they share the same time grid via stitching).
 
-        est_responses = []
+        est_responses_per_stim = []  # list of S_est lists of N (R=1, T) tensors / NaN
         for est_sound in est_sounds:
-            est_resp = context['rec']['resp'].extract_epoch(est_sound)  # (R=1, N, T=150), N=849 for A1 and N=398 for PEG
-            est_responses.append(torch.from_numpy(est_resp))
-        est_responses = torch.cat(est_responses)  # (575, N, 150) = (S, N, T)
-        est_responses = est_responses.unsqueeze(2)  # (S, N, R=1, T)
-
-        # =========  EXTRACT CORRESPONDING RESPONSE TRIALS (VALIDATION SET)  ===========
-
-        val_responses = []
-        val_cells = []  # variable to keep track of cells' order as we browse through val files
+            arr = context['rec']['resp'].extract_epoch(est_sound)  # (1, N, T) numpy
+            stim_resps = []
+            for n in range(self.N_neurons):
+                trace = arr[:, n, :]   # (1, T)
+                # NEMS marks unrecorded (cell, stim) pairs with NaN; collapse
+                # those whole-NaN traces to the canonical (1, 1) sentinel so
+                # downstream code can rely on the deepSTRF paradigm.
+                if torch.from_numpy(trace).isnan().all():
+                    stim_resps.append(torch.full((1, 1), float('nan')))
+                else:
+                    stim_resps.append(torch.from_numpy(trace))
+            est_responses_per_stim.append(stim_resps)
 
         del rec
         del context
         gc.collect()
 
-        FILES_LIST = os.listdir(os.path.join(path, f'{area}_single_sites/'))
+        # =========  VAL RESPONSES (20 trials per stim, per-site stitching)  ===========
 
-        for filename in tqdm(FILES_LIST):
+        val_files = sorted(os.listdir(os.path.join(path, f'{area}_single_sites')))
 
-            # ignore 'TNCxxx' cells since they do not have est set responses
-            if 'TNC' in filename:
-                print(f"skipping {filename} (no est set responses)...")
-                continue
-
-            datafile = path + f'/{area}_single_sites/' + filename
+        # Accumulate (S_val, R, N_subpop, T) per site, then stitch across cells.
+        per_site_val = []
+        val_cells_in_order = []
+        for filename in tqdm(val_files, desc=f'NAT4 {area} val sites'):
+            # 'TNC*' sites do not have est data, but they DO have val data.
+            # We still want their val responses stitched in — they appear
+            # in the population's chans list and est-set rows are NaN-sentinels.
+            datafile = os.path.join(path, f'{area}_single_sites', filename)
             single_site_rec = load_recording(datafile)
+            val_cells_in_order += single_site_rec['resp'].chans
 
-            val_cells += single_site_rec['resp'].chans  # progressively adds units, but in a different order as in the 'cells' variable
-            responses = []
-
+            site_responses = []
             for val_sound in val_sounds:
-                resp = single_site_rec['resp'].rasterize()  # (N_subpop, T)
-                subpop_resp = resp.extract_epoch(val_sound)  # (R=20, N_subpop, T_stim_ms=1500)
-                R, N_subpop, T_stim_ms = subpop_resp.shape
-                subpop_resp = subpop_resp.reshape(R, N_subpop, -1, 10).sum(axis=-1)  # (R, N_subpop, N_timebins/10): dt=1ms --> dt=10ms
-                responses.append(torch.from_numpy(subpop_resp))
-
+                resp = single_site_rec['resp'].rasterize()
+                arr = resp.extract_epoch(val_sound)   # (R=20, N_subpop, T_ms=1500)
+                R, N_subpop, T_ms = arr.shape
+                # downsample 1 ms -> 10 ms by summing
+                arr = arr.reshape(R, N_subpop, -1, 10).sum(axis=-1)
+                site_responses.append(torch.from_numpy(arr))
                 del resp
-                gc.collect()
-
-            responses = torch.stack(responses)  # (S, R, N_subpop, T)
-            val_responses.append(responses)
-
+            per_site_val.append(torch.stack(site_responses))  # (S_val, R, N_subpop, T)
             del single_site_rec
             gc.collect()
 
-        val_responses = torch.cat(val_responses, dim=2)  # (S, R, N, T)
-        val_responses = val_responses.permute(0, 2, 1, 3)  # (S, N, R, T)
+        val_full = torch.cat(per_site_val, dim=2)         # (S_val, R, N_total_in_val_order, T)
+        val_full = val_full.permute(0, 2, 1, 3)           # (S_val, N, R, T)
 
-        # at this point responses of all neurons to all val stims are registered (cf. val_responses.shape)
-        # but the order of cells in the neuron dimension differs from est responses. In other words:
-        #  - cells == debug_cells --> False
-        #  - set(cells) == set(debug_cells) --> True
-        # So we need to reorder cells in this dimension to match that in 'est'
-        index_map = {u: i for i, u in enumerate(val_cells)}
-        perm_indices = [index_map[u] for u in cells]  # length N
-        perm_tensor = torch.tensor(perm_indices, dtype=torch.long)
-        val_responses = val_responses.index_select(dim=1, index=perm_tensor)
-        assert [val_cells[i] for i in perm_indices] == cells
-
-        # final responses attribute
-        self.responses = [r for r in est_responses] + [r for r in val_responses]
-
-        # TODO: check (stim, nrn) pairs with null responses --> nan (using special method) ?
-        # val_responses.mean(dim=(2, 3)) --> (S, N)
-        # val_responses.mean(dim=(2, 3)).count_nonzero() / val_responses.mean(dim=(2, 3)).numel()
-
-        # neuron mask attribute. TODO: 1) use compute_nrn_masks() method ? 2) make this attribute obsolete soon ?
-        # for the moment, consider that all neurons had valid responses (even null ones) to all stims, for this dataset
-        self.nrn_masks = torch.ones(len(self.stim_meta), len(self.pop_metadata)).bool()  # (S, N)
-
-        # general attributes
-        self.area = area
-        self.N_neurons = len(self.pop_metadata)
-        self.I = list(range(self.N_neurons))
-        self.dt = 10
-        self.F = 18
-        self.species = 'ferret'
-
-
-    @staticmethod
-    def replace_null_resps_by_nan_placeholder(responses):
-        """
-        Some stimuli elicit no spikes to some neurons in any trial at all: these are null responses.
-        They take the same amount of memory as other responses as an (R, T) tensor full of zeros.
-        This function replaces them by a (1, 1) NaN placeholder, in conformity with deepSTRF's guidelines.
-
-        # TODO: also discard null trials ???
-        """
-
-        final_resps = []
-        S_val, N, _, _ = responses.shape
-        mask = responses.mean(dim=(2, 3)) > 0.
+        # Cells in the val concatenation are not in the same order as the
+        # population's `cells` list, but the SET is the same. Reindex.
+        index_map = {u: i for i, u in enumerate(val_cells_in_order)}
+        # Cells in the population list that are NOT in val_cells_in_order
+        # were never presented val stims (e.g. some TNC cells were
+        # est-only) — give them NaN sentinels.
+        S_val = val_full.shape[0]
+        val_responses_per_stim = []
         for s in range(S_val):
-
-            temp_stim_resps = []
-
-            for n in range(N):
-                # if at least one spike was elicited for this neuron by this stim, keep the responses
-                if mask[s, n]:
-                    temp_stim_resps.append(responses[s, n])
-                # if no response elicited at all, nan placeholder instead
+            stim_resps = []
+            for n, cell in enumerate(cells):
+                if cell in index_map:
+                    stim_resps.append(val_full[s, index_map[cell]])
                 else:
-                    temp_stim_resps.append(torch.full((1, 1), fill_value=torch.nan))
+                    stim_resps.append(torch.full((1, 1), float('nan')))
+            val_responses_per_stim.append(stim_resps)
 
-            final_resps.append(temp_stim_resps)
+        # est first, then val — matches the order of self.stims / self.stim_meta
+        self.responses = est_responses_per_stim + val_responses_per_stim
+
+        if smooth:
+            self.smooth_responses(window_ms=21.0)
+
+        self.validate()
