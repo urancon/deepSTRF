@@ -113,6 +113,76 @@ class LearnableExponentialDecay(nn.Module):
 #       WEIGHT LAYERS
 #    ##################
 
+class CausalSTRFConv(nn.Module):
+    """
+    A causal Spectro-Temporal Receptive Field convolution: ``T-1`` zeros
+    are prepended along the time axis, then a 2D STRF kernel of shape
+    ``(C_out, C_in, F, T)`` is applied with valid padding. Output time
+    length matches input time length.
+
+    The actual STRF kernel module is pluggable via the ``kernel`` kwarg.
+    The default is a plain ``nn.Conv2d``; passing ``ParametricSTRF`` or a
+    separable-kernel ``nn.Sequential`` swaps in alternative
+    parameterizations without changing the model that holds this layer.
+
+    Parameters
+    ----------
+    F : int
+        Spectrogram frequency bins (the height of the kernel).
+    T : int
+        Temporal extent of the STRF in frames (the width of the kernel).
+    C_in : int
+        Input channel count (typically 1, or 2 with AdapTrans prefiltering).
+    C_out : int
+        Output channel count. Hidden width when used inside a core,
+        ``N`` when used inside an STRF readout.
+    kernel : nn.Module, optional
+        Pre-built kernel module. Must produce
+        ``(B, C_out, 1, T_in)`` from ``(B, C_in, F, T_in + T - 1)``.
+        ``None`` (default) instantiates a vanilla
+        ``nn.Conv2d(C_in, C_out, kernel_size=(F, T))``.
+    bias : bool, default True
+        Used only when ``kernel is None``.
+    """
+    def __init__(self, F: int, T: int, C_in: int, C_out: int,
+                 kernel: nn.Module = None, bias: bool = True):
+        super().__init__()
+        self.F = F
+        self.T = T
+        self.C_in = C_in
+        self.C_out = C_out
+        self.pad = nn.ZeroPad2d((T - 1, 0, 0, 0))
+        if kernel is None:
+            self.kernel = nn.Conv2d(C_in, C_out, kernel_size=(F, T), bias=bias)
+        else:
+            self.kernel = kernel
+
+    def forward(self, x):
+        return self.kernel(self.pad(x))
+
+    def STRF_weight(self):
+        """
+        Return the effective STRF kernel as a ``(C_out, C_in, F, T)`` tensor,
+        detached and on CPU.
+
+        Works across kernel types: vanilla ``nn.Conv2d``, ``ParametricSTRF``
+        (DCLS), and the frequency-time separable ``nn.Sequential`` variant.
+        """
+        if hasattr(self.kernel, 'build_kernel'):
+            return self.kernel.build_kernel().detach().cpu()
+        if isinstance(self.kernel, nn.Conv2d):
+            return self.kernel.weight.data.detach().cpu()
+        if isinstance(self.kernel, nn.Sequential) and len(self.kernel) == 2:
+            # Separable: nn.Sequential(Conv2d(C_in, C_out, (F, 1)),
+            #                          Conv2d(C_out, C_out, (1, T), groups=C_out))
+            #   Effective kernel = outer product of the two factors.
+            wf = self.kernel[0].weight.data       # (C_out, C_in, F, 1)
+            wt = self.kernel[1].weight.data       # (C_out, 1,    1, T)
+            return (wf * wt).detach().cpu()       # (C_out, C_in, F, T)
+        raise NotImplementedError(
+            f"STRF_weight() not implemented for kernel of type {type(self.kernel).__name__}")
+
+
 class ParametricSTRF(nn.Module):
     """
     SPECTRO-Temporal Receptive Field (2D) kernel.
