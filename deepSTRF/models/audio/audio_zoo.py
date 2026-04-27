@@ -168,14 +168,16 @@ class NetworkReceptiveField(AudioEncodingModel):
         Hidden layer width ``H``.
     out_neurons : int, default 1
         Number of output neurons ``N``.
-    output_activation : nn.Module, default nn.Sigmoid()
-        Pointwise nonlinearity at the output.
-    prefiltering : dict or None
-        Optional spectrogram prefilter spec. See ``AudioEncodingModel``.
-    parameterization : dict or None
-        Optional STRF kernel parameterization. ``{'type': 'DCLS',
-        'num_gauss': k}`` for a sum-of-Gaussians kernel; ``None`` for
-        a vanilla full kernel.
+    output_activation : nn.Module, optional
+        Pointwise nonlinearity at the readout output. Default
+        ``nn.Sigmoid``.
+    prefiltering : nn.Module, optional
+        Optional spectrogram prefilter (``AdapTrans``, ``ICAdaptation``,
+        any module exposing ``out_channels``). ``None`` (default) gives
+        ``nn.Identity`` and ``C_in = 1``.
+    kernel : nn.Module, optional
+        Pluggable hidden-layer STRF kernel. ``None`` (default) gives a
+        vanilla ``nn.Conv2d``; pass ``ParametricSTRF(...)`` for DCLS.
 
     References
     ----------
@@ -198,75 +200,63 @@ class NetworkReceptiveField(AudioEncodingModel):
       readout).
     - Causal left-padding extends the model to arbitrary input lengths;
       the paper uses fixed-window slicing.
-    - The STRF kernel can be parameterized (DCLS); the paper uses a
-      vanilla full kernel.
+    - The hidden STRF kernel can be parameterized (DCLS); the paper
+      uses a vanilla full kernel.
     """
-    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, n_hidden: int = 20, out_neurons: int = 1, output_activation: nn.Module = None, prefiltering: nn.Module = None, parameterization=None):
-        super(NetworkReceptiveField, self).__init__(n_frequency_bands, temporal_window_size, out_neurons=out_neurons, prefiltering=prefiltering)
-        self.output_activation = output_activation if output_activation is not None else nn.Sigmoid()
-
-        # causal input normalization: per-timestep LayerNorm across frequency
-        self.input_norm = layers.CausalLayerNorm(self.F, dim=-2)
-
-        self.pad = nn.ZeroPad2d((self.T - 1, 0, 0, 0))
-
+    def __init__(self, n_frequency_bands: int = 34, temporal_window_size: int = 9,
+                 n_hidden: int = 20,
+                 out_neurons: int = 1,
+                 output_activation: nn.Module = None,
+                 prefiltering: nn.Module = None,
+                 kernel: nn.Module = None):
+        super().__init__(
+            n_frequency_bands=n_frequency_bands,
+            temporal_window_size=temporal_window_size,
+            out_neurons=out_neurons,
+            prefiltering=prefiltering,
+        )
         self.H = n_hidden
 
-        if parameterization is None:
-            self.parameterization = False
-            self.convs = nn.Sequential(
-                nn.Conv2d(self.C_in, self.H, kernel_size=(self.F, self.T), stride=1),
-                layers.CausalLayerNorm(self.H, dim=1),
-                nn.Tanh(),
-                nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
-            )
+        # core: input freq norm → hidden STRF projection → channel norm → tanh
+        # The hidden STRF projection emits (B, H, 1, T); LinearReadout downstream
+        # squeezes the singleton spatial axis automatically.
+        self.core = nn.Sequential(
+            layers.CausalLayerNorm(self.F, dim=-2),
+            layers.CausalSTRFConv(self.F, self.T, self.C_in, self.H, kernel=kernel),
+            layers.CausalLayerNorm(self.H, dim=1),
+            nn.Tanh(),
+        )
 
-        else:
-            assert isinstance(parameterization, dict) and 'type' in parameterization.keys(), "Unvalid format for 'parametrization'argument. Expected dict with 'type' key."
-            self.parameterization = True
-            parameterization_type = parameterization['type']
-            if parameterization_type == 'DCLS':
-                self.num_gaussians = parameterization['num_gauss']
-                self.convs = nn.Sequential(
-                    layers.ParametricSTRF(self.F, self.T, self.C_in, self.H, self.num_gaussians),
-                    layers.CausalLayerNorm(self.H, dim=1),
-                    nn.Tanh(),
-                    nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
-                )
-            else:
-                raise NotImplementedError(f"Unknown parameterization {parameterization_type}. Currently supported STRF parameterizations are 'DCLS'.")
+        # readout: per-neuron 1×1 projection from H hidden units.
+        self.readout = LinearReadout(
+            in_features=self.H, out_neurons=self.O,
+            activation=output_activation if output_activation is not None else nn.Sigmoid(),
+        )
+        # forward inherited from NeuralModel — wav2spec → prefiltering → core → readout
 
-    def forward(self, x):
-        # x.shape must be (B, 1, F, T)
-        y = self.prefiltering(x)                                        # (B, 1|2, F, T)
-        y = self.input_norm(y)                                          # causal per-timestep freq norm
-        y = self.convs(self.pad(y))                                     # (B, N, 1, T)
-        y = self.output_activation(y)                                   # (B, N, 1, T)
-        return y
+    def STRFs(self, hidden_idx: int = 0, polarity: str = 'ON'):
+        """
+        Return the hidden-layer STRF kernel for one hidden unit as ``(F, T)``.
 
-    def STRFs(self, hidden_idx=0, polarity='ON'):
-
-        # check argument validity
-        if polarity in ['ON', 'On', 'on', 0]:
-            polarity_idx = 0
-        elif polarity in ['OFF', 'Off', 'off', 1]:
-            polarity_idx = 1
-        else:
-            raise ValueError("argument 'polarity' must be either 'ON', 'On', 'on', 'OFF', 'Off' or 'off'")
-
-        # construct STRF depending on parametrization
-        if not self.parameterization:
-            strf = self.convs[0].weight.data.cpu()
-        else:
-            strf = self.convs[0].build_kernel()
-
-        # choose polarity between None/ON/OFF
+        Parameters
+        ----------
+        hidden_idx : int, default 0
+            Which of the ``H`` hidden units to return the STRF for.
+        polarity : {'ON', 'OFF'}, default 'ON'
+            Only relevant when the prefilter has ``C_in == 2`` (e.g.
+            AdapTrans). Selects the ON or OFF channel of the kernel.
+        """
+        # core[1] is the CausalSTRFConv whose .STRF_weight() returns (H, C_in, F, T)
+        full = self.core[1].STRF_weight()
         if isinstance(self.prefiltering, AdapTrans):
-            strf = strf[hidden_idx, polarity_idx, :, :]
-        else:
-            strf = strf[hidden_idx, 0, :, :]
-
-        return strf.detach()
+            if polarity in ('ON', 'On', 'on', 0):
+                return full[hidden_idx, 0]
+            if polarity in ('OFF', 'Off', 'off', 1):
+                return full[hidden_idx, 1]
+            raise ValueError(
+                f"polarity must be 'ON' or 'OFF' for an AdapTrans-prefiltered NRF — got {polarity!r}"
+            )
+        return full[hidden_idx, 0]
 
 
 class DNet(AudioEncodingModel):
