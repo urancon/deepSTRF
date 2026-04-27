@@ -407,14 +407,56 @@ class DNet(AudioEncodingModel):
 
 class ConvNet2D(AudioEncodingModel):
     """
-    Adapted from, but not entirely equivalent to the so-called '2D-CNN' of Pennington et al. (2023),
-        "A convolutional neural network provides a generalizable model of natural sound coding by neural populations
-        in auditory cortex", PLOS CB
+    Convolutional STRF model with three sequential 2D convs and a 2-layer
+    fully-connected readout — adapted from the '2D-CNN' of Pennington
+    & David (2023).
 
-    Major differences:
-     - BatchNorm inside the convolutional backbone
-     - Zero padding along frequency dimension --> downsampling along this dimension after self.convs
+    Architecture: three Conv2d → CausalLayerNorm → LeakyReLU blocks
+    extract a stack of feature maps; the per-time-step features are
+    flattened over the (channel × downsampled-frequency) axes and a
+    2-layer FC reads out ``N`` output neurons.
 
+    Parameters
+    ----------
+    n_frequency_bands : int, default 34
+        Number of input frequency bands ``F``.
+    kernel_size : tuple of int, default (3, 9)
+        Conv2d kernel ``(K_F, K_T)`` shared across the three conv blocks.
+    c_hidden : int, default 10
+        Number of channels in each conv block.
+    n_hidden : int, default 20
+        Width of the FC hidden layer.
+    out_neurons : int, default 1
+        Number of output neurons ``N``.
+    output_activation : nn.Module, default nn.Sigmoid()
+        Pointwise nonlinearity at the output.
+    prefiltering : dict or None
+        Optional spectrogram prefilter spec.
+
+    References
+    ----------
+    Pennington & David (2023). "A convolutional neural network provides
+    a generalizable model of natural sound coding by neural populations
+    in auditory cortex." PLOS Comp. Biol. 19(5): e1011110.
+    https://doi.org/10.1371/journal.pcbi.1011110
+
+    Notes
+    -----
+    Differences from the original paper:
+
+    - Causal LayerNorm replaces the missing internal normalization
+      (paper uses none).
+    - Hidden activation is ``LeakyReLU(0.1)`` rather than ReLU. Empirical
+      preference, very small architectural difference.
+    - 2D convs over ``(F, T)`` rather than 1D convs over ``T`` (the
+      paper applies 1D convolutions with implicit spectral pooling).
+    - Frequency downsampling is implicit via valid-padding shrinkage:
+      three convs each shrink ``F`` by ``K_F - 1``, giving
+      ``F_down = F - 3*(K_F - 1)``.
+    - Causal left-padding extends the model to arbitrary input lengths;
+      the paper also uses explicit causal padding.
+    - The output activation is configurable; the paper uses a 4-parameter
+      double-exponential — see ``deepSTRF.models.activations.ParametricDoubleExponential``.
     """
     def __init__(self, n_frequency_bands=34, kernel_size: tuple = (3, 9), c_hidden: int = 10, n_hidden: int = 20, out_neurons: int = 1, output_activation: nn.Module = nn.Sigmoid(), prefiltering=None):
         temporal_window_size = 3 * (kernel_size[1] - 1)
@@ -425,18 +467,21 @@ class ConvNet2D(AudioEncodingModel):
         self.C = c_hidden
         self.H = n_hidden
 
+        # causal input normalization: per-timestep LayerNorm across frequency
+        self.input_norm = layers.CausalLayerNorm(self.F, dim=-2)
+
         # padding left only (causal inference): three convs each shrink time by K[1]-1
         self.pad = torch.nn.ZeroPad2d((3 * (self.K[1] - 1), 0, 0, 0))
 
         self.convs = nn.Sequential(
             nn.Conv2d(self.C_in, self.C, kernel_size=self.K, stride=1),
-            nn.BatchNorm2d(self.C),
+            layers.CausalLayerNorm(self.C, dim=1),
             nn.LeakyReLU(0.1),
             nn.Conv2d(self.C, self.C, kernel_size=self.K, stride=1),
-            nn.BatchNorm2d(self.C),
+            layers.CausalLayerNorm(self.C, dim=1),
             nn.LeakyReLU(0.1),
             nn.Conv2d(self.C, self.C, kernel_size=self.K, stride=1),
-            nn.BatchNorm2d(self.C),
+            layers.CausalLayerNorm(self.C, dim=1),
             nn.LeakyReLU(0.1),
         )
         F_down = self.F - 3 * (self.K[0] - 1)  # frequency dimension after the 3 convs
@@ -450,6 +495,7 @@ class ConvNet2D(AudioEncodingModel):
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
         y = self.prefiltering_block(x) if self.prefiltering else x
+        y = self.input_norm(y)                  # causal per-timestep freq norm
         y = self.convs(self.pad(y))             # (B, C, F_down, T)
         y = y.flatten(start_dim=1, end_dim=2)   # (B, C*F_down, T)
         y = y.permute(0, 2, 1)                  # (B, T, C*F_down)
