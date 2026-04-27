@@ -660,90 +660,108 @@ class StateNet(AudioEncodingModel):
     - The S4 backbone is imported lazily — its module emits CUDA-extension
       warnings on import that other backends would not see.
     """
-    def __init__(self, n_frequency_bands=34, temporal_window_size=1, kernel_size: int = 7, stride: int = 3,
-                 hidden_channels: int = 7, connectivity: str = 'LC', rnn_type: str = 'GRU', out_neurons: int = 1,
-                 output_activation: nn.Module = None, prefiltering: nn.Module = None):
-        super(StateNet, self).__init__(n_frequency_bands, temporal_window_size, out_neurons=out_neurons, prefiltering=prefiltering)
-        self.output_activation = output_activation if output_activation is not None else nn.Sigmoid()
-
-        # general
+    def __init__(self, n_frequency_bands: int = 34, temporal_window_size: int = 1,
+                 kernel_size: int = 7, stride: int = 3, hidden_channels: int = 7,
+                 connectivity: str = 'LC', rnn_type: str = 'GRU',
+                 out_neurons: int = 1,
+                 output_activation: nn.Module = None,
+                 prefiltering: nn.Module = None):
+        super().__init__(
+            n_frequency_bands=n_frequency_bands,
+            temporal_window_size=temporal_window_size,
+            out_neurons=out_neurons,
+            prefiltering=prefiltering,
+        )
         self.K = kernel_size
         self.S = stride
         self.C = hidden_channels
         self.rnn_type = rnn_type
 
-        # stateless spectral encoder
+        # stateless per-timestep spectral encoder: (B, C_in, F) -> (B, C, F_down).
+        # Three connectivity options share the same input/output shape contract.
         if connectivity == 'LC':
             self.encoder_layers = nn.Sequential(
-                layers.LocallyConnected1d(input_size=self.F, in_channels=self.C_in, out_channels=self.C, kernel_size=self.K, stride=self.S),
+                layers.LocallyConnected1d(input_size=self.F, in_channels=self.C_in,
+                                          out_channels=self.C, kernel_size=self.K, stride=self.S),
                 layers.CausalLayerNorm(self.C, dim=1),
-                nn.Sigmoid()
+                nn.Sigmoid(),
             )
         elif connectivity == 'FC':
             F_down = int((self.F - kernel_size) / self.S + 1)
             self.encoder_layers = nn.Sequential(
-                nn.Flatten(start_dim=-2, end_dim=-1),                               # (B, C_in, F) --> (B, C_in * F)
-                nn.Linear(self.C_in * self.F, self.C * F_down),                     # (B, C_in * F) --> (B, C * F_down)
-                nn.Unflatten(dim=-1, unflattened_size=(self.C, F_down)),            # (B, C, F_down)
+                nn.Flatten(start_dim=-2, end_dim=-1),                       # (B, C_in, F) -> (B, C_in*F)
+                nn.Linear(self.C_in * self.F, self.C * F_down),
+                nn.Unflatten(dim=-1, unflattened_size=(self.C, F_down)),    # (B, C, F_down)
                 layers.CausalLayerNorm(self.C, dim=1),
-                nn.Sigmoid()
+                nn.Sigmoid(),
             )
         elif connectivity == 'CONV':
             self.encoder_layers = nn.Sequential(
-                nn.Conv1d(self.C_in, self.C, kernel_size=self.K, stride=self.S),    # (B, C, F)
+                nn.Conv1d(self.C_in, self.C, kernel_size=self.K, stride=self.S),
                 layers.CausalLayerNorm(self.C, dim=1),
-                nn.Sigmoid()
+                nn.Sigmoid(),
+            )
+        else:
+            raise NotImplementedError(
+                f"connectivity must be 'LC', 'FC', or 'CONV', got {connectivity!r}"
             )
 
-        # get output shape and embedding space dim for GRUs
+        # F_down after the spectral encoder: used to size the RNN's input.
         self.L = (n_frequency_bands - self.K) // self.S + 1
         self.H = self.L * self.C
 
-        # RNNs for temporal processing
+        # recurrent / state-space backbone
         if self.rnn_type == 'GRU':
             self.rnn = nn.GRU(input_size=self.H, hidden_size=self.H, num_layers=1, batch_first=True)
         elif self.rnn_type == 'LSTM':
             self.rnn = nn.LSTM(input_size=self.H, hidden_size=self.H, num_layers=1, batch_first=True)
-        elif (self.rnn_type == 'vanilla') or (self.rnn_type == 'RNN'):
+        elif self.rnn_type in ('vanilla', 'RNN'):
             self.rnn = nn.RNN(input_size=self.H, hidden_size=self.H, num_layers=1, batch_first=True)
         elif self.rnn_type == 'LMU':
-            self.rnn = LMU(input_size=self.H, hidden_size=self.H, memory_size=128, theta=99, learn_a=False, learn_b=False)  # ok perfs but slow ! try memory_size=1024 and theta=50
-        elif self.rnn_type == "Mamba":
+            self.rnn = LMU(input_size=self.H, hidden_size=self.H, memory_size=128,
+                           theta=99, learn_a=False, learn_b=False)
+        elif self.rnn_type == 'Mamba':
             self.rnn = MambaBlock(MambaConfig(d_model=self.H, n_layers=1))
-        elif self.rnn_type == "S4":
+        elif self.rnn_type == 'S4':
             from deepSTRF.models.dependencies.s4 import S4Block
             self.rnn = S4Block(d_model=self.H, transposed=False)
         else:
-            raise NotImplementedError(f"received unknown rnn_type '{rnn_type}': please choose between: "
-                                      f"'GRU' (default), 'LSTM', 'RNN', 'vanilla', 'LMU', 'S4', 'Mamba'")
+            raise NotImplementedError(
+                f"unknown rnn_type {rnn_type!r}: choose 'GRU', 'LSTM', 'RNN', 'vanilla', "
+                f"'LMU', 'Mamba', or 'S4'"
+            )
 
-        # readout from RNNs' hidden state
-        self.fc = nn.Linear(self.H, self.O)
+        # per-neuron readout from the recurrent hidden state.
+        self.readout = LinearReadout(
+            in_features=self.H, out_neurons=self.O,
+            activation=output_activation if output_activation is not None else nn.Sigmoid(),
+        )
 
     def forward(self, x):
-        # x.shape must be (B, 1, F, T)
-        y = self.prefiltering(x)                                    # (B, 1|2, F, T)
-        y = y.permute(3, 0, 1, 2)                                   # (T, B, 2, F)
+        """
+        Per-timestep spectral encoder feeding a recurrent backbone.
 
-        # pass through spectral encoder efficiently
-        y_shape = [y.shape[0], y.shape[1]]
-        y = y.flatten(0, 1)
-        y = self.encoder_layers(y)
-        y_shape.extend(y.shape[1:])
-        y = y.view(y_shape)                                         # (T, B, C_hidd, F_down)
+        Overrides the base template because the encoder runs in a flattened
+        (T*B, C_in, F) batch (so every timestep is independent in the
+        spectral pass) and the RNN expects a batch-first ``(B, T, H)``
+        layout — these reshapes don't decompose into the canonical core /
+        readout slots.
+        """
+        # x: (B, 1, F, T)
+        y = self.prefiltering(x)                                # (B, C_in, F, T)
+        y = y.permute(3, 0, 1, 2)                               # (T, B, C_in, F)
+        T_, B = y.shape[:2]
+        y = y.flatten(0, 1)                                     # (T*B, C_in, F)
+        y = self.encoder_layers(y)                              # (T*B, C, F_down)
+        y = y.view(T_, B, self.C, self.L)                       # (T, B, C, F_down)
+        y = y.flatten(start_dim=2, end_dim=3).permute(1, 0, 2)  # (B, T, C*F_down=H)
 
-        # prepare for RNN
-        y = y.flatten(start_dim=2, end_dim=3).permute(1, 0, 2)      # (B, T, C_hidd*F_down)
-
-        # RNN
-        if self.rnn_type != "Mamba":
-            y, _ = self.rnn(y)      # (B, T, H)
+        # RNN/SSM backbone — most modules return (output, hidden); Mamba is
+        # the exception (returns a single tensor).
+        if self.rnn_type == 'Mamba':
+            y = self.rnn(y)
         else:
-            y = self.rnn(y)         # for mamba
+            y, _ = self.rnn(y)                                  # (B, T, H)
 
-        y = self.fc(y)              # (B, T, N)
-        y = self.output_activation(y)  # (B, T, N)
-
-
-        y = y.permute(0, 2, 1)      # (B, N, T)  TODO: --> (B, N, 1, T)
-        return y
+        y = y.transpose(-2, -1)                                 # (B, H, T) — readout convention
+        return self.readout(y)                                  # (B, N, 1, T)
