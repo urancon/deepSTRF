@@ -8,6 +8,7 @@ import deepSTRF.models.layers as layers
 from deepSTRF.models.dependencies.lmu import LMU
 from deepSTRF.models.dependencies.mamba import MambaBlock, MambaConfig
 from deepSTRF.models.prefiltering import AdapTrans
+from deepSTRF.models.readouts import STRFReadout, LinearReadout
 # S4Block is imported lazily inside StateNet — its module emits noisy stderr
 # warnings about missing CUDA extensions and pulls a heavy dependency
 # graph; users who don't pick rnn_type='S4' shouldn't pay either cost.
@@ -18,19 +19,11 @@ class Linear(AudioEncodingModel):
     The canonical Linear (L) STRF model — a single SpectroTemporal Receptive
     Field convolved with the (optionally prefiltered) input spectrogram.
 
-    The convolution kernel of shape ``(C_in, F, T)`` is left-padded by
-    ``T-1`` zeros to remain causal and produce one output frame per input
-    frame. With ``out_neurons = N`` the model fits ``N`` independent STRFs
-    in parallel.
-
-    A causal LayerNorm over the frequency axis is applied to the input
-    before the conv. Empirically, this stabilizes training of small
-    unparameterized STRF models substantially. Unlike BatchNorm, LayerNorm
-    cannot be absorbed into the conv weights at inference (it computes
-    fresh statistics per sample), so the model is technically nonlinear in
-    the strict sense — but the per-time-step normalization is mild and the
-    learned kernel still serves as a directly interpretable STRF up to a
-    per-sample input scaling.
+    All learnable parameters live in the readout (``STRFReadout``), which
+    holds the kernel of shape ``(N, C_in, F, T)`` and applies it causally
+    via left-padding. The model's ``core`` is a single
+    ``CausalLayerNorm`` over the frequency axis — see notes below for the
+    rationale.
 
     Parameters
     ----------
@@ -40,15 +33,18 @@ class Linear(AudioEncodingModel):
         STRF temporal extent ``T`` in frames.
     out_neurons : int, default 1
         Number of output neurons ``N``.
-    prefiltering : dict or None
-        Optional spectrogram prefilter spec (e.g. AdapTrans). See
-        ``AudioEncodingModel`` for the dict format.
-    parameterization : dict or None
-        Optional STRF kernel parameterization. ``{'type': 'DCLS',
-        'num_gauss': k}`` for a sum of ``k`` Gaussians (Khalfaoui-Hassani
-        et al. 2023, ICLR); ``{'type': 'separable'}`` for a
-        frequency × time separable kernel. ``None`` (default) gives a
-        vanilla full kernel.
+    output_activation : nn.Module, optional
+        Pointwise nonlinearity applied at the readout output. Default
+        ``nn.Identity`` (true linear model).
+    prefiltering : nn.Module, optional
+        Optional spectrogram prefilter (``AdapTrans``, ``ICAdaptation``,
+        or any ``nn.Module`` exposing ``out_channels``). ``None``
+        (default) gives ``nn.Identity`` and ``C_in = 1``.
+    kernel : nn.Module, optional
+        Pluggable STRF kernel for the readout. ``None`` (default) gives
+        a vanilla ``nn.Conv2d``; pass ``ParametricSTRF(...)`` for DCLS,
+        or a separable ``nn.Sequential`` for a rank-1 factorization.
+        See ``deepSTRF.models.layers`` for the kernel module catalogue.
 
     References
     ----------
@@ -60,71 +56,60 @@ class Linear(AudioEncodingModel):
     https://doi.org/10.1523/JNEUROSCI.20-06-02315.2000
 
     Sahani & Linden (2003). "How Linear are Auditory Cortical Responses?"
-    NIPS. https://papers.nips.cc/paper_files/paper/2002/hash/...
+    NIPS.
+
+    Notes
+    -----
+    A causal LayerNorm over the frequency axis is applied as the
+    model's core (per-timestep input normalization). Empirically, this
+    stabilizes training of small unparameterized STRF models
+    substantially. Unlike BatchNorm, LayerNorm cannot be absorbed into
+    the readout kernel at inference (it computes fresh statistics per
+    sample), so the model is technically nonlinear in the strict sense
+    — but the per-time-step normalization is mild and the learned
+    kernel still serves as a directly interpretable STRF up to a
+    per-sample input scaling.
     """
-    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, output_activation: nn.Module = None, prefiltering: nn.Module = None, parameterization=None):
-        super(Linear, self).__init__(n_frequency_bands, temporal_window_size, out_neurons=out_neurons, prefiltering=prefiltering)
-        self.output_activation = output_activation if output_activation is not None else nn.Identity()
+    def __init__(self, n_frequency_bands: int = 34, temporal_window_size: int = 9,
+                 out_neurons: int = 1,
+                 output_activation: nn.Module = None,
+                 prefiltering: nn.Module = None,
+                 kernel: nn.Module = None):
+        super().__init__(
+            n_frequency_bands=n_frequency_bands,
+            temporal_window_size=temporal_window_size,
+            out_neurons=out_neurons,
+            prefiltering=prefiltering,
+        )
+        # core: causal per-timestep frequency normalization
+        self.core = layers.CausalLayerNorm(self.F, dim=-2)
+        # readout: pluggable STRF kernel + output activation
+        self.readout = STRFReadout(
+            F=self.F, T=self.T, C_in=self.C_in, out_neurons=self.O,
+            kernel=kernel,
+            activation=output_activation if output_activation is not None else nn.Identity(),
+        )
+        # forward is inherited from NeuralModel — wav2spec → prefiltering → core → readout
 
-        # causal input normalization: per-timestep LayerNorm across frequency
-        self.input_norm = layers.CausalLayerNorm(self.F, dim=-2)
+    def STRF_weight(self, polarity: str = 'ON'):
+        """
+        Return the readout's STRF kernel as a ``(N, F, T)`` tensor.
 
-        self.pad = nn.ZeroPad2d((self.T - 1, 0, 0, 0))
-
-        if parameterization is None:
-            self.parameterization = False
-            self.conv = nn.Conv2d(self.C_in, self.O, kernel_size=(self.F, self.T), stride=1)
-        else:
-            assert isinstance(parameterization, dict) and 'type' in parameterization.keys(), "Invalid format for 'parametrization'argument. Expected dict with 'type' key."
-            self.parameterization = True
-            parameterization_type = parameterization['type']
-
-            if parameterization_type == 'DCLS':
-                # Sum-of-Gaussians STRF kernel; see Khalfaoui-Hassani et al.
-                # (2023), "Dilated Convolutions with Learnable Spacings", ICLR.
-                self.num_gaussians = parameterization['num_gauss']
-                self.conv = layers.ParametricSTRF(self.F, self.T, self.C_in, self.O, self.num_gaussians)
-
-            elif parameterization_type == 'separable':
-                # Frequency × time separable kernel — rank-1 by construction.
-                self.conv = nn.Sequential(
-                    nn.Conv2d(self.C_in, self.O, kernel_size=(self.F, 1)),
-                    nn.Conv2d(self.O, self.O, groups=self.O, kernel_size=(1, self.T)),
-                )
-            else:
-                raise NotImplementedError(f"Unknown parameterization {parameterization_type}. Currently supported STRF parameterizations are 'DCLS' or 'separable'.")
-
-    def forward(self, x):
-        # x.shape must be (B, 1, F, T)
-        y = self.prefiltering(x)                                        # (B, 1|2, F, T)
-        y = self.input_norm(y)                                          # causal per-timestep freq norm
-        y = self.conv(self.pad(y))                                      # (B, N, 1, T)
-        y = self.output_activation(y)
-        return y
-
-    def STRF_weight(self, polarity='ON'):
-
-        # check argument validity
-        if polarity in ['ON', 'On', 'on', 0]:
-            polarity_idx = 0
-        elif polarity in ['OFF', 'Off', 'off', 1]:
-            polarity_idx = 1
-        else:
-            raise ValueError("argument 'polarity' must be either 'ON', 'On', 'on', 'OFF', 'Off' or 'off'")
-
-        # construct STRF depending on parametrization
-        if not self.parameterization:
-            strf = self.conv.weight.data.cpu()
-        else:
-            strf = self.conv.build_kernel()
-
-        # choose polarity between None/ON/OFF
+        For models prefiltered with ``AdapTrans`` (``C_in == 2``),
+        ``polarity`` selects the ON or OFF channel of the kernel. For
+        single-channel inputs the parameter is ignored.
+        """
+        full = self.readout.STRF_weight()                           # (N, C_in, F, T)
         if isinstance(self.prefiltering, AdapTrans):
-            strf = strf[:, polarity_idx, :, :]
-        else:
-            strf = strf[:, 0, :, :]
-
-        return strf.detach()
+            if polarity in ('ON', 'On', 'on', 0):
+                return full[:, 0]
+            if polarity in ('OFF', 'Off', 'off', 1):
+                return full[:, 1]
+            raise ValueError(
+                f"polarity must be 'ON' or 'OFF' for an AdapTrans-prefiltered "
+                f"Linear model — got {polarity!r}"
+            )
+        return full[:, 0]
 
 
 class LinearNonlinear(Linear):
@@ -132,31 +117,33 @@ class LinearNonlinear(Linear):
     Linear-Nonlinear (LN) STRF model — the Linear model followed by a
     pointwise output nonlinearity.
 
-    Inherits everything from ``Linear`` (causal input LayerNorm, STRF
-    conv with optional parameterization, left-padded causal convolution)
-    and only swaps the output activation. By default, ``nn.Sigmoid``;
-    pass any ``nn.Module`` to override.
+    Inherits everything from ``Linear`` and only changes the default
+    output activation from ``nn.Identity`` to ``nn.Sigmoid``. Pass any
+    ``nn.Module`` to ``output_activation`` to override.
 
     Parameters
     ----------
     output_activation : nn.Module, default nn.Sigmoid()
-        Pointwise nonlinearity applied to each ``(neuron, time)`` output.
-        See ``deepSTRF.models.activations`` for parametric variants.
+        Pointwise nonlinearity applied at the readout output. See
+        ``deepSTRF.models.activations`` for parametric variants
+        (``ParametricSigmoid``, ``ParametricDoubleExponential``).
 
     See Also
     --------
     Linear : Same architecture without the output nonlinearity.
     """
-    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, output_activation: nn.Module = None, prefiltering: nn.Module = None, parameterization=None):
-        if output_activation is None:
-            output_activation = nn.Sigmoid()
-        super(LinearNonlinear, self).__init__(
+    def __init__(self, n_frequency_bands: int = 34, temporal_window_size: int = 9,
+                 out_neurons: int = 1,
+                 output_activation: nn.Module = None,
+                 prefiltering: nn.Module = None,
+                 kernel: nn.Module = None):
+        super().__init__(
             n_frequency_bands=n_frequency_bands,
             temporal_window_size=temporal_window_size,
             out_neurons=out_neurons,
-            output_activation=output_activation,
+            output_activation=output_activation if output_activation is not None else nn.Sigmoid(),
             prefiltering=prefiltering,
-            parameterization=parameterization,
+            kernel=kernel,
         )
 
 
