@@ -352,10 +352,7 @@ class Transformer(AudioEncodingModel):
             num_layers=self.n_layers,
         )
 
-        self.readout = nn.Sequential(
-            nn.Linear(patch_dim, self.O),
-            layers.DoubleExponential(self.O)
-        )
+        self.readout = nn.Linear(patch_dim, self.O)
 
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
@@ -377,6 +374,7 @@ class Transformer(AudioEncodingModel):
         y = y.flatten(start_dim=1, end_dim=2)   # (B*L, n_patches * patch_dim)
         y = y.unflatten(dim=0, sizes=(B, L))    # B, L, n_patches * patch_dim)
         y = self.readout(y)                     # (B, L, N)
+        y = self.output_activation(y)           # (B, L, N)
         y = y.permute(0, 2, 1)                  # (B, N, L)  TODO: --> (B, N, 1, L)
         return y
 
