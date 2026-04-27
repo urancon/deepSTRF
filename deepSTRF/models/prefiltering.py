@@ -84,7 +84,6 @@ class Willmore_Adaptation(nn.Module):
 
         """
         super(Willmore_Adaptation, self).__init__()
-        self.device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
         # make sure passed a and w are one-dimensional
         assert len(init_a_vals.shape) == 1
 
@@ -92,33 +91,27 @@ class Willmore_Adaptation(nn.Module):
         self.F = len(init_a_vals)
         self.K = kernel_size
 
-        # learnable parameters (one per freq.)
-        self.a = init_a_vals
+        # frozen, paper-faithful (Willmore et al. 2016) — registered as
+        # buffer so it follows .to(device) but isn't trained.
+        self.register_buffer('a', init_a_vals)
 
     def build_kernels(self):
         """
-        Creates two parametrized kernels:
-         - one for the ON response, highlighting onsets in the signal
-         - one for the OFF response (offsets), which is the flipped version of the ON kernel
-
+        Creates a parametrized kernel: a high-pass exponential filter that
+        highlights onsets in the signal.
         """
-        # normalization constant
-        a_device = self.a.to(self.device)
-        ones_device = torch.ones(self.K - 1).to(self.device)
-        range_device = torch.arange(0, self.K - 1).to(self.device)
+        device = self.a.device
 
-        C = 1 / (torch.outer(a_device, ones_device) ** range_device).sum(dim=1)
-        C = C.to(self.device)
+        # normalization constant
+        ones = torch.ones(self.K - 1, device=device)
+        rng = torch.arange(0, self.K - 1, device=device)
+
+        C = 1 / (torch.outer(self.a, ones) ** rng).sum(dim=1)
 
         # kernel begins with an exponential whose elements sum to -w, then finishes with +1
-        kernel = torch.ones(self.F, 1, self.K).to(self.device)
-
-        C_device = C.to(self.device)
-        #w_device = torch.ones_like(self.a).to(self.device)
-
-        #kernel[:, 0, 1:] = (-C_device * w_device).unsqueeze(-1) * (torch.outer(a_device, ones_device) ** range_device)
-        kernel[:, 0, 1:] = -C_device.unsqueeze(-1) * (torch.outer(a_device, ones_device) ** range_device)
-        kernel = torch.flip(kernel, dims=(2,)).to(self.device)
+        kernel = torch.ones(self.F, 1, self.K, device=device)
+        kernel[:, 0, 1:] = -C.unsqueeze(-1) * (torch.outer(self.a, ones) ** rng)
+        kernel = torch.flip(kernel, dims=(2,))
 
         return kernel
 
@@ -127,20 +120,17 @@ class Willmore_Adaptation(nn.Module):
         Convolves each frequency band of input 1-channel spectrogram with filters and standardize the output.
 
         :param spectro_in: shape is (B, C, F, T) with B=Batch, C=Channels=1 (raw spectrogram), F=#Frequency_bands, T=#Timesteps
-        :return: a tensor of shape (B, 2, F, T). First channel is for the ON response, second channel for the OFF one.
+        :return: a tensor of shape (B, 1, F, T) of the high-pass-filtered, full-wave-rectified spectrogram.
         """
-        #device = spectro_in.device
-
         # reshape input spectrogram from single-channel 2D representation to multi-channel 1D
         spectro_in = spectro_in.squeeze(1)                                      # (B, 1, F, T)  --> (B, F, T)
 
         # build high-pass exponential kernel
         kernel = self.build_kernels()
-        kernel = kernel.to(self.device)
 
         # convolve input spectrogram with the kernels
-        spectro_in = F.pad(spectro_in, pad=(self.K-1, 0), mode='replicate').to(self.device)            # (B, F, T)     --> (B, F, T+1)
-        out = F.conv1d(spectro_in, kernel, stride=1, groups=self.F)                # (B, F, T+1)   --> (B, F, T)
+        spectro_in = F.pad(spectro_in, pad=(self.K-1, 0), mode='replicate')     # (B, F, T)     --> (B, F, T+K-1)
+        out = F.conv1d(spectro_in, kernel, stride=1, groups=self.F)             # (B, F, T+K-1) --> (B, F, T)
 
         # full-wave rectification
         out = torch.relu(out)
@@ -197,7 +187,6 @@ class AdapTrans(nn.Module):
 
         """
         super(AdapTrans, self).__init__()
-        self.device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
         # make sure passed a and w are one-dimensional
         assert init_a_vals.shape == init_w_vals.shape
         assert len(init_a_vals.shape) == 1
@@ -210,12 +199,16 @@ class AdapTrans(nn.Module):
         init_d_vals = torch.sqrt(1/torch.Tensor(init_a_vals) - 1)
         init_p_vals = torch.sqrt(1/torch.Tensor(init_w_vals) - 1)
 
-        # learnable parameters (one per freq.)
-        self.d_on = init_d_vals if not learnable else Parameter(init_d_vals)
-        self.d_off = init_d_vals if not learnable else Parameter(init_d_vals)
-        #self.p_on = init_p_vals if not learnable else Parameter(init_p_vals)
-        #self.p_off = init_p_vals if not learnable else Parameter(init_p_vals)
-        self.p = init_p_vals if not learnable else Parameter(init_p_vals)
+        # parameters (one per freq.) — Parameter when learnable, buffer otherwise.
+        # Both follow the module's .to(device); raw tensor attributes do not.
+        if learnable:
+            self.d_on = Parameter(init_d_vals.clone())
+            self.d_off = Parameter(init_d_vals.clone())
+            self.p = Parameter(init_p_vals.clone())
+        else:
+            self.register_buffer('d_on', init_d_vals.clone())
+            self.register_buffer('d_off', init_d_vals.clone())
+            self.register_buffer('p', init_p_vals.clone())
 
     def build_kernels(self):
         """
@@ -232,49 +225,35 @@ class AdapTrans(nn.Module):
         """
         Creates the ON kernel
         """
-        # normalization constant
-        a_device = 1 / (1 + d.to(self.device).pow(2))
-        ones_device = torch.ones(self.K - 1).to(self.device)
-        range_device = torch.arange(0, self.K - 1).to(self.device)
+        device = d.device
 
-        C = 1 / (torch.outer(a_device, ones_device) ** range_device).sum(dim=1)
-        C = C.to(self.device)
+        # normalization constant
+        a = 1 / (1 + d.pow(2))
+        ones = torch.ones(self.K - 1, device=device)
+        rng = torch.arange(0, self.K - 1, device=device)
+
+        C = 1 / (torch.outer(a, ones) ** rng).sum(dim=1)
 
         # ON kernel begins with an exponential whose elements sum to -w, then finishes with +1
-        kernel_ON = torch.ones(self.F, 1, self.K).to(self.device)
+        kernel_ON = torch.ones(self.F, 1, self.K, device=device)
+        w = 1 / (1 + p.pow(2))
 
-        C_device = C.to(self.device)
-        w_device = 1 / (1 + p.to(self.device).pow(2))
-
-        kernel_ON[:, 0, 1:] = (-C_device * w_device).unsqueeze(-1) * (torch.outer(a_device, ones_device) ** range_device)
-        kernel_ON = torch.flip(kernel_ON, dims=(2,)).to(self.device)
+        kernel_ON[:, 0, 1:] = (-C * w).unsqueeze(-1) * (torch.outer(a, ones) ** rng)
+        kernel_ON = torch.flip(kernel_ON, dims=(2,))
 
         return kernel_ON
 
     def OFF_kernel(self, d, p):
         """
-        Creates the ON kernel
+        Creates the OFF kernel — the ON kernel flipped about zero, then
+        renormalized so its tail equals -w.
         """
-        # normalization constant
-        a_device = 1 / (1 + d.to(self.device).pow(2))
-        ones_device = torch.ones(self.K - 1).to(self.device)
-        range_device = torch.arange(0, self.K - 1).to(self.device)
+        kernel_ON = self.ON_kernel(d, p)
+        w = 1 / (1 + p.pow(2))
 
-        C = 1 / (torch.outer(a_device, ones_device) ** range_device).sum(dim=1)
-        C = C.to(self.device)
-
-        # ON kernel begins with an exponential whose elements sum to -w, then finishes with +1
-        kernel_ON = torch.ones(self.F, 1, self.K).to(self.device)
-
-        C_device = C.to(self.device)
-        w_device = 1 / (1 + p.to(self.device).pow(2))
-
-        kernel_ON[:, 0, 1:] = (-C_device * w_device).unsqueeze(-1) * (torch.outer(a_device, ones_device) ** range_device)
-        kernel_ON = torch.flip(kernel_ON, dims=(2,)).to(self.device)
-
-        # OFF kernel begins with an exponential whose elements sum to +1, then finishes with +w
-        kernel_OFF = - kernel_ON / w_device.unsqueeze(1).unsqueeze(1).to(self.device)
-        kernel_OFF[:, 0, -1] = - w_device
+        # OFF kernel begins with an exponential whose elements sum to +1, then finishes with -w
+        kernel_OFF = - kernel_ON / w.unsqueeze(1).unsqueeze(1)
+        kernel_OFF[:, 0, -1] = - w
 
         return kernel_OFF
 
@@ -285,19 +264,16 @@ class AdapTrans(nn.Module):
         :param spectro_in: shape is (B, C, F, T) with B=Batch, C=Channels=1 (raw spectrogram), F=#Frequency_bands, T=#Timesteps
         :return: a tensor of shape (B, 2, F, T). First channel is for the ON response, second channel for the OFF one.
         """
-        #device = spectro_in.device
-
         # reshape input spectrogram from single-channel 2D representation to multi-channel 1D
         spectro_in = spectro_in.squeeze(1)                                      # (B, 1, F, T)  --> (B, F, T)
 
-        # build ON and OFF high-pass exponential kernels
+        # build ON and OFF high-pass exponential kernels (live on parameter device, follows .to(device))
         kernel_ON, kernel_OFF = self.build_kernels()
-        kernel_ON, kernel_OFF = kernel_ON.to(self.device), kernel_OFF.to(self.device)
 
         # convolve input spectrogram with the kernels
-        spectro_in = nn.functional.pad(spectro_in, pad=(self.K-1, 0), mode='replicate').to(self.device)            # (B, F, T)     --> (B, F, T+1)
-        out_ON = nn.functional.conv1d(spectro_in, kernel_ON, stride=1, groups=self.F)                # (B, F, T+1)   --> (B, F, T)
-        out_OFF = nn.functional.conv1d(spectro_in, kernel_OFF, stride=1, groups=self.F)              # (B, F, T+1)   --> (B, F, T)
+        spectro_in = nn.functional.pad(spectro_in, pad=(self.K-1, 0), mode='replicate')                              # (B, F, T)     --> (B, F, T+K-1)
+        out_ON = nn.functional.conv1d(spectro_in, kernel_ON, stride=1, groups=self.F)                                # (B, F, T+K-1) --> (B, F, T)
+        out_OFF = nn.functional.conv1d(spectro_in, kernel_OFF, stride=1, groups=self.F)                              # (B, F, T+K-1) --> (B, F, T)
 
         # reshape output from a 1D back to 2D representation
         spectro_out = torch.stack([out_ON, out_OFF], dim=1)                              # (B, 2, F, T)
