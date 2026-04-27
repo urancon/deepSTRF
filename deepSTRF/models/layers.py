@@ -7,6 +7,43 @@ from DCLS.construct.modules import Dcls1d, ConstructKernel2d
 
 
 #    #########################
+#       NORMALIZATION
+#    #########################
+
+class CausalLayerNorm(nn.Module):
+    """
+    LayerNorm applied to a non-trailing axis of its input — equivalently,
+    LayerNorm computed independently at every position of every other axis.
+
+    Strictly causal: never pools statistics across time. Drop-in replacement
+    for ``nn.BatchNorm{1,2,3}d`` in models that need to stay causal.
+
+    Parameters
+    ----------
+    normalized_shape : int
+        Size of the axis being normalized.
+    dim : int, default 1
+        Index of the axis to normalize. ``dim=1`` (default) targets the
+        channel axis of an ``(B, C, ...)`` tensor; use ``dim=-2`` to
+        normalize the frequency axis of an ``(B, C, F, T)`` audio
+        spectrogram (the axis just before time).
+    eps : float, default 1e-5
+        Numerical stability term forwarded to ``nn.LayerNorm``.
+    elementwise_affine : bool, default True
+        Whether to learn per-element scale and shift.
+    """
+    def __init__(self, normalized_shape, dim: int = 1, eps: float = 1e-5,
+                 elementwise_affine: bool = True):
+        super().__init__()
+        self.dim = dim
+        self.ln = nn.LayerNorm(normalized_shape, eps=eps,
+                               elementwise_affine=elementwise_affine)
+
+    def forward(self, x):
+        return self.ln(x.movedim(self.dim, -1)).movedim(-1, self.dim)
+
+
+#    #########################
 #       ACTIVATION FUNCTIONS
 #    #########################
 
