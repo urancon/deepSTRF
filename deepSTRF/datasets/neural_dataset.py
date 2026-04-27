@@ -6,7 +6,6 @@ from torch.utils.data.dataset import Dataset
 
 # TODO:
 #  - __getitem()__ --> do not return nrn_mask ?
-#  - method to select neural population by presented stims (either stim indices or stim metadata)
 #  - select stims by dimension (eg, R > 5, T > 1000 ms, etc.)
 
 
@@ -71,6 +70,11 @@ class NeuralDataset(Dataset, ABC):
 
         # selected-neuron indices (defaults to empty; filled by select_* or on first __getitem__)
         self.I = []
+        # selected-stim indices: None == no restriction, [] == explicit empty.
+        # The asymmetry with self.I is intentional: explicit zero-stim selection
+        # (e.g. ``select_stims_by_attr`` on an attribute no stim has) must
+        # yield zero items rather than silently disabling the filter.
+        self.S_sel = None
 
     def get_N(self):
         """Return the total number of selectable neurons."""
@@ -105,13 +109,41 @@ class NeuralDataset(Dataset, ABC):
         ]
         return torch.stack(rows)
 
+    def _selected_stims(self) -> list:
+        """Effective stim selection. Falls back to all stims when ``self.S_sel`` is None."""
+        if self.S_sel is None:
+            return list(range(len(self.stim_meta)))
+        return list(self.S_sel)
+
     def _selected(self) -> list:
-        """Effective neuron selection. Falls back to all neurons when ``self.I`` is empty."""
-        return list(self.I) if self.I else list(range(self.N_neurons))
+        """Effective neuron selection.
+
+        Bidirectional rule: when ``self.S_sel`` is set, neurons with no valid
+        response across *any* of the currently-selected stimuli are also
+        hidden. So a user who selects ``subset='val'`` on NAT4 will not see
+        cells that lack val data at all — those cells' only data lies
+        outside the selected stim subset and would yield NaN-only batches.
+
+        Falls back to all neurons when ``self.I`` is empty (modulo the stim
+        cross-filter above).
+        """
+        base = list(self.I) if self.I else list(range(self.N_neurons))
+        if self.S_sel is None:
+            return base
+        s_idxs = self._selected_stims()
+        if not s_idxs:
+            # explicit empty stim selection -> empty neuron selection too
+            return []
+        masks = self.nrn_masks
+        if masks.shape[0] == 0:
+            return []
+        # neuron is kept iff it has >=1 valid response within the selected stims
+        return [n for n in base if masks[s_idxs, n].any().item()]
 
     @property
     def _iter_idx(self) -> list:
-        """Stim indices visible to iteration: those with >=1 valid response among selected neurons.
+        """Stim indices visible to iteration: those with >=1 valid response among selected neurons,
+        intersected with ``self.S_sel`` if that's set.
 
         This is the canonical filter that ``__len__`` and ``__getitem__`` agree on.
         For a concatenated dataset, selecting only one source's neurons makes
@@ -121,8 +153,15 @@ class NeuralDataset(Dataset, ABC):
         masks = self.nrn_masks  # (S, N) bool
         if masks.shape[0] == 0:
             return []
-        sel_mask = masks[:, self._selected()].any(dim=1)  # (S,) bool
-        return sel_mask.nonzero(as_tuple=True)[0].tolist()
+        sel = self._selected()
+        if not sel:
+            return []
+        sel_mask = masks[:, sel].any(dim=1)  # (S,) bool
+        candidate = sel_mask.nonzero(as_tuple=True)[0].tolist()
+        if self.S_sel is None:
+            return candidate
+        allowed = set(self.S_sel)
+        return [s for s in candidate if s in allowed]
 
     def __len__(self):
         """Number of stimuli with at least one valid response among the currently selected neurons."""
@@ -216,15 +255,62 @@ class NeuralDataset(Dataset, ABC):
         return selected_nrn_indices
 
     def select_pop_by_stim_attr(self, attribute_name: str, value):
-        """Select neurons with ≥1 non-null response to stimuli matching a given attribute.
+        """Select neurons with >=1 non-null response to stimuli matching a given attribute.
 
-        TODO:
-         - implement first version
-         - allow multiple conditions (AND / OR), eg with attribute_name and value as lists
+        Looks up stimuli whose ``stim_meta[attribute_name] == value`` and
+        keeps only neurons whose ``nrn_masks`` is True for at least one of
+        them. Stims missing the key are silently skipped (same convention
+        as :meth:`select_pop_by_nrn_attr`).
         """
-        raise NotImplementedError
+        _MISSING = object()
+        s_idxs = [s for s, sm in enumerate(self.stim_meta)
+                  if sm.get(attribute_name, _MISSING) == value]
+        if not s_idxs:
+            self.I = []
+            return []
+        masks = self.nrn_masks
+        selected = [n for n in range(self.N_neurons) if masks[s_idxs, n].any().item()]
+        self.I = selected
+        return selected
 
-    # TODO: method to select stims --> getitem() will only give out these stims
+    # stim selection API
+    def select_stim(self, stim_index: int):
+        """Restrict iteration to a single stimulus index.
+
+        Pairs with the bidirectional rule in :meth:`_selected`: cells whose
+        only valid responses lie outside the selected stim are auto-hidden
+        from ``__getitem__``.
+        """
+        assert isinstance(stim_index, int) and 0 <= stim_index < len(self.stim_meta), \
+            f"stim_index must be in [0, {len(self.stim_meta)})"
+        self.S_sel = [stim_index]
+
+    def select_stims(self, stim_indices):
+        """Restrict iteration to the listed stimulus indices."""
+        for s in stim_indices:
+            assert isinstance(s, int) and 0 <= s < len(self.stim_meta), \
+                f"stim_index must be in [0, {len(self.stim_meta)})"
+        self.S_sel = list(stim_indices)
+
+    def select_stims_by_attr(self, attribute_name: str, value):
+        """Restrict iteration to stimuli matching ``stim_meta[attr] == value``.
+
+        Stims whose metadata dict does not contain ``attribute_name`` are
+        silently skipped — same convention as :meth:`select_pop_by_nrn_attr`,
+        so a single call works on a concatenated dataset whose sources have
+        heterogeneous stim metadata schemas.
+
+        Returns the selected stim indices.
+        """
+        _MISSING = object()
+        selected = [s for s, sm in enumerate(self.stim_meta)
+                    if sm.get(attribute_name, _MISSING) == value]
+        self.S_sel = selected
+        return selected
+
+    def reset_stim_selection(self):
+        """Clear ``self.S_sel`` so all stimuli are eligible again."""
+        self.S_sel = None
 
     def smooth_responses(self, window_ms: float = 21.0) -> None:
         """Temporally smooth each non-NaN response in place with a Hanning window.
