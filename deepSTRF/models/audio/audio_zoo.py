@@ -281,56 +281,103 @@ class NetworkReceptiveField(AudioEncodingModel):
 
 class DNet(AudioEncodingModel):
     """
-    The Dynamic Network (DNet) model, basically a NRF model in which hidden and output units are stateful and leaky.
+    Dynamic Network (DNet) — an NRF whose hidden and output units are
+    stateful with learnable temporal decay.
 
-        cf. Rahman et al. (2019), "A dynamic network model of temporal receptive fields in primary auditory cortex",
-            Plos Comp. Biol., https://doi.org/10.1371/journal.pcbi.1006618
+    Architecture: STRF projection → sigmoid hidden activation → learnable
+    exponential decay (one time constant per hidden unit) → 1×1 readout
+    → sigmoid → output exponential decay (one time constant per output
+    neuron). The exponential decays are causal: each unit's output at
+    time ``t`` is a convolution of its instantaneous input with a learned
+    one-sided exponential kernel.
 
+    Parameters
+    ----------
+    n_frequency_bands : int, default 34
+        Number of input frequency bands ``F``.
+    temporal_window_size : int, default 9
+        STRF temporal extent ``T``.
+    n_hidden : int, default 20
+        Hidden layer width ``H``.
+    init_tau : float, default 2.0
+        Initial time constant (in frames) for both hidden and output
+        exponential decays.
+    decay_input : bool, default True
+        If True, the exponential decay also weights its instantaneous
+        input by ``1/(1+d²)`` (paper convention); if False, the
+        instantaneous input passes through unscaled.
+    out_neurons : int, default 1
+        Number of output neurons ``N``.
+    output_activation : nn.Module, default nn.Identity()
+        Pointwise nonlinearity applied after the final exponential decay.
+    prefiltering : dict or None
+        Optional spectrogram prefilter spec.
+    parameterization : dict or None
+        Optional STRF kernel parameterization (``'DCLS'`` only).
+
+    References
+    ----------
+    Rahman, Willmore, King & Harper (2019).
+    "A dynamic network model of temporal receptive fields in primary
+    auditory cortex." PLOS Comp. Biol. 15(5): e1006618.
+    https://doi.org/10.1371/journal.pcbi.1006618
+
+    Notes
+    -----
+    Differences from the original paper:
+
+    - Causal LayerNorm replaces the missing internal normalization
+      (paper assumes preprocessing-time input normalization).
+    - The paper applies the exponential decay only at the hidden layer
+      and uses a linear readout. We additionally apply a sigmoid +
+      exponential decay at the output, an architectural extension that
+      preserves causality but increases capacity.
+    - Causal left-padding extends the model to arbitrary input lengths;
+      the paper uses fixed-window slicing.
+    - The STRF kernel can be parameterized (DCLS); the paper uses a
+      vanilla full kernel.
     """
     def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, n_hidden: int = 20, init_tau=2., decay_input=True, out_neurons: int = 1, output_activation: nn.Module = nn.Identity(), prefiltering=None, parameterization=None):
         super(DNet, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
 
+        # causal input normalization: per-timestep LayerNorm across frequency
+        self.input_norm = layers.CausalLayerNorm(self.F, dim=-2)
 
         self.H = n_hidden
+        decay_kernel = round(init_tau * 7)
 
         # padding left only (causal inference)
         self.pad = nn.ZeroPad2d((self.T - 1, 0, 0, 0))
 
         if parameterization is None:
             self.parameterization = False
-            self.convs = nn.Sequential(
-                nn.Conv2d(self.C_in, self.H, kernel_size=(self.F, self.T), stride=1),
-                nn.BatchNorm2d(self.H),
-                nn.Sigmoid(),
-                layers.LearnableExponentialDecay(self.H, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input),
-                nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
-                nn.Sigmoid(),
-                layers.LearnableExponentialDecay(self.O, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input)
-            )
-
+            strf_layer = nn.Conv2d(self.C_in, self.H, kernel_size=(self.F, self.T), stride=1)
         else:
-            assert isinstance(parameterization, dict) and 'type' in parameterization.keys(), "Unvalid format for 'parametrization'argument. Expected dict with 'type' key."
+            assert isinstance(parameterization, dict) and 'type' in parameterization.keys(), "Invalid format for 'parameterization' argument. Expected dict with 'type' key."
             self.parameterization = True
             parameterization_type = parameterization['type']
             if parameterization_type == 'DCLS':
                 self.num_gaussians = parameterization['num_gauss']
-                self.convs = self.convs = nn.Sequential(
-                    layers.ParametricSTRF(self.F, self.T, self.C_in, self.H, self.num_gaussians),
-                    nn.BatchNorm2d(self.H),
-                    nn.Sigmoid(),
-                    layers.LearnableExponentialDecay(self.H, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input),
-                    nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
-                    nn.Sigmoid(),
-                    layers.LearnableExponentialDecay(self.O, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input)
-                )
+                strf_layer = layers.ParametricSTRF(self.F, self.T, self.C_in, self.H, self.num_gaussians)
             else:
                 raise NotImplementedError(f"Unknown parameterization {parameterization_type}. Currently supported STRF parameterizations are 'DCLS'.")
+
+        self.convs = nn.Sequential(
+            strf_layer,
+            layers.CausalLayerNorm(self.H, dim=1),
+            nn.Sigmoid(),
+            layers.LearnableExponentialDecay(self.H, kernel_size=decay_kernel, init_tau=init_tau, decay_input=decay_input),
+            nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
+            nn.Sigmoid(),
+            layers.LearnableExponentialDecay(self.O, kernel_size=decay_kernel, init_tau=init_tau, decay_input=decay_input),
+        )
 
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
         y = self.prefiltering_block(x) if self.prefiltering else x      # (B, 1|2, F, T)
+        y = self.input_norm(y)                                          # causal per-timestep freq norm
         y = self.convs(self.pad(y))                                     # (B, N, 1, T)
-        y = self.output_activation(y)                                   # TODO: output activation
+        y = self.output_activation(y)                                   # (B, N, 1, T)
         return y
 
     def STRFs(self, hidden_idx=0, polarity='ON'):
