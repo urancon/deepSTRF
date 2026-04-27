@@ -161,16 +161,62 @@ class LinearNonlinear(Linear):
 
 class NetworkReceptiveField(AudioEncodingModel):
     """
-    The Network Receptive Field (NRF) model, a LN model with a hidden layer comprising multiple units.
+    Network Receptive Field (NRF) model — a two-layer feedforward STRF
+    network.
 
-        cf. Harper et al. (2016), "Network Receptive Field Modeling Reveals Extensive Integration and Multi-feature
-            Selectivity in Auditory Cortical Neurons", Plos Comp. Biol., https://doi.org/10.1371/journal.pcbi.1005113
+    Architecture: a STRF kernel projects the input spectrogram into a
+    hidden layer of ``H`` units; a 1×1 conv reads out the ``N`` output
+    neurons from the hidden activations. With L1 regularization the
+    paper finds typically 1–7 effective hidden units per neuron.
 
-    Contrarily to the original paper, we can also parameterize the filters even in this model !
+    Parameters
+    ----------
+    n_frequency_bands : int, default 34
+        Number of input frequency bands ``F``.
+    temporal_window_size : int, default 9
+        STRF temporal extent ``T``.
+    n_hidden : int, default 20
+        Hidden layer width ``H``.
+    out_neurons : int, default 1
+        Number of output neurons ``N``.
+    output_activation : nn.Module, default nn.Sigmoid()
+        Pointwise nonlinearity at the output.
+    prefiltering : dict or None
+        Optional spectrogram prefilter spec. See ``AudioEncodingModel``.
+    parameterization : dict or None
+        Optional STRF kernel parameterization. ``{'type': 'DCLS',
+        'num_gauss': k}`` for a sum-of-Gaussians kernel; ``None`` for
+        a vanilla full kernel.
 
+    References
+    ----------
+    Harper, Schoppe, Willmore, Cui, Schnupp & King (2016).
+    "Network Receptive Field Modeling Reveals Extensive Integration and
+    Multi-feature Selectivity in Auditory Cortical Neurons."
+    PLOS Comp. Biol. 12(11): e1005113.
+    https://doi.org/10.1371/journal.pcbi.1005113
+
+    Notes
+    -----
+    Differences from the original paper:
+
+    - We add a causal LayerNorm over input frequencies and over the
+      hidden channel axis. The original assumes preprocessing-time
+      input normalization and uses no internal norm.
+    - The hidden activation is ``nn.Tanh`` (paper-faithful: scaled
+      tanh with ρ₁ ≈ 1.7159, ρ₂ = 2/3 — we use the unscaled standard
+      tanh, equivalent up to a learned rescaling absorbed into the
+      readout).
+    - Causal left-padding extends the model to arbitrary input lengths;
+      the paper uses fixed-window slicing.
+    - The STRF kernel can be parameterized (DCLS); the paper uses a
+      vanilla full kernel.
     """
     def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, n_hidden: int = 20, out_neurons: int = 1, output_activation: nn.Module = nn.Sigmoid(), prefiltering=None, parameterization=None):
         super(NetworkReceptiveField, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
+
+        # causal input normalization: per-timestep LayerNorm across frequency
+        self.input_norm = layers.CausalLayerNorm(self.F, dim=-2)
 
         self.pad = nn.ZeroPad2d((self.T - 1, 0, 0, 0))
 
@@ -180,10 +226,9 @@ class NetworkReceptiveField(AudioEncodingModel):
             self.parameterization = False
             self.convs = nn.Sequential(
                 nn.Conv2d(self.C_in, self.H, kernel_size=(self.F, self.T), stride=1),
-                nn.BatchNorm2d(self.H),
-                nn.Sigmoid(),
+                layers.CausalLayerNorm(self.H, dim=1),
+                nn.Tanh(),
                 nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
-                nn.Sigmoid(),
             )
 
         else:
@@ -192,10 +237,10 @@ class NetworkReceptiveField(AudioEncodingModel):
             parameterization_type = parameterization['type']
             if parameterization_type == 'DCLS':
                 self.num_gaussians = parameterization['num_gauss']
-                self.convs = self.convs = nn.Sequential(
+                self.convs = nn.Sequential(
                     layers.ParametricSTRF(self.F, self.T, self.C_in, self.H, self.num_gaussians),
-                    nn.BatchNorm2d(self.H),
-                    nn.Sigmoid(),
+                    layers.CausalLayerNorm(self.H, dim=1),
+                    nn.Tanh(),
                     nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
                 )
             else:
@@ -204,8 +249,9 @@ class NetworkReceptiveField(AudioEncodingModel):
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
         y = self.prefiltering_block(x) if self.prefiltering else x      # (B, 1|2, F, T)
+        y = self.input_norm(y)                                          # causal per-timestep freq norm
         y = self.convs(self.pad(y))                                     # (B, N, 1, T)
-        y = self.output_activation(y)                                   # TODO
+        y = self.output_activation(y)                                   # (B, N, 1, T)
         return y
 
     def STRFs(self, hidden_idx=0, polarity='ON'):
