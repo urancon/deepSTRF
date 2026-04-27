@@ -264,12 +264,11 @@ class DNet(AudioEncodingModel):
     Dynamic Network (DNet) — an NRF whose hidden and output units are
     stateful with learnable temporal decay.
 
-    Architecture: STRF projection → sigmoid hidden activation → learnable
+    Architecture: STRF projection → channel-norm → sigmoid → learnable
     exponential decay (one time constant per hidden unit) → 1×1 readout
-    → sigmoid → output exponential decay (one time constant per output
-    neuron). The exponential decays are causal: each unit's output at
-    time ``t`` is a convolution of its instantaneous input with a learned
-    one-sided exponential kernel.
+    → output activation. The exponential decay is causal: each unit's
+    output at time ``t`` is a convolution of its instantaneous input
+    with a learned one-sided exponential kernel.
 
     Parameters
     ----------
@@ -280,20 +279,21 @@ class DNet(AudioEncodingModel):
     n_hidden : int, default 20
         Hidden layer width ``H``.
     init_tau : float, default 2.0
-        Initial time constant (in frames) for both hidden and output
-        exponential decays.
+        Initial time constant (in frames) for the hidden-unit
+        exponential decay.
     decay_input : bool, default True
         If True, the exponential decay also weights its instantaneous
         input by ``1/(1+d²)`` (paper convention); if False, the
         instantaneous input passes through unscaled.
     out_neurons : int, default 1
         Number of output neurons ``N``.
-    output_activation : nn.Module, default nn.Identity()
-        Pointwise nonlinearity applied after the final exponential decay.
-    prefiltering : dict or None
-        Optional spectrogram prefilter spec.
-    parameterization : dict or None
-        Optional STRF kernel parameterization (``'DCLS'`` only).
+    output_activation : nn.Module, optional
+        Pointwise nonlinearity at the readout output. Default
+        ``nn.Identity`` (paper-faithful linear readout).
+    prefiltering : nn.Module, optional
+        Optional spectrogram prefilter.
+    kernel : nn.Module, optional
+        Pluggable hidden-layer STRF kernel.
 
     References
     ----------
@@ -308,82 +308,67 @@ class DNet(AudioEncodingModel):
 
     - Causal LayerNorm replaces the missing internal normalization
       (paper assumes preprocessing-time input normalization).
-    - The paper applies the exponential decay only at the hidden layer
-      and uses a linear readout. We additionally apply a sigmoid +
-      exponential decay at the output, an architectural extension that
-      preserves causality but increases capacity.
     - Causal left-padding extends the model to arbitrary input lengths;
       the paper uses fixed-window slicing.
-    - The STRF kernel can be parameterized (DCLS); the paper uses a
-      vanilla full kernel.
+    - The hidden STRF kernel can be parameterized (DCLS); the paper
+      uses a vanilla full kernel.
     """
-    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, n_hidden: int = 20, init_tau=2., decay_input=True, out_neurons: int = 1, output_activation: nn.Module = None, prefiltering: nn.Module = None, parameterization=None):
-        super(DNet, self).__init__(n_frequency_bands, temporal_window_size, out_neurons=out_neurons, prefiltering=prefiltering)
-        self.output_activation = output_activation if output_activation is not None else nn.Identity()
-
-        # causal input normalization: per-timestep LayerNorm across frequency
-        self.input_norm = layers.CausalLayerNorm(self.F, dim=-2)
-
+    def __init__(self, n_frequency_bands: int = 34, temporal_window_size: int = 9,
+                 n_hidden: int = 20, init_tau: float = 2.0, decay_input: bool = True,
+                 out_neurons: int = 1,
+                 output_activation: nn.Module = None,
+                 prefiltering: nn.Module = None,
+                 kernel: nn.Module = None):
+        super().__init__(
+            n_frequency_bands=n_frequency_bands,
+            temporal_window_size=temporal_window_size,
+            out_neurons=out_neurons,
+            prefiltering=prefiltering,
+        )
         self.H = n_hidden
         decay_kernel = round(init_tau * 7)
 
-        # padding left only (causal inference)
-        self.pad = nn.ZeroPad2d((self.T - 1, 0, 0, 0))
-
-        if parameterization is None:
-            self.parameterization = False
-            strf_layer = nn.Conv2d(self.C_in, self.H, kernel_size=(self.F, self.T), stride=1)
-        else:
-            assert isinstance(parameterization, dict) and 'type' in parameterization.keys(), "Invalid format for 'parameterization' argument. Expected dict with 'type' key."
-            self.parameterization = True
-            parameterization_type = parameterization['type']
-            if parameterization_type == 'DCLS':
-                self.num_gaussians = parameterization['num_gauss']
-                strf_layer = layers.ParametricSTRF(self.F, self.T, self.C_in, self.H, self.num_gaussians)
-            else:
-                raise NotImplementedError(f"Unknown parameterization {parameterization_type}. Currently supported STRF parameterizations are 'DCLS'.")
-
-        self.convs = nn.Sequential(
-            strf_layer,
+        # core: input freq norm → hidden STRF projection → channel norm
+        #       → sigmoid → per-hidden-unit causal exponential decay
+        self.core = nn.Sequential(
+            layers.CausalLayerNorm(self.F, dim=-2),
+            layers.CausalSTRFConv(self.F, self.T, self.C_in, self.H, kernel=kernel),
             layers.CausalLayerNorm(self.H, dim=1),
             nn.Sigmoid(),
-            layers.LearnableExponentialDecay(self.H, kernel_size=decay_kernel, init_tau=init_tau, decay_input=decay_input),
-            nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
-            nn.Sigmoid(),
-            layers.LearnableExponentialDecay(self.O, kernel_size=decay_kernel, init_tau=init_tau, decay_input=decay_input),
+            layers.LearnableExponentialDecay(self.H, kernel_size=decay_kernel,
+                                             init_tau=init_tau, decay_input=decay_input),
         )
 
-    def forward(self, x):
-        # x.shape must be (B, 1, F, T)
-        y = self.prefiltering(x)                                        # (B, 1|2, F, T)
-        y = self.input_norm(y)                                          # causal per-timestep freq norm
-        y = self.convs(self.pad(y))                                     # (B, N, 1, T)
-        y = self.output_activation(y)                                   # (B, N, 1, T)
-        return y
+        # readout: per-neuron 1×1 projection from H decayed hidden units;
+        # the hidden-side decay already provides temporal smoothing.
+        self.readout = LinearReadout(
+            in_features=self.H, out_neurons=self.O,
+            activation=output_activation if output_activation is not None else nn.Identity(),
+        )
+        # forward inherited from NeuralModel — wav2spec → prefiltering → core → readout
 
-    def STRFs(self, hidden_idx=0, polarity='ON'):
+    def STRFs(self, hidden_idx: int = 0, polarity: str = 'ON'):
+        """
+        Return the hidden-layer STRF kernel for one hidden unit as ``(F, T)``.
 
-        # check argument validity
-        if polarity in ['ON', 'On', 'on', 0]:
-            polarity_idx = 0
-        elif polarity in ['OFF', 'Off', 'off', 1]:
-            polarity_idx = 1
-        else:
-            raise ValueError("argument 'polarity' must be either 'ON', 'On', 'on', 'OFF', 'Off' or 'off'")
-
-        # construct STRF depending on parametrization
-        if not self.parameterization:
-            strf = self.convs[0].weight.data.cpu()
-        else:
-            strf = self.convs[0].build_kernel()
-
-        # choose polarity between None/ON/OFF
+        Parameters
+        ----------
+        hidden_idx : int, default 0
+            Which of the ``H`` hidden units to inspect.
+        polarity : {'ON', 'OFF'}, default 'ON'
+            Only relevant for AdapTrans-prefiltered models (``C_in == 2``).
+        """
+        # core[1] is the CausalSTRFConv whose .STRF_weight() returns (H, C_in, F, T)
+        full = self.core[1].STRF_weight()
         if isinstance(self.prefiltering, AdapTrans):
-            strf = strf[hidden_idx, polarity_idx, :, :]
-        else:
-            strf = strf[hidden_idx, 0, :, :]
-
-        return strf.detach()
+            if polarity in ('ON', 'On', 'on', 0):
+                return full[hidden_idx, 0]
+            if polarity in ('OFF', 'Off', 'off', 1):
+                return full[hidden_idx, 1]
+            raise ValueError(
+                f"polarity must be 'ON' or 'OFF' for an AdapTrans-prefiltered DNet — got {polarity!r}"
+            )
+        return full[hidden_idx, 0]
 
 
 class ConvNet2D(AudioEncodingModel):
