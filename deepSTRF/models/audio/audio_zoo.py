@@ -269,7 +269,7 @@ class ConvNet2D(AudioEncodingModel):
 
     """
     def __init__(self, n_frequency_bands=34, kernel_size: tuple = (3, 9), c_hidden: int = 10, n_hidden: int = 20, out_neurons: int = 1, output_activation: nn.Module = nn.Sigmoid(), prefiltering=None):
-        temporal_window_size = 3 * (self.K[1] - 1)
+        temporal_window_size = 3 * (kernel_size[1] - 1)
         super(ConvNet2D, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
 
         # general
@@ -277,7 +277,7 @@ class ConvNet2D(AudioEncodingModel):
         self.C = c_hidden
         self.H = n_hidden
 
-        # padding left only (causal inference)
+        # padding left only (causal inference): three convs each shrink time by K[1]-1
         self.pad = torch.nn.ZeroPad2d((3 * (self.K[1] - 1), 0, 0, 0))
 
         self.convs = nn.Sequential(
@@ -299,15 +299,13 @@ class ConvNet2D(AudioEncodingModel):
             nn.Linear(in_features=self.H, out_features=self.O),
         )
 
-        self.activation = nn.Sigmoid()  # layers.ParametricSigmoid(self.O, False)
-
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
         y = self.prefiltering_block(x) if self.prefiltering else x
-        y = self.convs(y)                       # (B, C, F_down, T)
+        y = self.convs(self.pad(y))             # (B, C, F_down, T)
         y = y.flatten(start_dim=1, end_dim=2)   # (B, C*F_down, T)
         y = y.permute(0, 2, 1)                  # (B, T, C*F_down)
-        y = self.activation(self.fc(y))         # (B, T, N)
+        y = self.output_activation(self.fc(y))  # (B, T, N)
         y = y.permute(0, 2, 1)                  # (B, N, T)  TODO: --> (B, N, 1, T)
         return y
 
