@@ -181,8 +181,8 @@ class LocallyConnected1d(nn.Module):
     A trade-off between Linear and Conv1d
 
     Note:
-        nn.Unfold is only compatible with images, so for 1d inputs, it is necessary to first unsqueeze them, perform the
-        same operation as in RRF2d, and finally squeeze them back from 2d to 1d
+        nn.Unfold is only compatible with images, so for 1d inputs, it is necessary to first unsqueeze them to 2d,
+        perform the unfold/conv operations, and finally squeeze them back from 2d to 1d
 
     """
     def __init__(self, input_size, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, bias=True):
@@ -222,7 +222,7 @@ class LocallyConnected1d(nn.Module):
         else:
             y = torch.sum(patches * self.weights, dim=2)
 
-        return y  # contrarily to RRF2d we have here torch.equal(y, self.fold(y).squeeze(-1)) == True because L=S_out
+        return y  # in 1D, fold is the identity since L = S_out — torch.equal(y, self.fold(y).squeeze(-1)) holds
 
     def __str__(self):
         s = f'LocallyConnected1d(input_size={(self.S_in,)}, in_channels={self.C_in}, out_channels={self.C_out}, ' \
