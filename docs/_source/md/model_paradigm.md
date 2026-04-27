@@ -103,9 +103,9 @@ class Linear(AudioEncodingModel):
 ```
 
 Subclasses *may* override `forward` when the architecture genuinely cannot
-fit the template (StateNet's RNN reshape and Transformer's per-frame
-unfold are current examples). These overrides are exceptions and should be
-called out in the model docstring.
+fit the template — StateNet's RNN reshape and Transformer's per-forward
+attention-mask construction are current examples. These overrides are
+exceptions and should be called out in the model docstring.
 
 ## 3. The forward signature
 
@@ -422,10 +422,12 @@ Subclasses extend `validate()` with modality-specific invariants —
   concrete decoder lands.
 - **Raw-waveform front-end.** `wav2spec` slot becomes an active
   position; LEAF (Zeghidour et al. 2021) is the first candidate.
-- **Causal-attention Transformer.** Replace the explicit `unfold` window
-  with an internal causal mask, freeing the model from a fixed `T`.
+- **Transformer RoPE option.** Sinusoidal positional encoding ships
+  today; RoPE (Su et al. 2021) is a planned alternative once it has
+  empirical support.
 - **`gradmap.md`** and `examples/strf_gradmap.ipynb`.
-- **DCLS init verification.** Ensure Gaussians populate the full STRF
-  window, not just the center.
+- **Output activations recheck.** Verify `ParametricSigmoid` and
+  `ParametricDoubleExponential` against their original papers; add
+  `Softplus` for non-negative-rate targets.
 - **SSM dependency cleanup.** Replace vendored `s4.py` / `mamba.py` /
   `lmu.py` with upstream packages where they've stabilized.

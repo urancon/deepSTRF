@@ -472,133 +472,175 @@ class ConvNet2D(AudioEncodingModel):
 
 class Transformer(AudioEncodingModel):
     """
-    Attention-based STRF model — at every output timestep, a Transformer
-    encoder attends over patches of the recent ``T``-frame spectrogram
-    context.
+    Attention-based STRF model — a Transformer encoder runs causal
+    self-attention over a per-timestep token sequence extracted from the
+    spectrogram.
 
-    Architecture: a left-padded ``(F, T)`` context window slides over the
-    spectrogram (one window per output timestep); the window is
-    patchified into ``n_patches`` learnable embeddings via a strided
-    Conv2d; a TransformerEncoder runs self-attention over the patches;
-    a global mean over patches feeds a linear readout to ``N`` neurons.
+    Architecture::
 
-    Causality is enforced architecturally by the ``unfold`` step: each
-    output frame at time ``t`` sees only the window ``[t-T+1, t]``.
-    The unfold turns each output frame into an *independent* batched
-    item; the Conv2d patchifier and TransformerEncoder operate within
-    each window and never across them. Output frame ``t`` is therefore
-    a pure function of input ``[t-T+1, t]``. (The internal dropout
-    layer is stochastic in train mode but does not introduce any
-    cross-time dependence — controlled-seed forward passes confirm
-    bitwise causality.)
+        input              (B, 1, F, L)
+          ↓ prefilter      (B, C_in, F, L)
+          ↓ time pad       (B, C_in, F, L + K_T - 1)         left-only causal
+          ↓ patchify       (B, embedding_dim, F_p, L)        Conv2d, stride=(K_F, 1)
+          ↓ flatten/permute (B, L, embedding_dim * F_p)      one token per timestep
+          ↓ + sinusoidal positional encoding
+          ↓ TransformerEncoder with causal (+optional window) mask
+          ↓ readout        (B, N, 1, L)
+
+    The patchifier is a strided ``nn.Conv2d`` with kernel ``(K_F, K_T)``
+    and stride ``(K_F, 1)``. Frequency patches are non-overlapping
+    (``F_p = F // K_F``); time stride is 1 so there is one token per
+    timestep, and ``K_T > 1`` lets each token aggregate
+    ``time_patch_size`` recent frames. A ``(K_T - 1)``-zero left pad
+    along time keeps the patchifier strictly causal.
+
+    The attention mask is constructed per forward pass at the actual
+    sequence length, so the model generalizes to any input length ``L``.
+    Setting ``context_window`` to a positive int restricts attention to
+    the most recent ``context_window`` past frames (band-causal),
+    recovering a Sahani-style fixed STRF context window when wanted —
+    the model can be evaluated with or without the bound at inference
+    without retraining.
 
     Parameters
     ----------
     n_frequency_bands : int, default 34
         Number of input frequency bands ``F``.
-    temporal_window_size : int, default 1
-        Context window length ``T`` (frames). Each output frame attends
-        within this many past frames.
-    token_size : tuple of int, default (34, 1)
-        Patch dimensions ``(K_F, K_T)`` for the Conv2d patchifier.
+    freq_patch_size : int, optional
+        Frequency-axis patch size for the patchifier. ``None`` (default)
+        uses ``F`` itself — one token spans the full frequency axis at
+        each timestep. Must divide ``F``.
+    time_patch_size : int, default 1
+        Temporal extent of each patch in frames. ``1`` gives one token =
+        one timestep slice; larger values let each token aggregate
+        across ``time_patch_size`` recent frames via the patchifier.
+    context_window : int, optional
+        If set, restrict attention to the most recent ``context_window``
+        past frames (still causal — band-causal mask). ``None`` (default)
+        gives unlimited causal context.
     embedding_dim : int, default 48
-        Per-patch embedding dimension before attention.
+        Per-patch embedding dimension after the patchifier.
     n_heads : int, default 1
-        Number of attention heads.
+        Number of attention heads. Must divide ``embedding_dim * F_p``.
     n_layers : int, default 1
         Number of TransformerEncoderLayer blocks.
     out_neurons : int, default 1
         Number of output neurons ``N``.
-    output_activation : nn.Module, default nn.Identity()
-        Pointwise nonlinearity at the output. The paper uses a 4-parameter
-        double-exponential — available as ``ParametricDoubleExponential``.
-    prefiltering : dict or None
-        Optional spectrogram prefilter spec.
+    output_activation : nn.Module, optional
+        Pointwise nonlinearity at the readout. Default ``nn.Identity``.
+    prefiltering : nn.Module, optional
+        Optional spectrogram prefilter.
 
     References
     ----------
-    Rançon, Bornschein, King, Schnupp, Willmore (2025).
-    "Temporal recurrence as a general mechanism to explain neural
-    responses in the auditory system." Comm. Bio. (preprint on BioRxiv).
+    Rançon, Bornschein, King, Schnupp, Willmore (2025). "Temporal
+    recurrence as a general mechanism to explain neural responses in
+    the auditory system." Comm. Bio. (preprint on BioRxiv).
+
+    Vaswani et al. (2017). "Attention Is All You Need." NeurIPS.
 
     Notes
     -----
-    The current implementation explicitly fixes context length to ``T``
-    via ``nn.Unfold``. A future refactor will replace this with an
-    internal causal attention mask, freeing the architecture from a
-    fixed context length and letting it generalize to arbitrary input
-    durations (see ``TODO.md``).
+    Sinusoidal positional encoding (Vaswani 2017) is used by default; it
+    generalizes to arbitrary sequence lengths at inference. RoPE
+    (Rotary Position Embedding, Su et al. 2021) is a planned alternative,
+    see ``TODO.md`` — it is omitted here because it requires a custom
+    TransformerEncoderLayer (PyTorch's stock module hides Q and K).
     """
 
-    def __init__(self, n_frequency_bands: int = 34, temporal_window_size: int = 1,
-                 token_size: tuple = (34, 1), embedding_dim: int = 48,
+    def __init__(self, n_frequency_bands: int = 34,
+                 freq_patch_size: int = None, time_patch_size: int = 1,
+                 context_window: int = None,
+                 embedding_dim: int = 48,
                  n_heads: int = 1, n_layers: int = 1,
                  out_neurons: int = 1,
                  output_activation: nn.Module = None,
                  prefiltering: nn.Module = None):
+        # `temporal_window_size` on the base is used by STRF_gradmap to size
+        # a null-stim probe; the receptive-field "window" in this model is
+        # context_window if set else a sensible default.
+        gradmap_T = context_window if context_window is not None else max(time_patch_size, 9)
         super().__init__(
             n_frequency_bands=n_frequency_bands,
-            temporal_window_size=temporal_window_size,
+            temporal_window_size=gradmap_T,
             out_neurons=out_neurons,
             prefiltering=prefiltering,
         )
-        self.K_f, self.K_t = token_size
+
+        # default freq_patch_size: cover the whole frequency axis (one token = one frame slice)
+        if freq_patch_size is None:
+            freq_patch_size = self.F
+        if self.F % freq_patch_size != 0:
+            raise ValueError(
+                f"freq_patch_size={freq_patch_size} must divide F={self.F}"
+            )
+        self.K_F = freq_patch_size
+        self.K_T = time_patch_size
+        self.context_window = context_window
         self.embedding_dim = embedding_dim
         self.n_heads = n_heads
         self.n_layers = n_layers
 
-        # core: per-frame causal context attention.
-        # The unfold step turns each output frame at time t into an independent
-        # batched item carrying the (F, T) spectrogram window [t-T+1, t]. The
-        # patchifier + transformer encoder + global mean-pool then operates
-        # within each window. Output: (B, patch_dim, L).
-        self.pad = nn.ZeroPad2d((self.T - 1, 0, 0, 0))
-        self.unfold_context = nn.Unfold(kernel_size=(self.F, self.T), stride=(1, 1), padding=(0, 0))
-        self.conv_patches = nn.Conv2d(self.C_in, self.embedding_dim,
-                                      kernel_size=(self.K_f, self.K_t),
-                                      stride=(self.K_f, self.K_t))
+        self.F_p = self.F // self.K_F
+        self.token_dim = self.embedding_dim * self.F_p
 
-        # probe a (1, C_in, F, T) window to determine patch_dim and n_patches
-        with torch.no_grad():
-            prospective = self.conv_patches(torch.zeros(1, self.C_in, self.F, self.T)).flatten(-2, -1)
-        _, patch_dim, n_patches = prospective.shape
-        self.H = patch_dim
+        if self.token_dim % 2 != 0:
+            raise ValueError(
+                f"token_dim = embedding_dim * F_p = {self.token_dim} must be even "
+                f"for sinusoidal positional encoding "
+                f"(got embedding_dim={embedding_dim}, F_p={self.F_p})"
+            )
+        if self.token_dim % self.n_heads != 0:
+            raise ValueError(
+                f"token_dim={self.token_dim} must be divisible by n_heads={self.n_heads}"
+            )
 
-        self.positional_encoding = nn.Parameter(torch.rand(1, n_patches, patch_dim))
+        # causal time-pad followed by frequency-strided / time-stride-1 patchifier
+        self.time_pad = nn.ZeroPad2d((self.K_T - 1, 0, 0, 0))
+        self.patchify = nn.Conv2d(
+            self.C_in, self.embedding_dim,
+            kernel_size=(self.K_F, self.K_T),
+            stride=(self.K_F, 1),
+        )
+
+        # sinusoidal positional encoding — added in forward, length L is dynamic
+        self.pos_encoding = layers.SinusoidalPositionalEncoding(self.token_dim)
+
         self.tsfm = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=patch_dim, nhead=self.n_heads,
-                                       dim_feedforward=32, dropout=0.1, batch_first=True),
+            nn.TransformerEncoderLayer(
+                d_model=self.token_dim, nhead=self.n_heads,
+                dim_feedforward=4 * self.token_dim, dropout=0.1,
+                batch_first=True,
+            ),
             num_layers=self.n_layers,
         )
 
-        # readout: per-frame linear projection of the pooled patch embedding to N neurons.
+        # per-timestep readout: token_dim → N
         self.readout = LinearReadout(
-            in_features=patch_dim, out_neurons=self.O,
+            in_features=self.token_dim, out_neurons=self.O,
             activation=output_activation if output_activation is not None else nn.Identity(),
         )
 
     def forward(self, x):
         """
-        Per-frame attention over a left-padded T-frame STRF window.
+        Causal-attention forward.
 
-        Overrides the base template because the architecture is built around
-        an outer per-frame loop (implemented via unfold + reshape) that
-        doesn't decompose into the canonical core / readout slots — each
-        output frame is a fully independent batched computation.
+        Overrides the base template because the attention mask must be
+        rebuilt at the actual sequence length L of each input.
         """
         # x: (B, 1, F, L)
         B, _, _, L = x.shape
-        y = self.prefiltering(x)                          # (B, C_in, F, L)
-        y = self.unfold_context(self.pad(y))              # (B, C_in*F*T, L)
-        y = y.permute(0, 2, 1).flatten(0, 1)              # (B*L, C_in*F*T)
-        y = y.reshape(-1, self.C_in, self.F, self.T)      # (B*L, C_in, F, T)
-        y = self.conv_patches(y)                          # (B*L, embed, F-, T-)
-        y = y.flatten(-2, -1).permute(0, 2, 1)            # (B*L, n_patches, patch_dim)
-        y = self.tsfm(y + self.positional_encoding)       # (B*L, n_patches, patch_dim)
-        y = y.mean(dim=1)                                 # (B*L, patch_dim)
-        y = y.unflatten(0, (B, L))                        # (B, L, patch_dim)
-        y = y.transpose(1, 2)                             # (B, patch_dim, L)
-        return self.readout(y)                            # (B, N, 1, L)
+        y = self.prefiltering(x)                # (B, C_in, F, L)
+        y = self.time_pad(y)                    # (B, C_in, F, L + K_T - 1)
+        y = self.patchify(y)                    # (B, embedding_dim, F_p, L)
+        y = y.flatten(start_dim=1, end_dim=2)   # (B, token_dim, L)
+        y = y.transpose(1, 2)                   # (B, L, token_dim)
+        y = self.pos_encoding(y)                # (B, L, token_dim) — sinusoidal
+        # causal (and optionally windowed) attention mask, built at this L
+        mask = layers.build_causal_window_mask(L, self.context_window, device=y.device)
+        y = self.tsfm(y, mask=mask)             # (B, L, token_dim)
+        y = y.transpose(1, 2)                   # (B, token_dim, L)
+        return self.readout(y)                  # (B, N, 1, L)
 
 
 class StateNet(AudioEncodingModel):

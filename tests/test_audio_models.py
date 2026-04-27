@@ -67,8 +67,8 @@ def _make_convnet2d(prefilter=None):
 
 
 def _make_transformer(prefilter=None):
-    return Transformer(n_frequency_bands=F, temporal_window_size=T_window,
-                       token_size=(F, 1), embedding_dim=32, n_heads=2, n_layers=1,
+    return Transformer(n_frequency_bands=F,
+                       embedding_dim=32, n_heads=2, n_layers=1,
                        out_neurons=N, prefiltering=prefilter)
 
 
@@ -199,8 +199,8 @@ def test_single_neuron(factory):
     elif factory is _make_convnet2d:
         m = ConvNet2D(n_frequency_bands=F, kernel_size=(3, 9), c_hidden=8, n_hidden=16, out_neurons=1)
     elif factory is _make_transformer:
-        m = Transformer(n_frequency_bands=F, temporal_window_size=T_window,
-                        token_size=(F, 1), embedding_dim=32, n_heads=2, n_layers=1, out_neurons=1)
+        m = Transformer(n_frequency_bands=F,
+                        embedding_dim=32, n_heads=2, n_layers=1, out_neurons=1)
     elif factory is _make_statenet:
         m = StateNet(n_frequency_bands=F, kernel_size=7, hidden_channels=4,
                      rnn_type='GRU', out_neurons=1)
@@ -226,3 +226,98 @@ def test_canonical_slots_populated(factory):
         attr = getattr(m, slot)
         assert isinstance(attr, nn.Module), \
             f"{type(m).__name__}.{slot} is {type(attr).__name__}, expected nn.Module"
+
+
+# ---------------------------------------------------------------------------
+# Transformer-specific: context_window and length generalization
+# ---------------------------------------------------------------------------
+
+def test_transformer_unlimited_context_is_default():
+    """Default context is unlimited (None)."""
+    _seed()
+    m = Transformer(n_frequency_bands=F, embedding_dim=32, n_heads=2, n_layers=1, out_neurons=N)
+    assert m.context_window is None
+
+
+def test_transformer_context_window_constructable():
+    """Setting a finite context_window must work and the model still bit-causal."""
+    _seed()
+    m = Transformer(n_frequency_bands=F, embedding_dim=32, n_heads=2, n_layers=1,
+                    out_neurons=N, context_window=5)
+    m.eval()
+    x = torch.randn(B, 1, F, T_in)
+    cut = T_in // 2
+    x_perturbed = x.clone()
+    x_perturbed[..., cut:] = torch.randn_like(x_perturbed[..., cut:])
+    with torch.no_grad():
+        diff = (m(x) - m(x_perturbed))[..., :cut].abs().max().item()
+    assert diff < 1e-5, \
+        f"Transformer(context_window=5): causality violation; max past diff = {diff:.2e}"
+
+
+def test_transformer_context_window_localizes_dependency():
+    """
+    Past output at time t should be unaffected by changes to input at any
+    time s with s < t - context_window. I.e. the bound itself should hold:
+    the model becomes invariant to changes in the deep past.
+    """
+    _seed()
+    L = 30
+    window = 5
+    m = Transformer(n_frequency_bands=F, embedding_dim=32, n_heads=2, n_layers=1,
+                    out_neurons=N, context_window=window)
+    m.eval()
+    # We perturb only the FIRST few timesteps. Position t > window should
+    # be invariant.
+    x = torch.randn(B, 1, F, L)
+    x_perturbed = x.clone()
+    x_perturbed[..., :2] = torch.randn_like(x_perturbed[..., :2])
+    with torch.no_grad():
+        y, y_perturbed = m(x), m(x_perturbed)
+    # Check the segment [window+2, L) — every output here should be insulated
+    # from the [:2] perturbation since the deepest reachable input is at
+    # t - window. Note: time_patch_size=1 here, so no extra past pull from the
+    # patchifier convolution. With time_patch_size=K, extend the safe segment
+    # to [window+K+1, L).
+    safe_start = window + 2
+    diff = (y - y_perturbed)[..., safe_start:].abs().max().item()
+    assert diff < 1e-5, \
+        f"context_window=5 should insulate output at t>={safe_start} from past changes; got {diff:.2e}"
+
+
+def test_transformer_time_patch_size_aggregates_history():
+    """time_patch_size > 1 should still produce (B, N, 1, L) and stay causal."""
+    _seed()
+    m = Transformer(n_frequency_bands=F, embedding_dim=32, n_heads=2, n_layers=1,
+                    out_neurons=N, time_patch_size=4)
+    m.eval()
+    x = torch.randn(B, 1, F, T_in)
+    y = m(x)
+    assert y.shape == (B, N, 1, T_in)
+    cut = T_in // 2
+    x_perturbed = x.clone()
+    x_perturbed[..., cut:] = torch.randn_like(x_perturbed[..., cut:])
+    with torch.no_grad():
+        diff = (m(x) - m(x_perturbed))[..., :cut].abs().max().item()
+    assert diff < 1e-5
+
+
+def test_transformer_freq_patch_size_subdivides_F():
+    """freq_patch_size < F should subdivide the frequency axis cleanly."""
+    _seed()
+    # F=34 is divisible by 17 → F_p = 2 frequency tokens per timestep.
+    # token_dim = embed_dim * F_p = 32 * 2 = 64; n_heads=4 divides 64.
+    m = Transformer(n_frequency_bands=34,
+                    freq_patch_size=17, embedding_dim=32,
+                    n_heads=4, n_layers=1, out_neurons=N)
+    assert m.F_p == 2 and m.token_dim == 64
+    x = torch.randn(B, 1, 34, T_in)
+    y = m(x)
+    assert y.shape == (B, N, 1, T_in)
+
+
+def test_transformer_freq_patch_size_must_divide_F():
+    """Mismatched freq_patch_size should error cleanly."""
+    with pytest.raises(ValueError, match="must divide"):
+        Transformer(n_frequency_bands=34, freq_patch_size=5,  # 34 % 5 != 0
+                    embedding_dim=32, n_heads=2, n_layers=1, out_neurons=N)

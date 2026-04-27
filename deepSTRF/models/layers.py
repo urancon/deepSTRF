@@ -5,6 +5,83 @@ from torch.nn.parameter import Parameter
 
 
 #    #########################
+#       POSITIONAL ENCODINGS
+#    #########################
+
+class SinusoidalPositionalEncoding(nn.Module):
+    """
+    Sinusoidal positional encoding (Vaswani et al. 2017,
+    "Attention Is All You Need"). Computed on the fly per forward pass,
+    so the same module generalizes to arbitrary sequence lengths.
+
+    Parameters
+    ----------
+    d_model : int
+        Embedding dimension. Must be even (the encoding alternates
+        ``sin`` and ``cos`` along the channel axis).
+
+    Notes
+    -----
+    Adds the encoding to the input rather than returning it separately.
+    Input shape ``(B, L, d_model)``, output shape ``(B, L, d_model)``.
+
+    Per-dimension frequencies follow the standard
+    ``1 / 10000^(2i / d_model)`` schedule and are stored as a non-trained
+    buffer so they follow ``.to(device)``.
+    """
+    def __init__(self, d_model: int):
+        super().__init__()
+        if d_model % 2 != 0:
+            raise ValueError(f"d_model must be even, got {d_model}")
+        self.d_model = d_model
+        i = torch.arange(0, d_model, 2, dtype=torch.float)
+        self.register_buffer(
+            'div_term', torch.exp(-i * (math.log(10000.0) / d_model))
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, L, d_model)
+        B, L, D = x.shape
+        if D != self.d_model:
+            raise ValueError(
+                f"input has d_model={D}, expected {self.d_model}"
+            )
+        pos = torch.arange(L, dtype=x.dtype, device=x.device).unsqueeze(1)  # (L, 1)
+        angles = pos * self.div_term.to(x.dtype)                            # (L, d_model//2)
+        pe = torch.empty(L, D, dtype=x.dtype, device=x.device)
+        pe[:, 0::2] = torch.sin(angles)
+        pe[:, 1::2] = torch.cos(angles)
+        return x + pe.unsqueeze(0)
+
+
+def build_causal_window_mask(L: int, window: int = None,
+                             device=None) -> torch.Tensor:
+    """
+    Build a ``(L, L)`` attention mask for causal (and optionally
+    windowed) self-attention.
+
+    Position ``i`` attends to position ``j`` iff:
+
+      - ``j <= i``  (causal)
+      - and ``i - j < window``  (when ``window`` is set; otherwise
+        unlimited past)
+
+    Returns a ``(L, L)`` bool tensor where ``True`` means "mask out /
+    forbid attention" — matching the convention used by
+    ``nn.TransformerEncoderLayer`` and
+    ``F.scaled_dot_product_attention``.
+    """
+    # forbid future: True above the diagonal
+    mask = torch.triu(torch.ones(L, L, dtype=torch.bool, device=device),
+                      diagonal=1)
+    if window is not None and window > 0:
+        # forbid the too-far past: True at distance >= window below the diagonal
+        mask = mask | torch.tril(torch.ones(L, L, dtype=torch.bool, device=device),
+                                 diagonal=-window)
+    return mask
+
+
+#    #########################
 #       NORMALIZATION
 #    #########################
 
