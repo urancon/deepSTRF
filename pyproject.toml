@@ -52,7 +52,6 @@ dependencies = [
     "matplotlib>=3.5",
     "Pillow>=9.0",
     "einops>=0.6",
-    "DCLS>=0.1",
     "soundfile>=0.12",
     "scikit-image>=0.20",
     "h5py>=3.7",

@@ -3,8 +3,6 @@ import torch
 import torch.nn as nn
 from torch.nn.parameter import Parameter
 
-from DCLS.construct.modules import Dcls1d, ConstructKernel2d
-
 
 #    #########################
 #       NORMALIZATION
@@ -185,59 +183,112 @@ class CausalSTRFConv(nn.Module):
 
 class ParametricSTRF(nn.Module):
     """
-    SPECTRO-Temporal Receptive Field (2D) kernel.
+    Spectro-Temporal Receptive Field kernel parameterized as a sum of
+    learnable 2D Gaussians on the ``(F, T)`` grid.
 
-    The kernel is parameterized as a set of gaussians:
-      - at a given (x,y) position,
-      - with a given variance (sigma_x, sigma_y) along both dimensions
-      - with a given weight value
-        ==> 5 degrees of freedom per gaussian.
+    A direct PyTorch reimplementation of the DCLS Gaussian-mixture
+    parameterization (Khalfaoui-Hassani et al. 2023, ICLR), free from
+    the upstream library's silent asymmetric-kernel bug. Each of the
+    ``num_gaussians`` Gaussians has:
 
-    Drastically reduces the number of learnable parameters.
+      - a 2D position ``(f, t)`` in the kernel grid coordinates
+        ``[0, F-1] × [0, T-1]``,
+      - per-axis standard deviations ``(sigma_f, sigma_t)``,
+      - per-(C_out, C_in) weight.
 
-    See Khalfaoui-Hassani et al. (2023), "Dilated convolutions with learnable spacings (DCLS)", ICLR,
+    The effective ``(C_out, C_in, F, T)`` kernel is the weighted sum of
+    Gaussians, normalized so each Gaussian has unit mass on the grid
+    (DCLS convention).
+
+    Parameters
+    ----------
+    F : int
+        Frequency bins of the kernel.
+    T : int
+        Temporal extent of the kernel in frames.
+    C_in, C_out : int
+        Input / output channel counts.
+    num_gaussians : int, default 1
+        Number of Gaussians per ``(C_out, C_in)`` slot.
+    bias : bool, default True
+
+    References
+    ----------
+    Khalfaoui-Hassani, Pellegrini & Masquelier (2023).
+    "Dilated Convolution with Learnable Spacings." ICLR.
+
+    Notes
+    -----
+    The upstream `DCLS` library's `ConstructKernel2d` silently
+    mishandles asymmetric kernels: for ``dilated_kernel_size=(F, T)``
+    with ``F != T``, its position-offset step ``+lim//2`` adds the
+    F-half-width to the T-axis position parameter and vice versa,
+    concentrating Gaussians near the centre of one axis and outside
+    the grid on the other. This is the cause of the observed "Gaussians
+    don't populate the entire STRF window" behavior on auditory STRF
+    shapes like ``(34, 9)``. The deepSTRF reimplementation parametrizes
+    positions in *absolute* grid coordinates ``[0, F-1] × [0, T-1]``,
+    avoids the offset entirely, and removes the optional DCLS
+    dependency.
     """
-    def __init__(self, F: int, T: int, C_in, C_out, num_gaussians: int = 1, bias: bool = True):
-        super(ParametricSTRF, self).__init__()
-
+    def __init__(self, F: int, T: int, C_in: int, C_out: int,
+                 num_gaussians: int = 1, bias: bool = True):
+        super().__init__()
         self.F = F
         self.T = T
         self.C_in = C_in
         self.C_out = C_out
         self.G = num_gaussians
 
-        # DCLS = parametrized STRF kernel and its parameters
-        self.DCK = ConstructKernel2d(in_channels=self.C_in, out_channels=self.C_out, groups=1, kernel_count=self.G, dilated_kernel_size=(F, T), version='gauss')
-        self.P = torch.nn.Parameter(torch.rand(2, self.C_out, self.C_in, self.G))       # positions
-        self.SIG = torch.nn.Parameter(torch.rand(2, self.C_out, self.C_in, self.G))     # sigmas
-        self.weight = torch.nn.Parameter(torch.rand(self.C_out, self.C_in, self.G))     # values
+        # P is stored as (axis, C_out, C_in, G); axis 0 = F-coord, axis 1 = T-coord.
+        # Coordinates are absolute positions on the kernel grid.
+        self.P = nn.Parameter(torch.empty(2, C_out, C_in, num_gaussians))
+        self.SIG = nn.Parameter(torch.empty(2, C_out, C_in, num_gaussians))
+        self.weight = nn.Parameter(torch.empty(C_out, C_in, num_gaussians))
 
-        # initialize parameters (recommended by Ismail)
-        torch.nn.init.uniform_(self.P.select(0, 0), -F / 2, F / 2)
-        torch.nn.init.uniform_(self.P.select(0, 1), -T / 2, T / 2)
-        torch.nn.init.constant_(self.SIG, 0.23)
-        torch.nn.init.kaiming_uniform_(self.weight)
+        # init: positions uniformly distributed across the full grid;
+        # sigmas constant; weights kaiming-uniform.
+        nn.init.uniform_(self.P[0], 0.0, float(F - 1))
+        nn.init.uniform_(self.P[1], 0.0, float(T - 1))
+        nn.init.constant_(self.SIG, 1.0)
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
         # bias term — one per output channel (conv2d convention)
         if bias:
-            self.bias = torch.nn.Parameter(torch.zeros(self.C_out))
-            torch.nn.init.uniform_(self.bias, -1., 1.)
+            self.bias = nn.Parameter(torch.zeros(C_out))
+            nn.init.uniform_(self.bias, -1.0, 1.0)
         else:
             self.bias = None
 
-    def build_kernel(self, device='cpu'):
-        # create a (C_out, C_in, Kf, Kt) kernel
-        kernel = self.DCK(self.weight, self.P, self.SIG)
-        return kernel.to(device)
+    def build_kernel(self, device=None):
+        """Build the effective ``(C_out, C_in, F, T)`` kernel from the K Gaussians."""
+        device = device if device is not None else self.P.device
+
+        # grid coordinates, broadcasted to (F, T, 1, 1, 1)
+        f_grid = torch.arange(self.F, device=device).view(self.F, 1, 1, 1, 1).float()
+        t_grid = torch.arange(self.T, device=device).view(1, self.T, 1, 1, 1).float()
+
+        # sigmas with floor (DCLS convention) so they stay positive even at init=0
+        sig_f = self.SIG[0].abs() + 0.27   # (C_out, C_in, G)
+        sig_t = self.SIG[1].abs() + 0.27
+
+        # normalized distances to each Gaussian centre
+        df = (f_grid - self.P[0]) / sig_f  # (F, T, C_out, C_in, G)
+        dt = (t_grid - self.P[1]) / sig_t
+
+        # 2D Gaussian, normalized to unit mass on the grid (DCLS convention)
+        gauss = torch.exp(-0.5 * (df ** 2 + dt ** 2))
+        gauss = gauss / (gauss.sum(dim=(0, 1), keepdim=True) + 1e-7)
+
+        # weighted sum over Gaussians: (F, T, C_out, C_in, G) * (C_out, C_in, G)
+        kernel = (gauss * self.weight).sum(dim=-1)            # (F, T, C_out, C_in)
+        return kernel.permute(2, 3, 0, 1)                     # (C_out, C_in, F, T)
 
     def forward(self, x):
         # x: (B, C_in, F, T). No internal padding — caller handles temporal
         # padding (typically via an outer ZeroPad2d for left-only causal pad).
-        # This matches nn.Conv2d's no-pad default and avoids double-padding
-        # when an outer model (e.g. Linear, DNet) already pads.
-        strf_kernel = self.build_kernel(x.device)
-        out = torch.nn.functional.conv2d(x, strf_kernel, self.bias, stride=(1, 1))
-        return out
+        kernel = self.build_kernel(x.device)
+        return torch.nn.functional.conv2d(x, kernel, self.bias, stride=(1, 1))
 
 
 class SeparableSTRF(nn.Module):
