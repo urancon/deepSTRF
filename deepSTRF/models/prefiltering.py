@@ -51,40 +51,53 @@ def a_to_tau(a, dt: float = 1):
     return - dt / torch.log(a)
 
 
-class Willmore_Adaptation(nn.Module):
+class ICAdaptation(nn.Module):
     """
-    High-pass exponential filter with frequency dependent time constants.
+    High-pass exponential filter with frequency-dependent time constants —
+    a paper-faithful re-implementation of the inferior-colliculus
+    adaptation prefilter described by Willmore et al. (2016).
 
-    See paper:
-        Willmore et al. (2016), "Incorporating Midbrain Adaptation to Mean Sound Level Improves Models of Auditory
-        Cortical Processing", J.Neurosci., https://doi.org/10.1523/JNEUROSCI.2441-15.2016
+    Independently filters each frequency band of an input spectrogram
+    along the temporal dimension with a parameterized exponential kernel:
 
-    Independently filters each frequency band of an input spectrogram along temporal dimension with a parametrized
-    exponential kernel:
+        kernel = [...; -Cwa²; -Cwa; -Cw; +1]    with    C = 1/(... + a² + a + 1)
 
-        kernel = [...; -Cwa²; -Cwa; -Cw; +1]    with    C=1/(... + a² + a + 1)
-                                                                so that the sum of the negative terms equals w
+    where the sum of the negative terms equals ``w``. The filter
+    effectively computes the difference between the current value of
+    the signal in each frequency band and an exponential average of its
+    recent past, then applies a half-wave rectification.
 
-    This filter effectively computes the difference between the current value of the signal in each frequency band and
-    an exponential average of its recent past.
+    Parameters
+    ----------
+    init_a_vals : 1D Tensor of length ``F``
+        Per-frequency ``a`` parameters (related to the exponential time
+        constant: higher ``a`` → longer time constant).
+    kernel_size : int, default 2
+        Length of the temporal kernel (in frames).
 
-    The kernel is flat along frequency dimension, and we apply padding='same' to keep the same time dimension
-    As a result, takes a 1-channel tensor as input, and returns a 2-channel tensor as output.
-    input_spectrogram.shape = (B, 1, F, T)
-    output_spectrogram.shape = (B, 2, F, T)
+    Reference
+    ---------
+    Willmore, Schoppe, King, Schnupp, Harper (2016). "Incorporating
+    Midbrain Adaptation to Mean Sound Level Improves Models of
+    Auditory Cortical Processing." J. Neurosci. 36(2): 280–289.
+    https://doi.org/10.1523/JNEUROSCI.2441-15.2016
 
+    Notes
+    -----
+    Intentionally non-learnable: the time constants are derived
+    analytically from the cochlear frequency map (see
+    ``freq_to_tau``) and are paper-faithful. For a learnable
+    extension, use :class:`AdapTrans`.
+
+    Input  shape: ``(B, 1, F, T)``.
+    Output shape: ``(B, 1, F, T)``.
     """
+
+    out_channels: int = 1
+
     def __init__(self, init_a_vals, kernel_size: int = 2):
-        """
-        init_a_vals: a 1D vector of 'a' parameters (related to the time constant of the kernel's exponential). The
-         higher the 'a', the higher the corresponding time constant of the exponential
-
-        init_w_vals: a 1D vector of 'w' parameters (representing the weight given to the exponential average of the
-         signal in its recent past)
-
-        """
-        super(Willmore_Adaptation, self).__init__()
-        # make sure passed a and w are one-dimensional
+        super().__init__()
+        # make sure passed a is one-dimensional
         assert len(init_a_vals.shape) == 1
 
         # general attributes
@@ -145,38 +158,62 @@ class Willmore_Adaptation(nn.Module):
         filter = kernel[frequency_bin, :].squeeze().detach().cpu().numpy()
 
         plt.figure()
-        plt.stem(torch.arange(0, self.K, 1).numpy(), filter, 'r', markerfmt='ro', label='Willmore')
+        plt.stem(torch.arange(0, self.K, 1).numpy(), filter, 'r', markerfmt='ro', label='ICAdaptation')
         plt.legend()
         plt.show()
 
 
+# Backwards-compatibility alias — the original class name was kept long
+# enough to be cited in older notebooks. Will be removed in a future release.
+Willmore_Adaptation = ICAdaptation
+
+
 class AdapTrans(nn.Module):
     """
-    Computes adapted ON and OFF spectrograms, through high-pass exponential filters with frequency dependent time
-    constants.
+    Adaptive ON/OFF spectrogram prefilter — the learnable extension of the
+    inferior-colliculus adaptation prefilter.
 
-    See paper:
-        Rançon et al. (2024), "A general theoretical framework unifying the adaptive, transient and sustained properties
-        of ON and OFF auditory responses", BioRxiv, 10.1101/2024.01.17.576002
+    Computes ON and OFF spectrograms through high-pass exponential
+    filters with frequency-dependent, learnable time constants. Each
+    frequency band is independently filtered along the temporal
+    dimension with a parameterized exponential kernel:
 
+        kernel = [...; -Cwa²; -Cwa; -Cw; +1]    with    C = 1/(... + a² + a + 1)
 
-    Independently filters each frequency band of an input spectrogram along temporal dimension with a parametrized
-    exponential kernel:
+    where the sum of the negative terms equals ``w``. The filter
+    computes the difference between the current value of the signal
+    in each frequency band and an exponential average of its recent
+    past, with separate ``(a, w)`` pairs giving rise to ON and OFF
+    polarities.
 
-        kernel = [...; -Cwa²; -Cwa; -Cw; +1]    with    C=1/(... + a² + a + 1)
-                                                                so that the sum of the negative terms equals w
+    Parameters
+    ----------
+    init_a_vals : 1D Tensor of length ``F``
+        Per-frequency ``a`` parameters (related to the time constant).
+    init_w_vals : 1D Tensor of length ``F``
+        Per-frequency ``w`` parameters (relative weight of the past
+        average vs the present sample).
+    kernel_size : int, default 2
+        Length of the temporal kernel (in frames).
+    learnable : bool, default True
+        If True, ``a`` and ``w`` are learnable nn.Parameters; if False,
+        they are frozen buffers (still follow ``.to(device)``).
 
-    This filter effectively computes the difference between the current value of the signal in each frequency band and
-    an exponential average of its recent past.
+    Reference
+    ---------
+    Rançon, Bornschein, King, Schnupp, Willmore (2024). "A general
+    theoretical framework unifying the adaptive, transient and
+    sustained properties of ON and OFF auditory responses." BioRxiv.
+    https://doi.org/10.1101/2024.01.17.576002
 
-    The kernel is flat along frequency dimension, and we apply padding='same' to keep the same time dimension
-    As a result, takes a 1-channel tensor as input, and returns a 2-channel tensor as output.
-    input_spectrogram.shape = (B, 1, F, T)
-    output_spectrogram.shape = (B, 2, F, T)
-
-    Version of AdapTrans with different (a, w) pairs for each polarity
-
+    Notes
+    -----
+    Input  shape: ``(B, 1, F, T)``.
+    Output shape: ``(B, 2, F, T)`` — channel 0 is ON, channel 1 is OFF.
     """
+
+    out_channels: int = 2
+
     def __init__(self, init_a_vals, init_w_vals, kernel_size: int = 2, learnable: bool = True):
         """
         init_a_vals: a 1D vector of 'a' parameters (related to the time constant of the kernel's exponential). The
@@ -298,3 +335,59 @@ class AdapTrans(nn.Module):
         plt.stem(torch.arange(0, self.K, 1).numpy(), OFF_filter, 'b', markerfmt='bo', label='OFF')
         plt.legend()
         plt.show()
+
+
+def make_prefiltering(kind: str, n_frequency_bands: int, dt: float,
+                      min_freq: float = 500.0, max_freq: float = 20000.0,
+                      scale: str = 'mel', learnable: bool = True,
+                      init_w: float = 0.75) -> nn.Module:
+    """
+    Factory for constructing a prefilter module from compact arguments.
+
+    Convenience wrapper that derives per-frequency ``a`` (and ``w``)
+    initial values from the cochlear frequency map, then instantiates
+    the requested prefilter class. Equivalent to building the prefilter
+    by hand; the factory exists so that user code does not need to
+    repeat the ``get_CFs`` / ``freq_to_tau`` / ``tau_to_a`` pipeline.
+
+    Parameters
+    ----------
+    kind : {'adaptrans', 'icadaptation', 'willmore'}
+        Which prefilter to build. ``'willmore'`` is an alias for
+        ``'icadaptation'``.
+    n_frequency_bands : int
+        Number of input frequency bands ``F`` of the spectrogram.
+    dt : float
+        Time bin width in milliseconds (matches ``dataset.dt_ms``).
+    min_freq, max_freq : float
+        Frequency range (in Hz) spanned by the cochlear filterbank that
+        produced the spectrogram. Defaults: 500 / 20 000 Hz.
+    scale : {'mel', 'greenwood'}, default 'mel'
+        Frequency-axis scaling used to derive per-band time constants.
+    learnable : bool, default True
+        Only relevant for ``'adaptrans'``. ``ICAdaptation`` is always
+        frozen (paper-faithful).
+    init_w : float, default 0.75
+        Only relevant for ``'adaptrans'``: initial value of the past-vs-
+        present weight ``w``.
+
+    Returns
+    -------
+    nn.Module
+        Configured prefilter instance with an ``out_channels`` attribute.
+    """
+    cf = get_CFs(min_freq, max_freq, n_frequency_bands, scale)
+    tau = freq_to_tau(cf)
+    a = tau_to_a(tau, dt=dt)
+    K = round(3 * max(tau).item()) + 1
+
+    kind = kind.lower()
+    if kind == 'adaptrans':
+        w = torch.ones_like(a) * init_w
+        return AdapTrans(init_a_vals=a, init_w_vals=w, kernel_size=K, learnable=learnable)
+    if kind in ('icadaptation', 'willmore'):
+        return ICAdaptation(init_a_vals=a, kernel_size=K)
+    raise ValueError(
+        f"Unknown prefilter kind {kind!r}. Currently supported: "
+        f"'adaptrans', 'icadaptation' (alias 'willmore')."
+    )

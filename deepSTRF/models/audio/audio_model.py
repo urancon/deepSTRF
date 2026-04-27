@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.nn.parameter import Parameter
 
 from deepSTRF.models.neural_model import NeuralModel
-from deepSTRF.models.prefiltering import get_CFs, freq_to_tau, tau_to_a, AdapTrans, Willmore_Adaptation
+from deepSTRF.models.prefiltering import get_CFs, freq_to_tau, tau_to_a, AdapTrans, ICAdaptation
 
 
 class AudioEncodingModel(NeuralModel):
@@ -59,7 +59,7 @@ class AudioEncodingModel(NeuralModel):
                 tau = freq_to_tau(cf)
                 a = tau_to_a(tau, dt=self.dt)
                 K = round(3 * max(tau).item()) + 1
-                self.prefiltering_block = Willmore_Adaptation(init_a_vals=a, kernel_size=K)
+                self.prefiltering_block = ICAdaptation(init_a_vals=a, kernel_size=K)
                 self.C_in = 1
 
             else:
