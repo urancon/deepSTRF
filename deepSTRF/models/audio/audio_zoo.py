@@ -92,7 +92,13 @@ class LinearNonlinear(Linear):
 
     """
     def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, output_activation: nn.Module = nn.Sigmoid(), prefiltering=None, parameterization=None):
-        super(LinearNonlinear, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, prefiltering)
+        super(LinearNonlinear, self).__init__(
+            n_frequency_bands=n_frequency_bands,
+            temporal_window_size=temporal_window_size,
+            out_neurons=out_neurons,
+            prefiltering=prefiltering,
+            parameterization=parameterization,
+        )
 
         self.output_activation = output_activation
 
