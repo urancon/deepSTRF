@@ -506,11 +506,55 @@ class ConvNet2D(AudioEncodingModel):
 
 class Transformer(AudioEncodingModel):
     """
-    Attention-based, Transformer model.
+    Attention-based STRF model — at every output timestep, a Transformer
+    encoder attends over patches of the recent ``T``-frame spectrogram
+    context.
 
-        cf. Rançon et al. (2025), "Temporal recurrence as a general mechanism to explain neural responses in
-                the auditory system", BioRxiv
+    Architecture: a left-padded ``(F, T)`` context window slides over the
+    spectrogram (one window per output timestep); the window is
+    patchified into ``n_patches`` learnable embeddings via a strided
+    Conv2d; a TransformerEncoder runs self-attention over the patches;
+    a global mean over patches feeds a linear readout to ``N`` neurons.
 
+    Causality is enforced architecturally by the ``unfold`` step: each
+    output frame at time ``t`` sees only the window ``[t-T+1, t]``.
+
+    Parameters
+    ----------
+    n_frequency_bands : int, default 34
+        Number of input frequency bands ``F``.
+    temporal_window_size : int, default 1
+        Context window length ``T`` (frames). Each output frame attends
+        within this many past frames.
+    token_size : tuple of int, default (34, 1)
+        Patch dimensions ``(K_F, K_T)`` for the Conv2d patchifier.
+    embedding_dim : int, default 48
+        Per-patch embedding dimension before attention.
+    n_heads : int, default 1
+        Number of attention heads.
+    n_layers : int, default 1
+        Number of TransformerEncoderLayer blocks.
+    out_neurons : int, default 1
+        Number of output neurons ``N``.
+    output_activation : nn.Module, default nn.Identity()
+        Pointwise nonlinearity at the output. The paper uses a 4-parameter
+        double-exponential — available as ``ParametricDoubleExponential``.
+    prefiltering : dict or None
+        Optional spectrogram prefilter spec.
+
+    References
+    ----------
+    Rançon, Bornschein, King, Schnupp, Willmore (2025).
+    "Temporal recurrence as a general mechanism to explain neural
+    responses in the auditory system." Comm. Bio. (preprint on BioRxiv).
+
+    Notes
+    -----
+    The current implementation explicitly fixes context length to ``T``
+    via ``nn.Unfold``. A future refactor will replace this with an
+    internal causal attention mask, freeing the architecture from a
+    fixed context length and letting it generalize to arbitrary input
+    durations (see ``TODO.md``).
     """
 
     def __init__(self, n_frequency_bands=34, temporal_window_size=1, token_size=(34, 1), embedding_dim=48, n_heads=1,
@@ -575,12 +619,62 @@ class Transformer(AudioEncodingModel):
 
 class StateNet(AudioEncodingModel):
     """
-    Fully stateful model. Without delays and only relies on temporal recurrence to implicitly extract information from
-    stimulus sequences.
+    Fully stateful STRF model — relies entirely on temporal recurrence to
+    extract information from stimulus sequences, with no explicit STRF
+    delay window.
 
-        cf. Rançon et al. (2025), "Temporal recurrence as a general mechanism to explain neural responses in
-                the auditory system", BioRxiv
+    Architecture: a stateless per-timestep spectral encoder maps each
+    spectrogram column ``(C_in, F)`` to a hidden representation
+    ``(C, F_down)``. The flattened hidden representation is fed
+    timestep-by-timestep to a recurrent (or state-space) model that
+    accumulates context implicitly through its hidden state. A linear
+    readout projects the recurrent hidden state to ``N`` output neurons.
 
+    Causality is inherent to the recurrent backbone (RNN/GRU/LSTM/LMU/
+    Mamba/S4). The spectral encoder operates on a single timestep at a
+    time so it does not couple frames temporally.
+
+    Parameters
+    ----------
+    n_frequency_bands : int, default 34
+        Number of input frequency bands ``F``.
+    temporal_window_size : int, default 1
+        Unused by StateNet (kept for ``AudioEncodingModel`` API
+        compatibility); recurrence handles temporal context.
+    kernel_size : int, default 7
+        Frequency kernel size for the spectral encoder.
+    stride : int, default 3
+        Frequency stride for the spectral encoder.
+    hidden_channels : int, default 7
+        Channel count of the spectral encoder ``C``.
+    connectivity : {'LC', 'FC', 'CONV'}, default 'LC'
+        Spectral encoder connectivity. ``'LC'``: locally-connected 1D
+        layer (frequency-position-specific weights). ``'FC'``: dense
+        linear projection with reshape to ``(C, F_down)``. ``'CONV'``:
+        weight-shared 1D convolution.
+    rnn_type : {'GRU', 'LSTM', 'RNN', 'vanilla', 'LMU', 'Mamba', 'S4'}, default 'GRU'
+        Recurrent / state-space backbone.
+    out_neurons : int, default 1
+        Number of output neurons ``N``.
+    output_activation : nn.Module, default nn.Sigmoid()
+        Pointwise nonlinearity at the output.
+    prefiltering : dict or None
+        Optional spectrogram prefilter spec.
+
+    References
+    ----------
+    Rançon, Bornschein, King, Schnupp, Willmore (2025).
+    "Temporal recurrence as a general mechanism to explain neural
+    responses in the auditory system." Comm. Bio. (preprint on BioRxiv).
+
+    Notes
+    -----
+    - The spectral encoder uses a CausalLayerNorm over the channel
+      axis (``C``); the original implementation used BatchNorm1d
+      which pools statistics over the (T*B, F_down) axis, making it
+      non-causal.
+    - The S4 backbone is imported lazily — its module emits CUDA-extension
+      warnings on import that other backends would not see.
     """
     def __init__(self, n_frequency_bands=34, temporal_window_size=1, kernel_size: int = 7, stride: int = 3,
                  hidden_channels: int = 7, connectivity: str = 'LC', rnn_type: str = 'GRU', out_neurons: int = 1,
@@ -597,7 +691,7 @@ class StateNet(AudioEncodingModel):
         if connectivity == 'LC':
             self.encoder_layers = nn.Sequential(
                 layers.LocallyConnected1d(input_size=self.F, in_channels=self.C_in, out_channels=self.C, kernel_size=self.K, stride=self.S),
-                nn.BatchNorm1d(self.C),
+                layers.CausalLayerNorm(self.C, dim=1),
                 nn.Sigmoid()
             )
         elif connectivity == 'FC':
@@ -606,13 +700,13 @@ class StateNet(AudioEncodingModel):
                 nn.Flatten(start_dim=-2, end_dim=-1),                               # (B, C_in, F) --> (B, C_in * F)
                 nn.Linear(self.C_in * self.F, self.C * F_down),                     # (B, C_in * F) --> (B, C * F_down)
                 nn.Unflatten(dim=-1, unflattened_size=(self.C, F_down)),            # (B, C, F_down)
-                nn.BatchNorm1d(self.C),
+                layers.CausalLayerNorm(self.C, dim=1),
                 nn.Sigmoid()
             )
         elif connectivity == 'CONV':
             self.encoder_layers = nn.Sequential(
                 nn.Conv1d(self.C_in, self.C, kernel_size=self.K, stride=self.S),    # (B, C, F)
-                nn.BatchNorm1d(self.C),
+                layers.CausalLayerNorm(self.C, dim=1),
                 nn.Sigmoid()
             )
 
