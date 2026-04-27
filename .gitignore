@@ -5,6 +5,7 @@
 # --- Claude Code / local-only assistant files (NEVER push) ---
 /CLAUDE.md
 /NEXT_PROMPT.md
+/IDEAS.md
 .claude/
 
 # --- Paper drafts and supplementary (NEVER push) ---

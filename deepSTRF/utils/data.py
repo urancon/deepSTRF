@@ -1,117 +1,279 @@
 import torch
+import torch.nn.functional as F
+import numpy as np
 from typing import List, Union, Sequence
 
 from deepSTRF.datasets import NeuralDataset
-from deepSTRF.datasets.audio import CRCNS_AA4_Dataset
 
 
-def aa4_collate(batch):
-    # TODO:
-    #  1) make more general, to all AudioNeuralDatasets, not just AA4
-    #  2) make more general, to all NeuralDatasets, not just Audio ones
-    """Collate function for CRCNS_AA4_Dataset DataLoader."""
-    specs_list, resps_list, masks_list, metas_list = zip(*batch)
-    # specs_list: list length B of (1,F,T_s)
-    # resps_list: list length B of list length N of (R_n,T_s)
-    # masks_list: list length B of (N,)
-    B = len(specs_list)
-    N = masks_list[0].shape[0]
-    # pad specs along time dim (dim=2)
-    specs = fill_missing_data(specs_list, dims=2, value=0.0)
-    # pad responses along trial dim (dim=1) and time dim (dim=2)
-    # first flatten responses to list per batch and neuron
-    # we want shape (B, N, R_max, T_max)
-    # prepare per-stim per-neuron zipping
-    Rmax = 0
-    Tmax = specs.shape[-1]
-    # collect all response tensors, pad time to Tmax
-    padded_resps = []
+
+def hanning_smooth(response: torch.Tensor, window_ms: float, dt_ms: float) -> torch.Tensor:
+    """Convolve `response` along its last (time) axis with a Hanning window.
+
+    Parameters
+    ----------
+    response : torch.Tensor
+        Response tensor of any shape; the last axis is assumed to be time.
+    window_ms : float
+        Full width of the Hanning window in ms. Rounded to the nearest odd
+        number of ``dt_ms`` bins (``dt_ms``-floor, then +1 if even).
+    dt_ms : float
+        Time-bin width of ``response``, in ms.
+
+    Returns
+    -------
+    torch.Tensor
+        Smoothed response, same shape as input.
+
+    Notes
+    -----
+    Padded with zeros on both sides (``F.pad(..., mode='constant')``), so
+    edge bins get attenuated. The kernel is the raw ``np.hanning(K)``, i.e.
+    NOT sum-normalized — matches the legacy behaviour used by the Hsu /
+    Borst / Theunissen (2004) PSTH smoothing step in the CRCNS-AA datasets.
+
+    NaN-unsafe: NaN values propagate to neighbouring time bins under the
+    window. Callers (e.g. ``NeuralDataset.smooth_responses``) must filter
+    fully-NaN responses before calling.
+    """
+    assert window_ms > 0 and dt_ms > 0, "window_ms and dt_ms must be positive"
+    K = int(window_ms // dt_ms)
+    if K < 1:
+        K = 1
+    if K % 2 == 0:
+        K += 1
+    kernel = torch.tensor(np.hanning(K), dtype=response.dtype, device=response.device).view(1, 1, K)
+    pad = (K - 1) // 2
+
+    orig_shape = response.shape
+    flat = response.reshape(-1, 1, orig_shape[-1])  # (*, 1, T)
+    flat = F.pad(flat, (pad, pad), mode='constant', value=0.0)
+    smoothed = F.conv1d(flat, kernel)
+    return smoothed.view(orig_shape)
+
+
+class ResponseSmoothingTransform(torch.nn.Module):
+    """
+        Temporally convolves responses with a Hanning window of typically ~20 or ~40 ms.
+
+        cf. Hsu, A., Borst, A., & Theunissen, F. E. (2004).
+            Quantifying variability in neural responses and its application for the validation of model predictions.
+            Network: Computation in Neural Systems, 15(2), 91–109. https://doi.org/10.1088/0954-898X_15_2_002
+
+    """
+
+    def __init__(self, dt_ms=1, window_size_ms=21, *args, **kwargs):
+        super().__init__()
+        self.dt_ms = dt_ms
+        self.window_size_ms = window_size_ms
+        Kt_hanning = (self.window_size_ms // self.dt_ms) if ((self.window_size_ms // self.dt_ms % 2) == 1) else (self.window_size_ms // self.dt_ms) + 1  # odd kernel size
+        self.hanning_window = torch.tensor(np.hanning(Kt_hanning)).unsqueeze(0).unsqueeze(0)
+        self.padding_size = (Kt_hanning - 1) // 2
+
+    def forward(self, responses, dt=1):
+        # responses shape should be (B, N, R, T)  # TODO: add batch size (B)
+        N, R, T = responses.shape  # TODO: add batch size (B)
+        padded_responses = F.pad(responses, (self.pad_size, self.pad_size), mode='constant')
+
+        # Apply the Hanning window using convolution
+        padded_responses = padded_responses.flatten(0, 1).unsqueeze(1)  # (N, R, T) --> (N*R, 1, T)
+        smoothed_responses = F.conv1d(padded_responses, self.hanning_window)
+        smoothed_responses = smoothed_responses.unflatten(0, (N, R))[:, :, 0, :]  # (N*R, 1, T) --> (N, R, T)
+
+        return smoothed_responses
+
+    def __repr__(self):
+        return f"ResponseSmoothingTransform(dt_ms={self.dt_ms}, window_size_ms={self.window_size_ms})"
+
+    def __str__(self):
+        return f"ResponseSmoothingTransform(dt_ms={self.dt_ms}, window_size_ms={self.window_size_ms})"
+
+
+def neural_collate(batch):
+    """Collate fn for any :class:`~deepSTRF.datasets.neural_dataset.NeuralDataset`.
+
+    Pads variable-duration stims with zeros along the last (time) axis and
+    variable-duration / variable-repeat-count responses with NaN along both
+    the repeat and the time axes. Derives a fine-grained ``valid_mask`` from
+    the NaN sentinels so downstream loss code can use boolean indexing or
+    multiplicative masking without re-scanning.
+
+    Parameters
+    ----------
+    batch : list of 4-tuples
+        Each tuple is ``(stim, per_neuron_responses, per_neuron_mask, stim_meta)``
+        as yielded by ``NeuralDataset.__getitem__`` for a single item:
+            * ``stim`` — a stim tensor of shape ``(..., T_s)`` (modality-specific
+              leading dims, e.g. ``(1, F, T_s)`` for audio).
+            * ``per_neuron_responses`` — list of length ``N_selected``; each
+              element is a ``(R_{s,n}, T_s)`` spike-count tensor or a
+              ``(1, 1)`` NaN sentinel.
+            * ``per_neuron_mask`` — ``(N_selected,)`` bool tensor (currently
+              ignored; the fine-grained ``valid_mask`` returned by this
+              function subsumes it).
+            * ``stim_meta`` — per-stim metadata dict.
+
+    Returns
+    -------
+    stims : torch.Tensor
+        ``(B, ..., T_max)`` float tensor, zero-padded along the last axis.
+        Contains no NaN.
+    responses : torch.Tensor
+        ``(B, N_selected, R_max, T_max)`` float tensor. NaN-padded along
+        both the repeat (``R``) and time (``T``) axes. Fully-NaN slabs mark
+        (stim, neuron) pairs with no recorded data.
+    valid_mask : torch.Tensor
+        ``(B, N_selected, R_max, T_max)`` bool tensor. ``~responses.isnan()``,
+        cached here so downstream loss code does not have to recompute.
+    stim_metas : list
+        Length-``B`` list of the per-item stim_meta dicts.
+    """
+    stims_list, resps_list, _masks_list, metas_list = zip(*batch)
+    B = len(stims_list)
+    N = len(resps_list[0])
+
+    # pad stims along their time axis (last dim) with zeros.
+    # fill_missing_data operates over any shape; we ask it to pad the last axis.
+    stims = fill_missing_data(stims_list, dims=-1, value=0.0)
+    T_max = stims.shape[-1]
+
+    # pad each response to (R_n, T_max) along T first, tracking R_max.
+    R_max = 0
+    padded_per_item = []
     for b in range(B):
-        per_stim = resps_list[b]
-        # pad each neuron's resp to time
         padded = []
         for n in range(N):
-            r = per_stim[n]
-            # pad time dim to Tmax
-            pad_t = torch.full((r.shape[0], Tmax), float('nan'), dtype=r.dtype, device=r.device)
+            r = resps_list[b][n]
+            pad_t = torch.full((r.shape[0], T_max), float('nan'),
+                               dtype=r.dtype, device=r.device)
             pad_t[:, :r.shape[1]] = r
             padded.append(pad_t)
-            Rmax = max(Rmax, pad_t.shape[0])
-        padded_resps.append(padded)
-    # now pad trial dim to Rmax
-    resps = torch.full((B, N, Rmax, Tmax), float('nan'), dtype=specs.dtype, device=specs.device)
+            R_max = max(R_max, pad_t.shape[0])
+        padded_per_item.append(padded)
+
+    # pad the repeat axis to R_max — fill the (B, N, R, T) grid.
+    responses = torch.full((B, N, R_max, T_max), float('nan'),
+                           dtype=stims.dtype, device=stims.device)
     for b in range(B):
         for n in range(N):
-            pr = padded_resps[b][n]
-            resps[b, n, :pr.shape[0], :] = pr
-    # masks: stack
-    masks = torch.stack(masks_list, dim=0)
-    return specs, resps, masks, list(metas_list)
+            pr = padded_per_item[b][n]
+            responses[b, n, :pr.shape[0], :] = pr
+
+    # derive fine-grained mask once per batch — the training loop gets it
+    # "for free" and does not need to scan again.
+    valid_mask = ~responses.isnan()
+
+    return stims, responses, valid_mask, list(metas_list)
 
 
-def concatenate_datasets(ds1: CRCNS_AA4_Dataset, ds2: CRCNS_AA4_Dataset) -> CRCNS_AA4_Dataset:
+def concat_neural_datasets(datasets: Sequence[NeuralDataset]) -> NeuralDataset:
+    """Concatenate neural datasets along BOTH the stim and neuron axes.
+
+    Given ``k`` datasets with ``(S_i, N_i)`` stimuli and neurons each, returns
+    a single dataset with ``S = sum(S_i)`` stimuli and ``N = sum(N_i)`` neurons.
+    The response grid is block-diagonal: real data where a stimulus belongs
+    to a given source dataset *and* the neuron belongs to the same source,
+    ``(1, 1)`` NaN sentinels everywhere else. This cross-block missingness is
+    paradigm-compliant — ``nrn_masks`` (the derived property) then reflects
+    the block-diagonal coverage automatically.
+
+    Primary use case: building "chimeric" datasets that pool recordings
+    across species / labs / preparations (e.g. CRCNS AA1 + AA2 + NS1 for
+    auditory), so that a single model can be fit to the union.
+
+    Parameters
+    ----------
+    datasets : sequence of NeuralDataset
+        Two or more instances. They must be of compatible types and share
+        ``dt`` (bin width) and any modality-specific dimensions (``F`` for
+        audio, ``(H, W)`` for video). Compatibility is checked by each
+        class's ``_concat_check_compat`` hook; mismatches raise
+        ``AssertionError``. Resampling to align ``dt`` or ``F`` is the
+        caller's responsibility and must be done before concatenation.
+
+    Returns
+    -------
+    NeuralDataset
+        A fresh instance. Its concrete type is the most-specific class that
+        is a superclass of every input (``type(datasets[0])`` when all
+        inputs share a type, otherwise walks the MRO). Neuron selection is
+        reset (``self.I = []``).
+
+    Notes
+    -----
+    Concatenation is eager — the output holds its own full ``(S, N)`` grid
+    of response references in memory. At deepSTRF scales (S, N in the low
+    hundreds) this is negligible; cross-block entries are single-element
+    ``(1, 1)`` NaN tensors that cost ~8 bytes each. A lazy wrapper-class
+    alternative exists but would complicate ``self.responses[s][n]``
+    access for uncertain benefit at this scale.
+
+    Neuron / stim UID uniqueness across inputs is *not* validated — deepSTRF
+    trusts the caller to pass mutually exclusive sources, since that is
+    the only semantically meaningful case (pooling a dataset's subset with
+    its superset is degenerate — use constructor arguments instead).
     """
-    TODO: make ds1 and ds2 AudioNeuralDatasets or even NeuralDataset --> move what makes CRCNS_AA4_Dataset so special
-     (i.e., its structure and attributes, but which ones ?) up a level.
+    assert len(datasets) >= 1, "concat_neural_datasets needs at least one dataset"
+    if len(datasets) == 1:
+        return datasets[0]
 
-    Concatenate two CRCNS_AA4_Dataset instances with disjoint neurons and stimuli.
-    Returns a new dataset with combined stimuli and neurons, padding missing responses.
-    Select all neurons of both datasets by default.
-    """
-    # create new instance without calling __init__
-    new_ds = object.__new__(CRCNS_AA4_Dataset)  # TODO: rather instanciate an AudioNeuralDataset while calling its constructor
-    # copy configuration
-    new_ds.dt = ds1.dt
-    new_ds.F = ds1.F
-    new_ds.smooth = ds1.smooth
-    new_ds.stim_types = ds1.stim_types.union(ds2.stim_types)
-    new_ds.animals = list(ds1.animals) + [a for a in ds2.animals if a not in ds1.animals]
+    first = datasets[0]
+    for other in datasets[1:]:
+        assert isinstance(other, NeuralDataset), \
+            f"All entries must be NeuralDataset instances (got {type(other).__name__})"
+        first._concat_check_compat(other)
 
-    # combine stimuli
-    new_ds.stims = ds1.stims + ds2.stims
-    new_ds.stim_meta = ds1.stim_meta + ds2.stim_meta
-    S1, S2 = len(ds1.stims), len(ds2.stims)
-    # combine neuron metadata
-    new_ds.nrn_meta = ds1.nrn_meta + ds2.nrn_meta
-    N1, N2 = len(ds1.nrn_meta), len(ds2.nrn_meta)
-    new_ds.N_neurons = N1 + N2
+    # determine concrete output type: most-specific common ancestor.
+    types = [type(d) for d in datasets]
+    if len(set(types)) == 1:
+        out_cls = types[0]
+    else:
+        out_cls = NeuralDataset
+        for cls in types[0].__mro__:
+            if cls is object:
+                break
+            if all(isinstance(d, cls) for d in datasets):
+                out_cls = cls
+                break
 
-    # build new responses and masks
-    new_responses = []
-    new_masks = []
-    nan_tensor = torch.full((1,1), float('nan'))
-    # ds1 stimuli: pad ds1 responses with ds2 neurons missing
-    for i in range(S1):
-        resp1 = ds1.responses[i]
-        mask1 = ds1.nrn_masks[i]
-        # pad responses
-        combined = []
-        for r in resp1:
-            combined.append(r)
-        for _ in range(N2):
-            combined.append(nan_tensor)
-        # pad mask
-        new_mask = torch.cat([mask1, torch.zeros(N2, dtype=torch.bool)], dim=0)
-        new_responses.append(combined)
-        new_masks.append(new_mask)
-    # ds2 stimuli: pad ds2 responses with ds1 neurons missing
-    for j in range(S2):
-        resp2 = ds2.responses[j]
-        mask2 = ds2.nrn_masks[j]
-        combined = []
-        for _ in range(N1):
-            combined.append(nan_tensor)
-        for r in resp2:
-            combined.append(r)
-        new_mask = torch.cat([torch.zeros(N1, dtype=torch.bool), mask2], dim=0)
-        new_responses.append(combined)
-        new_masks.append(new_mask)
+    # N cumulative sum, used both for row-offset when laying out responses
+    # and for the total N_neurons.
+    N_cum = [0]
+    for d in datasets:
+        N_cum.append(N_cum[-1] + d.N_neurons)
+    total_N = N_cum[-1]
 
-    new_ds.responses = new_responses
-    new_ds.nrn_masks = new_masks
-    # default SELECT list
-    new_ds.I = list(range(N1+N2))
-    return new_ds
+    # build the result as a bare instance (skip __init__, which would
+    # re-trigger data loading). All required attributes are set below.
+    out = out_cls.__new__(out_cls)
+    NeuralDataset.__init__(out, path="+".join(d.path for d in datasets), dt_ms=first.dt)
+    out._concat_copy_attrs(first)
+
+    # merge the core list-of-X attributes.
+    out.stims = [s for d in datasets for s in d.stims]
+    out.stim_meta = [m for d in datasets for m in d.stim_meta]
+    out.neuron_metadata = [m for d in datasets for m in d.neuron_metadata]
+    out.N_neurons = total_N
+
+    # build block-diagonal response grid.
+    # for each source dataset k and each of its stims, emit a row of length
+    # total_N where the k-th block holds real responses and the rest is NaN.
+    nan = torch.full((1, 1), float('nan'))
+    responses: List[list] = []
+    for k, d in enumerate(datasets):
+        prefix = [nan] * N_cum[k]
+        suffix = [nan] * (total_N - N_cum[k + 1])
+        for s_idx in range(len(d.stim_meta)):
+            responses.append(prefix + list(d.responses[s_idx]) + suffix)
+    out.responses = responses
+
+    out.validate()
+    return out
+
+
+def concatenate_datasets(ds1: NeuralDataset, ds2: NeuralDataset) -> NeuralDataset:
+    """Deprecated — use ``concat_neural_datasets([ds1, ds2])`` instead."""
+    return concat_neural_datasets([ds1, ds2])
 
 
 def fill_missing_data(stims: Sequence[torch.Tensor],

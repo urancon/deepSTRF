@@ -75,8 +75,34 @@ TODO
 
 ## Setup
 
-**Requirements**: A CRCNS account to download the dataset.
+**Requirements**: a [CRCNS account](https://crcns.org/register).
 
-0. Download the data (**crcns-aa1.zip**) at [the original dataset repository](https://crcns.org/data-sets/aa/aa-2/about).
-1. Extract the archives and place **all_stims/** and **all_cells/**, as well as the content of the **docs/** inside the **data/** folder.
-2. You can use it right away by creating a `CRCNS_AA2_Dataset(...)` object with the path to the **data/** folder
+Easiest path — auto-download via the CRCNS NERSC mirror:
+
+```python
+from deepSTRF.datasets.audio import CRCNS_AA2_Dataset
+
+ds = CRCNS_AA2_Dataset(
+    download=True, dt_ms=5,
+    crcns_username="your_username",
+    crcns_password="your_password",
+)
+```
+
+Alternatively set `$CRCNS_USERNAME` / `$CRCNS_PASSWORD`. Default cache dir
+is `platformdirs.user_cache_dir('deepSTRF')/CRCNS_AA2`,
+overridable via `$DEEPSTRF_DATA_DIR`. `download=True` is idempotent.
+
+If you already have the data laid out manually:
+1. Download from [the dataset page](https://crcns.org/data-sets/aa/aa-2/about).
+2. Extract `all_stims/` and `all_cells/` into a `data/` folder.
+3. `ds = CRCNS_AA2_Dataset('/path/to/data', dt_ms=5)`.
+
+## Filtering
+
+The full selection API from [the data paradigm doc](data_paradigm.md#8-iteration-honours-the-current-selection-bidirectional)
+is available on AA2: filter neurons by metadata (`select_pop_by_nrn_attr`)
+or by stim coverage (`select_pop_by_stim_attr`), filter stims by metadata
+(`select_stims_by_attr`), and rely on the bidirectional rule so that
+narrowing the stim space automatically hides cells with no responses
+left in it.

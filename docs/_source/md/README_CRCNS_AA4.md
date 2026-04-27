@@ -86,23 +86,46 @@ TODO
 
 ## Setup
 
-**Requirements**: A CRCNS account to download the dataset.
+**Requirements**: a [CRCNS account](https://crcns.org/register).
 
-0. Download the data at [the original dataset repository](https://crcns.org/data-sets/aa/aa-4/about-aa-4).
-1. Extract the archives (one for each animal subject) such that the **data/** folder looks like this:
+Easiest path — auto-download via the CRCNS NERSC mirror:
+
+```python
+from deepSTRF.datasets.audio import CRCNS_AA4_Dataset, AA4_ANIMAL_IDS
+
+ds = CRCNS_AA4_Dataset(
+    download=True, dt_ms=5,
+    crcns_username="your_username",
+    crcns_password="your_password",
+)
+```
+
+Alternatively set `$CRCNS_USERNAME` / `$CRCNS_PASSWORD`. Default cache dir
+is `platformdirs.user_cache_dir('deepSTRF')/CRCNS_AA4`, overridable via
+`$DEEPSTRF_DATA_DIR`. `download=True` is idempotent.
+
+If you already have the data laid out manually, the `data/` folder should
+look like this:
+
 ```
 data/
  |____ BlaBro09xxF/
  |____ GreBlu9508M/
  |____ LblBlu2028M/
- |____ BlaBro09xxF/
  |____ WhiBlu5396M/
  |____ YelBlu6903F/
-        |______ ...     
+        |______ ...
 ```
-2. You can use it right away by creating a `CRCNS_AA4_Dataset(...)` object with the path to the **data/** folder
-```python
-from deepSTRF.datasets.audio import CRCNS_AA4_Dataset, AA4_ANIMAL_IDS
 
-dataset = CRCNS_AA4_Dataset('eg/path/to/data/', stimuli=('song', 'call'), animals=(AA4_ANIMAL_IDS[0],))
+```python
+ds = CRCNS_AA4_Dataset('/path/to/data', stimuli=('song', 'call'),
+                       animals=(AA4_ANIMAL_IDS[0],))
 ```
+
+## Filtering
+
+The full selection API from [the data paradigm doc](data_paradigm.md#8-iteration-honours-the-current-selection-bidirectional)
+is available on AA4: select neurons by metadata
+(`select_pop_by_nrn_attr`), select stims by metadata
+(`select_stims_by_attr`), and the bidirectional rule auto-hides cells
+that have no responses to the current stim selection.
