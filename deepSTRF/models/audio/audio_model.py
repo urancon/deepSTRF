@@ -51,7 +51,6 @@ class AudioEncodingModel(NeuralModel):
 
             elif prefiltering_type.lower() == 'willmore':
                 self.prefiltering = True
-                self.C_in = 1
                 self.dt = prefiltering['dt']
                 self.fmin = prefiltering['min_freq']
                 self.fmax = prefiltering['max_freq']
@@ -61,7 +60,7 @@ class AudioEncodingModel(NeuralModel):
                 a = tau_to_a(tau, dt=self.dt)
                 K = round(3 * max(tau).item()) + 1
                 self.prefiltering_block = Willmore_Adaptation(init_a_vals=a, kernel_size=K)
-                self.C_in = 2
+                self.C_in = 1
 
             else:
                 raise NotImplementedError(
