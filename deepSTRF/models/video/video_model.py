@@ -14,12 +14,13 @@ class VideoEncodingModel(NeuralModel):
     TODO: prefiltering_dict example
 
     """
-    def __init__(self, spatial_resol, temporal_window_size: int, out_neurons: int = 1, output_activation: nn.Module = nn.Identity(), *args, **kwargs):
-        super().__init__(out_neurons, output_activation, *args, **kwargs)
+    def __init__(self, spatial_resol, temporal_window_size: int, out_neurons: int = 1, output_activation: nn.Module = None, *args, **kwargs):
+        super().__init__(out_neurons=out_neurons, *args, **kwargs)
 
         # general attributes for VIDEO neural response models
         self.H, self.W = spatial_resol
         self.T = temporal_window_size
+        self.output_activation = output_activation if output_activation is not None else nn.Identity()
 
     def validate(self):
         super().validate()

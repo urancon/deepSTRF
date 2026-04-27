@@ -62,8 +62,9 @@ class Linear(AudioEncodingModel):
     Sahani & Linden (2003). "How Linear are Auditory Cortical Responses?"
     NIPS. https://papers.nips.cc/paper_files/paper/2002/hash/...
     """
-    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, prefiltering=None, parameterization=None):
-        super(Linear, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, nn.Identity(), prefiltering)
+    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, output_activation: nn.Module = None, prefiltering: nn.Module = None, parameterization=None):
+        super(Linear, self).__init__(n_frequency_bands, temporal_window_size, out_neurons=out_neurons, prefiltering=prefiltering)
+        self.output_activation = output_activation if output_activation is not None else nn.Identity()
 
         # causal input normalization: per-timestep LayerNorm across frequency
         self.input_norm = layers.CausalLayerNorm(self.F, dim=-2)
@@ -95,7 +96,7 @@ class Linear(AudioEncodingModel):
 
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
-        y = self.prefiltering_block(x) if self.prefiltering else x      # (B, 1|2, F, T)
+        y = self.prefiltering(x)                                        # (B, 1|2, F, T)
         y = self.input_norm(y)                                          # causal per-timestep freq norm
         y = self.conv(self.pad(y))                                      # (B, N, 1, T)
         y = self.output_activation(y)
@@ -118,7 +119,7 @@ class Linear(AudioEncodingModel):
             strf = self.conv.build_kernel()
 
         # choose polarity between None/ON/OFF
-        if isinstance(self.prefiltering_block, AdapTrans):
+        if isinstance(self.prefiltering, AdapTrans):
             strf = strf[:, polarity_idx, :, :]
         else:
             strf = strf[:, 0, :, :]
@@ -146,16 +147,17 @@ class LinearNonlinear(Linear):
     --------
     Linear : Same architecture without the output nonlinearity.
     """
-    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, output_activation: nn.Module = nn.Sigmoid(), prefiltering=None, parameterization=None):
+    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, output_activation: nn.Module = None, prefiltering: nn.Module = None, parameterization=None):
+        if output_activation is None:
+            output_activation = nn.Sigmoid()
         super(LinearNonlinear, self).__init__(
             n_frequency_bands=n_frequency_bands,
             temporal_window_size=temporal_window_size,
             out_neurons=out_neurons,
+            output_activation=output_activation,
             prefiltering=prefiltering,
             parameterization=parameterization,
         )
-
-        self.output_activation = output_activation
 
 
 
@@ -212,8 +214,9 @@ class NetworkReceptiveField(AudioEncodingModel):
     - The STRF kernel can be parameterized (DCLS); the paper uses a
       vanilla full kernel.
     """
-    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, n_hidden: int = 20, out_neurons: int = 1, output_activation: nn.Module = nn.Sigmoid(), prefiltering=None, parameterization=None):
-        super(NetworkReceptiveField, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
+    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, n_hidden: int = 20, out_neurons: int = 1, output_activation: nn.Module = None, prefiltering: nn.Module = None, parameterization=None):
+        super(NetworkReceptiveField, self).__init__(n_frequency_bands, temporal_window_size, out_neurons=out_neurons, prefiltering=prefiltering)
+        self.output_activation = output_activation if output_activation is not None else nn.Sigmoid()
 
         # causal input normalization: per-timestep LayerNorm across frequency
         self.input_norm = layers.CausalLayerNorm(self.F, dim=-2)
@@ -248,7 +251,7 @@ class NetworkReceptiveField(AudioEncodingModel):
 
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
-        y = self.prefiltering_block(x) if self.prefiltering else x      # (B, 1|2, F, T)
+        y = self.prefiltering(x)                                        # (B, 1|2, F, T)
         y = self.input_norm(y)                                          # causal per-timestep freq norm
         y = self.convs(self.pad(y))                                     # (B, N, 1, T)
         y = self.output_activation(y)                                   # (B, N, 1, T)
@@ -271,7 +274,7 @@ class NetworkReceptiveField(AudioEncodingModel):
             strf = self.convs[0].build_kernel()
 
         # choose polarity between None/ON/OFF
-        if isinstance(self.prefiltering_block, AdapTrans):
+        if isinstance(self.prefiltering, AdapTrans):
             strf = strf[hidden_idx, polarity_idx, :, :]
         else:
             strf = strf[hidden_idx, 0, :, :]
@@ -337,8 +340,9 @@ class DNet(AudioEncodingModel):
     - The STRF kernel can be parameterized (DCLS); the paper uses a
       vanilla full kernel.
     """
-    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, n_hidden: int = 20, init_tau=2., decay_input=True, out_neurons: int = 1, output_activation: nn.Module = nn.Identity(), prefiltering=None, parameterization=None):
-        super(DNet, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
+    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, n_hidden: int = 20, init_tau=2., decay_input=True, out_neurons: int = 1, output_activation: nn.Module = None, prefiltering: nn.Module = None, parameterization=None):
+        super(DNet, self).__init__(n_frequency_bands, temporal_window_size, out_neurons=out_neurons, prefiltering=prefiltering)
+        self.output_activation = output_activation if output_activation is not None else nn.Identity()
 
         # causal input normalization: per-timestep LayerNorm across frequency
         self.input_norm = layers.CausalLayerNorm(self.F, dim=-2)
@@ -374,7 +378,7 @@ class DNet(AudioEncodingModel):
 
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
-        y = self.prefiltering_block(x) if self.prefiltering else x      # (B, 1|2, F, T)
+        y = self.prefiltering(x)                                        # (B, 1|2, F, T)
         y = self.input_norm(y)                                          # causal per-timestep freq norm
         y = self.convs(self.pad(y))                                     # (B, N, 1, T)
         y = self.output_activation(y)                                   # (B, N, 1, T)
@@ -397,7 +401,7 @@ class DNet(AudioEncodingModel):
             strf = self.convs[0].build_kernel()
 
         # choose polarity between None/ON/OFF
-        if isinstance(self.prefiltering_block, AdapTrans):
+        if isinstance(self.prefiltering, AdapTrans):
             strf = strf[hidden_idx, polarity_idx, :, :]
         else:
             strf = strf[hidden_idx, 0, :, :]
@@ -458,9 +462,10 @@ class ConvNet2D(AudioEncodingModel):
     - The output activation is configurable; the paper uses a 4-parameter
       double-exponential — see ``deepSTRF.models.activations.ParametricDoubleExponential``.
     """
-    def __init__(self, n_frequency_bands=34, kernel_size: tuple = (3, 9), c_hidden: int = 10, n_hidden: int = 20, out_neurons: int = 1, output_activation: nn.Module = nn.Sigmoid(), prefiltering=None):
+    def __init__(self, n_frequency_bands=34, kernel_size: tuple = (3, 9), c_hidden: int = 10, n_hidden: int = 20, out_neurons: int = 1, output_activation: nn.Module = None, prefiltering: nn.Module = None):
         temporal_window_size = 3 * (kernel_size[1] - 1)
-        super(ConvNet2D, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
+        super(ConvNet2D, self).__init__(n_frequency_bands, temporal_window_size, out_neurons=out_neurons, prefiltering=prefiltering)
+        self.output_activation = output_activation if output_activation is not None else nn.Sigmoid()
 
         # general
         self.K = kernel_size
@@ -494,7 +499,7 @@ class ConvNet2D(AudioEncodingModel):
 
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
-        y = self.prefiltering_block(x) if self.prefiltering else x
+        y = self.prefiltering(x)
         y = self.input_norm(y)                  # causal per-timestep freq norm
         y = self.convs(self.pad(y))             # (B, C, F_down, T)
         y = y.flatten(start_dim=1, end_dim=2)   # (B, C*F_down, T)
@@ -565,8 +570,9 @@ class Transformer(AudioEncodingModel):
     """
 
     def __init__(self, n_frequency_bands=34, temporal_window_size=1, token_size=(34, 1), embedding_dim=48, n_heads=1,
-                 n_layers=1, out_neurons: int = 1, output_activation: nn.Module = nn.Identity(), prefiltering=None):
-        super(Transformer, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
+                 n_layers=1, out_neurons: int = 1, output_activation: nn.Module = None, prefiltering: nn.Module = None):
+        super(Transformer, self).__init__(n_frequency_bands, temporal_window_size, out_neurons=out_neurons, prefiltering=prefiltering)
+        self.output_activation = output_activation if output_activation is not None else nn.Identity()
 
         # patch dimensions and strides
         self.K_f, self.K_t = token_size
@@ -602,7 +608,7 @@ class Transformer(AudioEncodingModel):
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
         B, C, F, L = x.shape
-        y = self.prefiltering_block(x) if self.prefiltering else x  # (B, C=1|2, F, L)
+        y = self.prefiltering(x)                                    # (B, C=1|2, F, L)
         y = self.unfold_context(self.pad(y))  # (B, C*F*T, L)
         y = y.permute(0, 2, 1).flatten(0, 1)  # (B*L, C*F*T)
 
@@ -685,8 +691,9 @@ class StateNet(AudioEncodingModel):
     """
     def __init__(self, n_frequency_bands=34, temporal_window_size=1, kernel_size: int = 7, stride: int = 3,
                  hidden_channels: int = 7, connectivity: str = 'LC', rnn_type: str = 'GRU', out_neurons: int = 1,
-                 output_activation: nn.Module = nn.Sigmoid(), prefiltering=None):
-        super(StateNet, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
+                 output_activation: nn.Module = None, prefiltering: nn.Module = None):
+        super(StateNet, self).__init__(n_frequency_bands, temporal_window_size, out_neurons=out_neurons, prefiltering=prefiltering)
+        self.output_activation = output_activation if output_activation is not None else nn.Sigmoid()
 
         # general
         self.K = kernel_size
@@ -744,7 +751,7 @@ class StateNet(AudioEncodingModel):
 
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
-        y = self.prefiltering_block(x) if self.prefiltering else x  # (B, 1|2, F, T)
+        y = self.prefiltering(x)                                    # (B, 1|2, F, T)
         y = y.permute(3, 0, 1, 2)                                   # (T, B, 2, F)
 
         # pass through spectral encoder efficiently

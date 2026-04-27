@@ -3,68 +3,51 @@ import torch.nn as nn
 from torch.nn.parameter import Parameter
 
 from deepSTRF.models.neural_model import NeuralModel
-from deepSTRF.models.prefiltering import get_CFs, freq_to_tau, tau_to_a, AdapTrans, ICAdaptation
 
 
 class AudioEncodingModel(NeuralModel):
     """
-    General mother class for ENCODING models of AUDIO sensory neural responses.
+    Base class for encoding models of audio neural responses.
 
-    The forward() method takes as input a single-channel spectrogram of shape (B, C=1, F, T)
+    Forward signature: input ``(B, 1, F, T)`` spectrogram → output
+    ``(B, N, R=1, T)`` neural activity. Concrete subclasses populate
+    the four canonical slots ``wav2spec`` / ``prefiltering`` / ``core``
+    / ``readout`` (see :class:`NeuralModel`).
 
-    TODO: is it the best way (i.e., syntax) to integrate prefiltering schemes ?
-    The constructor prepares the instanciation of the cochleagram prefiltering block, which comes before the
-    computational backbone.
-    prefiltering_dict = {'prefiltering': 'AdapTrans', 'dt': 1.0', 'min_freq': 500, 'max_freq': 20000, 'scale': 'mel'}
-    prefiltering: None (default), 'adaptrans' (recommended), 'willmore'
-
+    Parameters
+    ----------
+    n_frequency_bands : int
+        Number of input spectrogram frequency bands ``F``.
+    temporal_window_size : int
+        STRF temporal extent ``T`` in frames. Used by ``STRF_gradmap``
+        to size the null stimulus.
+    out_neurons : int, default 1
+        Number of output neurons ``N``.
+    prefiltering : nn.Module, optional
+        Optional spectrogram prefilter (e.g. ``AdapTrans``,
+        ``ICAdaptation``). Must expose an ``out_channels`` integer
+        attribute so the model can size ``C_in`` automatically. ``None``
+        (default) gives ``nn.Identity()`` and ``C_in = 1``.
     """
 
-    def __init__(self, n_frequency_bands, temporal_window_size, out_neurons: int = 1, output_activation: nn.Module = nn.Identity(), prefiltering: dict = None, *args, **kwargs):
-        super().__init__(out_neurons, output_activation, *args, **kwargs)
+    def __init__(self, n_frequency_bands: int, temporal_window_size: int,
+                 out_neurons: int = 1, prefiltering: nn.Module = None,
+                 *args, **kwargs):
+        super().__init__(out_neurons=out_neurons, *args, **kwargs)
 
         # general attributes for AUDIO response models
         self.F = n_frequency_bands
         self.T = temporal_window_size
 
-        # prefiltering: None / AdapTrans / Willmore
+        # prefiltering: an nn.Module exposing out_channels (int)
         if prefiltering is None:
-            self.prefiltering = False
+            self.prefiltering = nn.Identity()
             self.C_in = 1
         else:
-            assert isinstance(prefiltering, dict) and 'type' in prefiltering.keys(), "Invalid format for 'prefiltering'argument. Expected dict with 'type' key."
-            prefiltering_type = prefiltering['type']
-
-            if prefiltering_type.lower() == 'adaptrans':
-                self.prefiltering = True
-                self.dt = prefiltering['dt']  # 5.0 [ms]
-                self.fmin = prefiltering['min_freq']  # 500 [Hz]
-                self.fmax = prefiltering['max_freq']  # 20,000 [Hz]
-                self.CF_scale = prefiltering['scale']  # 'mel'
-                cf = get_CFs(self.fmin, self.fmax, self.F, self.CF_scale)
-                tau = freq_to_tau(cf)
-                a = tau_to_a(tau, dt=self.dt)
-                w = torch.ones_like(a) * 0.75
-                K = round(3 * max(tau).item()) + 1
-                self.prefiltering_block = AdapTrans(init_a_vals=a, init_w_vals=w, kernel_size=K, learnable=True)
-                self.C_in = 2
-
-            elif prefiltering_type.lower() == 'willmore':
-                self.prefiltering = True
-                self.dt = prefiltering['dt']
-                self.fmin = prefiltering['min_freq']
-                self.fmax = prefiltering['max_freq']
-                self.CF_scale = prefiltering['scale']
-                cf = get_CFs(self.fmin, self.fmax, self.F, self.CF_scale)
-                tau = freq_to_tau(cf)
-                a = tau_to_a(tau, dt=self.dt)
-                K = round(3 * max(tau).item()) + 1
-                self.prefiltering_block = ICAdaptation(init_a_vals=a, kernel_size=K)
-                self.C_in = 1
-
-            else:
-                raise NotImplementedError(
-                    f"Unknown prefiltering {prefiltering_type}. Currently supported spectrogram prefiltering are 'adaptrans' and 'willmore'.")
+            assert isinstance(prefiltering, nn.Module), \
+                f"prefiltering must be an nn.Module instance, got {type(prefiltering).__name__}"
+            self.prefiltering = prefiltering
+            self.C_in = getattr(prefiltering, 'out_channels', 1)
 
     def validate(self):
         super().validate()
@@ -72,41 +55,61 @@ class AudioEncodingModel(NeuralModel):
             f"self.F must be a positive int (got {self.F!r})"
         assert isinstance(self.T, int) and self.T > 0, \
             f"self.T must be a positive int (got {self.T!r})"
-        assert self.C_in in (1, 2), \
-            f"self.C_in must be 1 or 2 (got {self.C_in!r})"
+        assert isinstance(self.C_in, int) and self.C_in >= 1, \
+            f"self.C_in must be a positive int (got {self.C_in!r})"
 
-    def STRF_gradmap(self, T=None):
+    def STRF_gradmap(self, T: int = None):
         """
-            Get the SPECTRO-Temporal Receptive Field (STRF) of the OUTPUT neurons, with a history of T timesteps, as
-             the changes in the stimulus that elicit an increase in output activity.
+        Compute one STRF gradient map per output neuron in parallel.
 
-            cf. Rançon et al. (2025), "Temporal recurrence as a general mechanism to explain neural responses in
-                the auditory system", BioRxiv
+        For each of the ``N`` output neurons, finds the changes in a
+        null spectrogram that elicit an increase in that neuron's
+        activity at the last timestep (a Spike-Triggered-Average-like
+        readout, computed by autodiff). The batch dimension is used to
+        parallelize across neurons in a single forward / backward pass.
 
-            Returns a (N, 1, F, T) tensor
+        Parameters
+        ----------
+        T : int, optional
+            Time-axis length of the null stimulus. Defaults to
+            ``self.T``.
 
-            TODO:
-             - handle multiple input channels (on & off) because of adaptrans ?
-             - allow custom losses ? (e.g. sustained activity rather than last spike ?)
+        Returns
+        -------
+        Tensor of shape ``(N, 1, F, T)``
+            Per-neuron gradient map.
+
+        References
+        ----------
+        Rançon et al. (2025), "Temporal recurrence as a general
+        mechanism to explain neural responses in the auditory system."
+
+        Notes
+        -----
+        Future work — see TODO.md:
+
+        - Handle multi-channel inputs (the gradient is currently shaped
+          ``(N, 1, F, T)`` regardless of ``C_in``; an AdapTrans-prefiltered
+          model has ``C_in == 2`` and the per-channel gradients differ).
+        - Allow custom losses (e.g. sustained activity rather than
+          last-timestep-only).
         """
-        B = self.O      # use the batch dimension to parallelize
+        B = self.O      # use the batch dimension to parallelize across neurons
 
-        # initial stim = null stimulus = absence of bias / absence of information / no entropy
-        if T is not None:
-            stim_opt = Parameter(torch.zeros(B, 1, self.F, T), requires_grad=True)
-        else:
-            stim_opt = Parameter(torch.zeros(B, 1, self.F, self.T), requires_grad=True)
+        # initial stim = null stimulus = absence of bias / no information
+        T_eff = T if T is not None else self.T
+        stim_opt = Parameter(torch.zeros(B, 1, self.F, T_eff), requires_grad=True)
 
-        # forward pass
-        response = self.forward(stim_opt)  # (B=N, N, T)
+        # forward pass — output is (B=N, N, 1, T_eff)
+        response = self.forward(stim_opt)
 
-        # Spike-Triggered Average (STA) loss = activation at the last timestep
-        loss = - torch.trace(response[:, :, -1])     # scalar
+        # Spike-Triggered-Average loss = sum of diagonal activations at last timestep
+        # response[:, :, 0, -1] is (N, N); trace gathers the diagonal — each row's
+        # neuron predicted from its own batched null input.
+        loss = - torch.trace(response[..., -1].squeeze(-2) if response.dim() == 4
+                             else response[..., -1])
 
-        # backward pass
+        # backward pass populates stim_opt.grad
         loss.backward()
 
-        # STRF / gradmap = gradient of this loss w.r.t. this null input
-        strf_gradmap = stim_opt.grad
-
-        return strf_gradmap
+        return stim_opt.grad
