@@ -13,19 +13,60 @@ from deepSTRF.models.prefiltering import AdapTrans
 # graph; users who don't pick rnn_type='S4' shouldn't pay either cost.
 
 
-# TODO:
-#  - for all models but L, allow to choose the output nonlinearity, e.g. a 4-parameter sigmoid ?
-#  - padding temporel à gauche !!!
-#  - BatchNorm is non local (i.e. non causal) !!!
-
-
 class Linear(AudioEncodingModel):
     """
-    The canonical, unregularized, unparametrized Linear (L) model.
+    The canonical Linear (L) STRF model — a single SpectroTemporal Receptive
+    Field convolved with the (optionally prefiltered) input spectrogram.
 
+    The convolution kernel of shape ``(C_in, F, T)`` is left-padded by
+    ``T-1`` zeros to remain causal and produce one output frame per input
+    frame. With ``out_neurons = N`` the model fits ``N`` independent STRFs
+    in parallel.
+
+    A causal LayerNorm over the frequency axis is applied to the input
+    before the conv. Empirically, this stabilizes training of small
+    unparameterized STRF models substantially. Unlike BatchNorm, LayerNorm
+    cannot be absorbed into the conv weights at inference (it computes
+    fresh statistics per sample), so the model is technically nonlinear in
+    the strict sense — but the per-time-step normalization is mild and the
+    learned kernel still serves as a directly interpretable STRF up to a
+    per-sample input scaling.
+
+    Parameters
+    ----------
+    n_frequency_bands : int, default 34
+        Number of input spectrogram frequency bands ``F``.
+    temporal_window_size : int, default 9
+        STRF temporal extent ``T`` in frames.
+    out_neurons : int, default 1
+        Number of output neurons ``N``.
+    prefiltering : dict or None
+        Optional spectrogram prefilter spec (e.g. AdapTrans). See
+        ``AudioEncodingModel`` for the dict format.
+    parameterization : dict or None
+        Optional STRF kernel parameterization. ``{'type': 'DCLS',
+        'num_gauss': k}`` for a sum of ``k`` Gaussians (Khalfaoui-Hassani
+        et al. 2023, ICLR); ``{'type': 'separable'}`` for a
+        frequency × time separable kernel. ``None`` (default) gives a
+        vanilla full kernel.
+
+    References
+    ----------
+    The L model is a folklore baseline; canonical formulations appear in:
+
+    Theunissen, Sen & Doupe (2000). "Spectral-Temporal Receptive Fields of
+    Nonlinear Auditory Neurons Obtained Using Natural Sounds."
+    J. Neurosci. 20(6): 2315–2331.
+    https://doi.org/10.1523/JNEUROSCI.20-06-02315.2000
+
+    Sahani & Linden (2003). "How Linear are Auditory Cortical Responses?"
+    NIPS. https://papers.nips.cc/paper_files/paper/2002/hash/...
     """
     def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, prefiltering=None, parameterization=None):
         super(Linear, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, nn.Identity(), prefiltering)
+
+        # causal input normalization: per-timestep LayerNorm across frequency
+        self.input_norm = layers.CausalLayerNorm(self.F, dim=-2)
 
         self.pad = nn.ZeroPad2d((self.T - 1, 0, 0, 0))
 
@@ -37,17 +78,14 @@ class Linear(AudioEncodingModel):
             self.parameterization = True
             parameterization_type = parameterization['type']
 
-            # parameterization with a fixed number of gaussians,
-            # see Khalfaoui-Hassani et al. (2023), "Dilated Convolutions with Learnable Spacings", ICLR
-            # TODO: j'ai l'impression qu'avec la parametrization DCLS les gaussiennes sont initialisees dans la partie
-            #  superieure de la fenetre spectro-temporelle ! Verifier que tout va bien.
             if parameterization_type == 'DCLS':
+                # Sum-of-Gaussians STRF kernel; see Khalfaoui-Hassani et al.
+                # (2023), "Dilated Convolutions with Learnable Spacings", ICLR.
                 self.num_gaussians = parameterization['num_gauss']
                 self.conv = layers.ParametricSTRF(self.F, self.T, self.C_in, self.O, self.num_gaussians)
 
-            # parameterization with a frequency-time separable kernel
-            # TODO: not frequency-time separable here !
             elif parameterization_type == 'separable':
+                # Frequency × time separable kernel — rank-1 by construction.
                 self.conv = nn.Sequential(
                     nn.Conv2d(self.C_in, self.O, kernel_size=(self.F, 1)),
                     nn.Conv2d(self.O, self.O, groups=self.O, kernel_size=(1, self.T)),
@@ -58,8 +96,9 @@ class Linear(AudioEncodingModel):
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
         y = self.prefiltering_block(x) if self.prefiltering else x      # (B, 1|2, F, T)
+        y = self.input_norm(y)                                          # causal per-timestep freq norm
         y = self.conv(self.pad(y))                                      # (B, N, 1, T)
-        y = self.output_activation(y)                                   # TODO
+        y = self.output_activation(y)
         return y
 
     def STRF_weight(self, polarity='ON'):
@@ -89,9 +128,23 @@ class Linear(AudioEncodingModel):
 
 class LinearNonlinear(Linear):
     """
-    A Linear model, but with a nonlinear activation function at its output.
-    Because both are so close in implementation, this class indirectly inherits from AudioEncodingModel through Linear.
+    Linear-Nonlinear (LN) STRF model — the Linear model followed by a
+    pointwise output nonlinearity.
 
+    Inherits everything from ``Linear`` (causal input LayerNorm, STRF
+    conv with optional parameterization, left-padded causal convolution)
+    and only swaps the output activation. By default, ``nn.Sigmoid``;
+    pass any ``nn.Module`` to override.
+
+    Parameters
+    ----------
+    output_activation : nn.Module, default nn.Sigmoid()
+        Pointwise nonlinearity applied to each ``(neuron, time)`` output.
+        See ``deepSTRF.models.activations`` for parametric variants.
+
+    See Also
+    --------
+    Linear : Same architecture without the output nonlinearity.
     """
     def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, output_activation: nn.Module = nn.Sigmoid(), prefiltering=None, parameterization=None):
         super(LinearNonlinear, self).__init__(
