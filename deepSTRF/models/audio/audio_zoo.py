@@ -424,23 +424,30 @@ class ConvNet2D(AudioEncodingModel):
     - The output activation is configurable; the paper uses a 4-parameter
       double-exponential — see ``deepSTRF.models.activations.ParametricDoubleExponential``.
     """
-    def __init__(self, n_frequency_bands=34, kernel_size: tuple = (3, 9), c_hidden: int = 10, n_hidden: int = 20, out_neurons: int = 1, output_activation: nn.Module = None, prefiltering: nn.Module = None):
+    def __init__(self, n_frequency_bands: int = 34, kernel_size: tuple = (3, 9),
+                 c_hidden: int = 10, n_hidden: int = 20,
+                 out_neurons: int = 1,
+                 output_activation: nn.Module = None,
+                 prefiltering: nn.Module = None):
         temporal_window_size = 3 * (kernel_size[1] - 1)
-        super(ConvNet2D, self).__init__(n_frequency_bands, temporal_window_size, out_neurons=out_neurons, prefiltering=prefiltering)
-        self.output_activation = output_activation if output_activation is not None else nn.Sigmoid()
-
-        # general
+        super().__init__(
+            n_frequency_bands=n_frequency_bands,
+            temporal_window_size=temporal_window_size,
+            out_neurons=out_neurons,
+            prefiltering=prefiltering,
+        )
         self.K = kernel_size
         self.C = c_hidden
         self.H = n_hidden
 
-        # causal input normalization: per-timestep LayerNorm across frequency
-        self.input_norm = layers.CausalLayerNorm(self.F, dim=-2)
-
-        # padding left only (causal inference): three convs each shrink time by K[1]-1
-        self.pad = torch.nn.ZeroPad2d((3 * (self.K[1] - 1), 0, 0, 0))
-
-        self.convs = nn.Sequential(
+        # core: input freq norm → causal left-pad → 3× (Conv2d → LN → LeakyReLU)
+        #       → flatten (C, F_down) into a single feature axis.
+        # Three convs each shrink time by K_T-1 (and frequency by K_F-1); the
+        # explicit left-pad of 3*(K_T-1) zeros restores the time length.
+        F_down = self.F - 3 * (self.K[0] - 1)  # frequency dim after 3 convs
+        self.core = nn.Sequential(
+            layers.CausalLayerNorm(self.F, dim=-2),
+            nn.ZeroPad2d((3 * (self.K[1] - 1), 0, 0, 0)),
             nn.Conv2d(self.C_in, self.C, kernel_size=self.K, stride=1),
             layers.CausalLayerNorm(self.C, dim=1),
             nn.LeakyReLU(0.1),
@@ -450,25 +457,17 @@ class ConvNet2D(AudioEncodingModel):
             nn.Conv2d(self.C, self.C, kernel_size=self.K, stride=1),
             layers.CausalLayerNorm(self.C, dim=1),
             nn.LeakyReLU(0.1),
-        )
-        F_down = self.F - 3 * (self.K[0] - 1)  # frequency dimension after the 3 convs
-
-        self.fc = nn.Sequential(
-            nn.Linear(in_features=self.C * F_down, out_features=self.H),
-            nn.LeakyReLU(0.1),
-            nn.Linear(in_features=self.H, out_features=self.O),
+            nn.Flatten(start_dim=1, end_dim=2),  # (B, C, F_down, T) → (B, C*F_down, T)
         )
 
-    def forward(self, x):
-        # x.shape must be (B, 1, F, T)
-        y = self.prefiltering(x)
-        y = self.input_norm(y)                  # causal per-timestep freq norm
-        y = self.convs(self.pad(y))             # (B, C, F_down, T)
-        y = y.flatten(start_dim=1, end_dim=2)   # (B, C*F_down, T)
-        y = y.permute(0, 2, 1)                  # (B, T, C*F_down)
-        y = self.output_activation(self.fc(y))  # (B, T, N)
-        y = y.permute(0, 2, 1)                  # (B, N, T)  TODO: --> (B, N, 1, T)
-        return y
+        # readout: per-timestep MLP (in → hidden → N) with output activation.
+        self.readout = LinearReadout(
+            in_features=self.C * F_down,
+            out_neurons=self.O,
+            hidden=self.H,
+            activation=output_activation if output_activation is not None else nn.Sigmoid(),
+        )
+        # forward inherited from NeuralModel
 
 
 class Transformer(AudioEncodingModel):
