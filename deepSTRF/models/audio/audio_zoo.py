@@ -5,10 +5,12 @@ import torch.nn.functional
 from .audio_model import AudioEncodingModel
 
 import deepSTRF.models.layers as layers
-#from deepSTRF.models.dependencies.s4 import S4Block  # TODO: problem of circular import with this dependency
 from deepSTRF.models.dependencies.lmu import LMU
 from deepSTRF.models.dependencies.mamba import MambaBlock, MambaConfig
 from deepSTRF.models.prefiltering import AdapTrans
+# S4Block is imported lazily inside StateNet — its module emits noisy stderr
+# warnings about missing CUDA extensions and pulls a heavy dependency
+# graph; users who don't pick rnn_type='S4' shouldn't pay either cost.
 
 
 # TODO:
@@ -438,6 +440,7 @@ class StateNet(AudioEncodingModel):
         elif self.rnn_type == "Mamba":
             self.rnn = MambaBlock(MambaConfig(d_model=self.H, n_layers=1))
         elif self.rnn_type == "S4":
+            from deepSTRF.models.dependencies.s4 import S4Block
             self.rnn = S4Block(d_model=self.H, transposed=False)
         else:
             raise NotImplementedError(f"received unknown rnn_type '{rnn_type}': please choose between: "
