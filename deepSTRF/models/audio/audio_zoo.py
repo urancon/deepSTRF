@@ -5,48 +5,62 @@ import torch.nn.functional
 from .audio_model import AudioNeuralModel
 
 import deepSTRF.models.layers as layers
-from deepSTRF.models.dependencies.s4 import S4Block
+#from deepSTRF.models.dependencies.s4 import S4Block  # TODO: problem of circular import with this dependency
 from deepSTRF.models.dependencies.lmu import LMU
 from deepSTRF.models.dependencies.mamba import MambaBlock, MambaConfig
 from deepSTRF.models.prefiltering import AdapTrans
 
 
-# TODO: for all models but L, allow to choose the output nonlinearity, e.g. a 4-parameter sigmoid ?
-
-# TODO: j'ai l'impression qu'avec la parametrization DCLS les gaussiennes sont initialisees dans la partie superieure
-#  de la fenetre spectro-temporelle ! Verifier que tout va bien.
+# TODO:
+#  - for all models but L, allow to choose the output nonlinearity, e.g. a 4-parameter sigmoid ?
+#  - padding temporel à gauche !!!
+#  - BatchNorm is non local (i.e. non causal) !!!
 
 
 class Linear(AudioNeuralModel):
     """
-    The canonical, unregularized, unparametrized Linear (L) model
-
-    TODO: implement other types of parametrization, e.g. separable kernels
+    The canonical, unregularized, unparametrized Linear (L) model.
 
     """
     def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, prefiltering=None, parameterization=None):
-        super(Linear, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, prefiltering)
+        super(Linear, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, nn.Identity(), prefiltering)
+
+        self.pad = nn.ZeroPad2d((self.T - 1, 0, 0, 0))
 
         if parameterization is None:
             self.parameterization = False
-            self.conv = nn.Conv2d(self.C_in, self.O, kernel_size=(self.F, self.T), stride=1, padding=(0, (self.T - 1) // 2))
+            self.conv = nn.Conv2d(self.C_in, self.O, kernel_size=(self.F, self.T), stride=1)
         else:
-            assert isinstance(parameterization, dict) and 'type' in parameterization.keys(), "Unvalid format for 'parametrization'argument. Expected dict with 'type' key."
+            assert isinstance(parameterization, dict) and 'type' in parameterization.keys(), "Invalid format for 'parametrization'argument. Expected dict with 'type' key."
             self.parameterization = True
             parameterization_type = parameterization['type']
+
+            # parameterization with a fixed number of gaussians,
+            # see Khalfaoui-Hassani et al. (2023), "Dilated Convolutions with Learnable Spacings", ICLR
+            # TODO: j'ai l'impression qu'avec la parametrization DCLS les gaussiennes sont initialisees dans la partie
+            #  superieure de la fenetre spectro-temporelle ! Verifier que tout va bien.
             if parameterization_type == 'DCLS':
                 self.num_gaussians = parameterization['num_gauss']
                 self.conv = layers.ParametricSTRF(self.F, self.T, self.C_in, self.O, self.num_gaussians)
+
+            # parameterization with a frequency-time separable kernel
+            # TODO: not frequency-time separable here !
+            elif parameterization_type == 'separable':
+                self.conv = nn.Sequential(
+                    nn.Conv2d(self.C_in, self.O, kernel_size=(self.F, 1)),
+                    nn.Conv2d(self.O, self.O, groups=self.O, kernel_size=(1, self.T)),
+                )
             else:
-                raise NotImplementedError(f"Unknown parameterization {parameterization_type}. Currently supported STRF parameterizations are 'DCLS'.")
+                raise NotImplementedError(f"Unknown parameterization {parameterization_type}. Currently supported STRF parameterizations are 'DCLS' or 'separable'.")
 
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
-        y = self.prefiltering_block(x) if self.prefiltering else x
-        y = self.conv(y)
+        y = self.prefiltering_block(x) if self.prefiltering else x      # (B, 1|2, F, T)
+        y = self.conv(self.pad(y))                                      # (B, N, 1, T)
+        y = self.output_activation(y)                                   # TODO
         return y
 
-    def STRFs(self, polarity='ON'):
+    def STRF_weight(self, polarity='ON'):
 
         # check argument validity
         if polarity in ['ON', 'On', 'on', 0]:
@@ -64,65 +78,24 @@ class Linear(AudioNeuralModel):
 
         # choose polarity between None/ON/OFF
         if isinstance(self.prefiltering_block, AdapTrans):
-            strf = strf[0, polarity_idx, :, :]
+            strf = strf[:, polarity_idx, :, :]
         else:
-            strf = strf[0, 0, :, :]
+            strf = strf[:, 0, :, :]
 
         return strf.detach()
 
 
-class LinearNonlinear(AudioNeuralModel):
+class LinearNonlinear(Linear):
     """
-    A Linear model, but with a nonlinear activation functionat its output.
+    A Linear model, but with a nonlinear activation function at its output.
+    Because both are so close in implementation, this class indirectly inherits from AudioNeuralModel through Linear.
 
     """
-    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, prefiltering=None, parameterization=None):
+    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, output_activation: nn.Module = nn.Sigmoid(), prefiltering=None, parameterization=None):
         super(LinearNonlinear, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, prefiltering)
 
-        if parameterization is None:
-            self.parameterization = False
-            self.conv = nn.Conv2d(self.C_in, self.O, kernel_size=(self.F, self.T), stride=1, padding=(0, (self.T - 1) // 2))
-        else:
-            assert isinstance(parameterization, dict) and 'type' in parameterization.keys(), "Unvalid format for 'parametrization'argument. Expected dict with 'type' key."
-            self.parameterization = True
-            parameterization_type = parameterization['type']
-            if parameterization_type == 'DCLS':
-                self.num_gaussians = parameterization['num_gauss']
-                self.conv = layers.ParametricSTRF(self.F, self.T, self.C_in, self.O, self.num_gaussians)
-            else:
-                raise NotImplementedError(f"Unknown parameterization {parameterization_type}. Currently supported STRF parameterizations are 'DCLS'.")
+        self.output_activation = output_activation
 
-        self.activation = nn.Sigmoid()
-
-    def forward(self, x):
-        # x.shape must be (B, 1, F, T)
-        y = self.prefiltering_block(x) if self.prefiltering else x
-        y = self.activation(self.conv(y))
-        return y
-
-    def STRFs(self, polarity='ON'):
-
-        # check argument validity
-        if polarity in ['ON', 'On', 'on', 0]:
-            polarity_idx = 0
-        elif polarity in ['OFF', 'Off', 'off', 1]:
-            polarity_idx = 1
-        else:
-            raise ValueError("argument 'polarity' must be either 'ON', 'On', 'on', 'OFF', 'Off' or 'off'")
-
-        # construct STRF depending on parametrization
-        if not self.parameterization:
-            strf = self.conv.weight.data.cpu()
-        else:
-            strf = self.conv.build_kernel()
-
-        # choose polarity between None/ON/OFF
-        if isinstance(self.prefiltering_block, AdapTrans):
-            strf = strf[0, polarity_idx, :, :]
-        else:
-            strf = strf[0, 0, :, :]
-
-        return strf.detach()
 
 
 class NetworkReceptiveField(AudioNeuralModel):
@@ -135,15 +108,17 @@ class NetworkReceptiveField(AudioNeuralModel):
     Contrarily to the original paper, we can also parameterize the filters even in this model !
 
     """
-    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, n_hidden: int = 20, out_neurons: int = 1, prefiltering=None, parameterization=None):
-        super(NetworkReceptiveField, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, prefiltering)
+    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, n_hidden: int = 20, out_neurons: int = 1, output_activation: nn.Module = nn.Sigmoid(), prefiltering=None, parameterization=None):
+        super(NetworkReceptiveField, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
+
+        self.pad = nn.ZeroPad2d((self.T - 1, 0, 0, 0))
 
         self.H = n_hidden
 
         if parameterization is None:
             self.parameterization = False
             self.convs = nn.Sequential(
-                nn.Conv2d(self.C_in, self.H, kernel_size=(self.F, self.T), stride=1, padding=(0, (self.T - 1) // 2)),
+                nn.Conv2d(self.C_in, self.H, kernel_size=(self.F, self.T), stride=1),
                 nn.BatchNorm2d(self.H),
                 nn.Sigmoid(),
                 nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
@@ -165,12 +140,11 @@ class NetworkReceptiveField(AudioNeuralModel):
             else:
                 raise NotImplementedError(f"Unknown parameterization {parameterization_type}. Currently supported STRF parameterizations are 'DCLS'.")
 
-        self.activation = nn.Sigmoid()
-
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
-        y = self.prefiltering_block(x) if self.prefiltering else x
-        y = self.activation(self.convs(y))
+        y = self.prefiltering_block(x) if self.prefiltering else x      # (B, 1|2, F, T)
+        y = self.convs(self.pad(y))                                     # (B, N, 1, T)
+        y = self.output_activation(y)                                   # TODO
         return y
 
     def STRFs(self, hidden_idx=0, polarity='ON'):
@@ -206,15 +180,19 @@ class DNet(AudioNeuralModel):
             Plos Comp. Biol., https://doi.org/10.1371/journal.pcbi.1006618
 
     """
-    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, n_hidden: int = 20, init_tau=2., decay_input=True, out_neurons: int = 1, prefiltering=None, parameterization=None):
-        super(DNet, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, prefiltering)
+    def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, n_hidden: int = 20, init_tau=2., decay_input=True, out_neurons: int = 1, output_activation: nn.Module = nn.Identity(), prefiltering=None, parameterization=None):
+        super(DNet, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
+
 
         self.H = n_hidden
+
+        # padding left only (causal inference)
+        self.pad = nn.ZeroPad2d((self.T - 1, 0, 0, 0))
 
         if parameterization is None:
             self.parameterization = False
             self.convs = nn.Sequential(
-                nn.Conv2d(self.C_in, self.H, kernel_size=(self.F, self.T), stride=1, padding=(0, (self.T - 1) // 2)),
+                nn.Conv2d(self.C_in, self.H, kernel_size=(self.F, self.T), stride=1),
                 nn.BatchNorm2d(self.H),
                 nn.Sigmoid(),
                 layers.LearnableExponentialDecay(self.H, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input),
@@ -233,7 +211,7 @@ class DNet(AudioNeuralModel):
                     layers.ParametricSTRF(self.F, self.T, self.C_in, self.H, self.num_gaussians),
                     nn.BatchNorm2d(self.H),
                     nn.Sigmoid(),
-                    layers.LearnableExponentialDecay(self.H, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input),  # TODO: why is kernel_size = 7 * init_tau ???
+                    layers.LearnableExponentialDecay(self.H, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input),
                     nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
                     nn.Sigmoid(),
                     layers.LearnableExponentialDecay(1, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input)
@@ -243,8 +221,9 @@ class DNet(AudioNeuralModel):
 
     def forward(self, x):
         # x.shape must be (B, 1, F, T)
-        y = self.prefiltering_block(x) if self.prefiltering else x
-        y = self.convs(y)
+        y = self.prefiltering_block(x) if self.prefiltering else x      # (B, 1|2, F, T)
+        y = self.convs(self.pad(y))                                     # (B, N, 1, T)
+        y = self.output_activation(y)                                   # TODO: output activation
         return y
 
     def STRFs(self, hidden_idx=0, polarity='ON'):
@@ -283,23 +262,26 @@ class ConvNet2D(AudioNeuralModel):
      - Zero padding along frequency dimension --> downsampling along this dimension after self.convs
 
     """
-    def __init__(self, n_frequency_bands=34, kernel_size: tuple = (3, 9), c_hidden: int = 10, n_hidden: int = 20, out_neurons: int = 1, prefiltering=None):
-        temporal_window_size = kernel_size[1]  # TODO: find the formula for RF size
-        super(ConvNet2D, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, prefiltering)
+    def __init__(self, n_frequency_bands=34, kernel_size: tuple = (3, 9), c_hidden: int = 10, n_hidden: int = 20, out_neurons: int = 1, output_activation: nn.Module = nn.Sigmoid(), prefiltering=None):
+        temporal_window_size = 3 * (self.K[1] - 1)
+        super(ConvNet2D, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
 
         # general
         self.K = kernel_size
         self.C = c_hidden
         self.H = n_hidden
 
+        # padding left only (causal inference)
+        self.pad = torch.nn.ZeroPad2d((3 * (self.K[1] - 1), 0, 0, 0))
+
         self.convs = nn.Sequential(
-            nn.Conv2d(self.C_in, self.C, kernel_size=self.K, stride=1, padding=(0, (self.K[1] - 1) // 2)),
+            nn.Conv2d(self.C_in, self.C, kernel_size=self.K, stride=1),
             nn.BatchNorm2d(self.C),
             nn.LeakyReLU(0.1),
-            nn.Conv2d(self.C, self.C, kernel_size=self.K, stride=1, padding=(0, (self.K[1] - 1) // 2)),
+            nn.Conv2d(self.C, self.C, kernel_size=self.K, stride=1),
             nn.BatchNorm2d(self.C),
             nn.LeakyReLU(0.1),
-            nn.Conv2d(self.C, self.C, kernel_size=self.K, stride=1, padding=(0, (self.K[1] - 1) // 2)),
+            nn.Conv2d(self.C, self.C, kernel_size=self.K, stride=1),
             nn.BatchNorm2d(self.C),
             nn.LeakyReLU(0.1),
         )
@@ -320,13 +302,13 @@ class ConvNet2D(AudioNeuralModel):
         y = y.flatten(start_dim=1, end_dim=2)   # (B, C*F_down, T)
         y = y.permute(0, 2, 1)                  # (B, T, C*F_down)
         y = self.activation(self.fc(y))         # (B, T, N)
-        y = y.permute(0, 2, 1)                  # (B, N, T)
+        y = y.permute(0, 2, 1)                  # (B, N, T)  TODO: --> (B, N, 1, T)
         return y
 
 
 class Transformer(AudioNeuralModel):
     """
-    Attention-based, Transformer model
+    Attention-based, Transformer model.
 
         cf. Rançon et al. (2025), "Temporal recurrence as a general mechanism to explain neural responses in
                 the auditory system", BioRxiv
@@ -334,8 +316,8 @@ class Transformer(AudioNeuralModel):
     """
 
     def __init__(self, n_frequency_bands=34, temporal_window_size=1, token_size=(34, 1), embedding_dim=48, n_heads=1,
-                 n_layers=1, out_neurons: int = 1, prefiltering=None):
-        super(Transformer, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, prefiltering)
+                 n_layers=1, out_neurons: int = 1, output_activation: nn.Module = nn.Identity(), prefiltering=None):
+        super(Transformer, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
 
         # patch dimensions and strides
         self.K_f, self.K_t = token_size
@@ -391,7 +373,7 @@ class Transformer(AudioNeuralModel):
         y = y.flatten(start_dim=1, end_dim=2)   # (B*L, n_patches * patch_dim)
         y = y.unflatten(dim=0, sizes=(B, L))    # B, L, n_patches * patch_dim)
         y = self.readout(y)                     # (B, L, N)
-        y = y.permute(0, 2, 1)                  # (B, N, L)
+        y = y.permute(0, 2, 1)                  # (B, N, L)  TODO: --> (B, N, 1, L)
         return y
 
 
@@ -405,8 +387,9 @@ class StateNet(AudioNeuralModel):
 
     """
     def __init__(self, n_frequency_bands=34, temporal_window_size=1, kernel_size: int = 7, stride: int = 3,
-                 hidden_channels: int = 7, connectivity: str = 'LC', rnn_type: str = 'GRU', out_neurons: int = 1, prefiltering=None):
-        super(StateNet, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, prefiltering)
+                 hidden_channels: int = 7, connectivity: str = 'LC', rnn_type: str = 'GRU', out_neurons: int = 1,
+                 output_activation: nn.Module = nn.Sigmoid(), prefiltering=None):
+        super(StateNet, self).__init__(n_frequency_bands, temporal_window_size, out_neurons, output_activation, prefiltering)
 
         # general
         self.K = kernel_size
@@ -483,5 +466,8 @@ class StateNet(AudioNeuralModel):
             y = self.rnn(y)         # for mamba
 
         y = self.fc(y)              # (B, T, N)
-        y = y.permute(0, 2, 1)      # (B, N, T)
+        y = self.output_activation(y)  # (B, T, N)
+
+
+        y = y.permute(0, 2, 1)      # (B, N, T)  TODO: --> (B, N, 1, T)
         return y
