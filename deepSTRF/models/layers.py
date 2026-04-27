@@ -124,8 +124,10 @@ class ParametricSTRF(nn.Module):
         return kernel.to(device)
 
     def forward(self, x):
-        # x.shape = (B, N) or (B, T, N) or (*, N)
-        x = torch.nn.functional.pad(x, ((self.T - 1), 0, 0, 0), mode='constant', value=0.)
+        # x: (B, C_in, F, T). No internal padding — caller handles temporal
+        # padding (typically via an outer ZeroPad2d for left-only causal pad).
+        # This matches nn.Conv2d's no-pad default and avoids double-padding
+        # when an outer model (e.g. Linear, DNet) already pads.
         strf_kernel = self.build_kernel(x.device)
         out = torch.nn.functional.conv2d(x, strf_kernel, self.bias, stride=(1, 1))
         return out
@@ -168,8 +170,8 @@ class SeparableSTRF(nn.Module):
         return kernel.to(device)
 
     def forward(self, x):
-        # x.shape = (B, N) or (B, T, N) or (*, N)
-        x = torch.nn.functional.pad(x, ((self.T - 1), 0, 0, 0), mode='constant', value=0.)
+        # x: (B, C_in, F, T). No internal padding — caller handles temporal
+        # padding. See ParametricSTRF.forward for rationale.
         strf_kernel = self.build_kernel(x.device)
         out = torch.nn.functional.conv2d(x, strf_kernel, self.bias, stride=(1, 1))
         return out

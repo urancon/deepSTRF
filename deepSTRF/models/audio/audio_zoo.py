@@ -206,7 +206,7 @@ class DNet(AudioEncodingModel):
                 layers.LearnableExponentialDecay(self.H, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input),
                 nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
                 nn.Sigmoid(),
-                layers.LearnableExponentialDecay(1, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input)
+                layers.LearnableExponentialDecay(self.O, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input)
             )
 
         else:
@@ -222,7 +222,7 @@ class DNet(AudioEncodingModel):
                     layers.LearnableExponentialDecay(self.H, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input),
                     nn.Conv2d(self.H, self.O, kernel_size=1, stride=1),
                     nn.Sigmoid(),
-                    layers.LearnableExponentialDecay(1, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input)
+                    layers.LearnableExponentialDecay(self.O, kernel_size=round(init_tau * 7), init_tau=init_tau, decay_input=decay_input)
                 )
             else:
                 raise NotImplementedError(f"Unknown parameterization {parameterization_type}. Currently supported STRF parameterizations are 'DCLS'.")
