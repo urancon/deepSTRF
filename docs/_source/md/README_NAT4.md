@@ -75,3 +75,52 @@ Expected files in the data dir:
 * `A1_single_sites/` (extracted from `A1_single_sites.zip`)
 * `A1_pred_correlation.csv`
 * (likewise for PEG)
+
+
+## Estimation vs validation subsets
+
+NAT4 has two stim subsets: **est** (575 stims, R=1) and **val** (18 stims,
+R=20). Each `stim_meta` entry carries a `"subset"` field equal to
+`"est"` or `"val"` so you can filter at either load time or iteration time.
+
+```python
+# load only one subset (skips the per-site spike-time pass under subset='est')
+ds_est = NAT4_Dataset(area='A1', subset='est')   # 575 stims
+ds_val = NAT4_Dataset(area='A1', subset='val')   # 18 stims
+
+# or load everything and filter later
+ds = NAT4_Dataset(area='A1')                     # 593 stims
+ds.select_stims_by_attr('subset', 'val')         # __len__ -> 18
+                                                 # 33 val-less A1 cells auto-hidden
+                                                 # via the bidirectional rule
+ds.reset_stim_selection()                        # back to 593
+```
+
+Note: 33 of the 849 A1 cells have no val data. Under `subset='val'` (or
+`select_stims_by_attr('subset', 'val')`), the bidirectional rule in the
+base class hides them from `__getitem__` automatically, so training
+loops only see val-having cells. See
+[the data paradigm doc](data_paradigm.md#8-iteration-honours-the-current-selection-bidirectional)
+for the full contract.
+
+## Per-cell metadata
+
+`neuron_metadata[n]` carries the raw NEMS `cell_id` plus parsed components:
+
+| Field                | Example       | Notes                                                       |
+|----------------------|---------------|-------------------------------------------------------------|
+| `cell_id`            | `'ARM029a-04-1'` | Raw NEMS id.                                              |
+| `area`               | `'A1'`        | Cortical area (A1 or PEG).                                  |
+| `auditory`           | `True`        | Per-cell flag from `<area>_pred_correlation.csv`.           |
+| `site`               | `'ARM029a'`   | Recording site (animal + recording number + session).       |
+| `animal`             | `'ARM'`       | 3-letter animal code (e.g. ARM, CRD, DRX, TNC).             |
+| `electrode`          | `4`           | Electrode index, parsed from cell_id.                       |
+| `unit_in_electrode`  | `1`           | Unit index on that electrode.                               |
+
+Best-effort: any field whose source is missing or unparseable is `None`
+for that neuron. Combine with `select_pop_by_nrn_attr`, e.g.:
+
+```python
+ds.select_pop_by_nrn_attr('animal', 'ARM')       # all cells from animal ARM
+ds.select_pop_by_nrn_attr('auditory', True)      # the 777 / 339 auditory cells
+```

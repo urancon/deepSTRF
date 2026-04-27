@@ -57,8 +57,43 @@ http://dx.doi.org/10.6080/K0F769GP
 
 ## Setup
 
-**Requirements**: A CRCNS account to download the dataset.
+**Requirements**: a [CRCNS account](https://crcns.org/register) (the data
+host requires login).
 
-0. Download the data (**crcns-aa1.zip**) at [the original dataset repository](https://crcns.org/data-sets/aa/aa-1/about).
-1. Extract the files and place all three **all_stims/**, **Field_L_cells/** and **MLd_cells/** inside the **data/** folder.
-2. You can use it right away by creating a `CRCNS_AA1_Dataset(...)` object with the path to the **data/** folder
+Easiest path — auto-download via the CRCNS NERSC mirror:
+
+```python
+from deepSTRF.datasets.audio import CRCNS_AA1_Dataset
+
+ds = CRCNS_AA1_Dataset(
+    download=True, dt_ms=5,
+    crcns_username="your_username",
+    crcns_password="your_password",
+)
+```
+
+Alternatively, set `$CRCNS_USERNAME` / `$CRCNS_PASSWORD` in the env and
+omit the credential kwargs. Default cache dir is
+`platformdirs.user_cache_dir('deepSTRF')/CRCNS_AA1`, overridable via
+`$DEEPSTRF_DATA_DIR`. `download=True` is idempotent.
+
+If you already have the data laid out manually:
+1. Download `crcns-aa1.zip` at [the original dataset repository](https://crcns.org/data-sets/aa/aa-1/about).
+2. Extract `all_stims/`, `Field_L_cells/`, `MLd_cells/` into a `data/`
+   folder.
+3. `ds = CRCNS_AA1_Dataset('/path/to/data', dt_ms=5)`.
+
+## Filtering
+
+Each `stim_meta` dict carries `name`, `type` (`"conspecific"` or
+`"flatrip"`), `sample_rate`, `n_samples`, `duration_s`. Each
+`neuron_metadata` dict carries `cell_id`, `area` (`"Field_L"` or
+`"MLd"`), `animal_id`, `cell_seq`, `rig`. Combined with the
+[base-class selection API](data_paradigm.md#8-iteration-honours-the-current-selection-bidirectional):
+
+```python
+ds.select_pop_by_nrn_attr("area", "MLd")           # only MLd cells
+ds.select_stims_by_attr("type", "conspecific")     # only conspecific stims
+                                                   # (auto-hides 2 cells with
+                                                   # no conspecific data)
+```

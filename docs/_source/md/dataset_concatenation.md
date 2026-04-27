@@ -137,6 +137,19 @@ A `DataLoader` over the chimeric dataset under any of these selections
 visits only the relevant stims — no manual filtering, no risk of training
 on a fully-NaN batch item.
 
+The same idea works in the other direction. Filtering on a stim attribute
+(`select_stims_by_attr`, `select_stim`, `select_stims`) narrows iteration
+to the matching stims, and the bidirectional rule auto-hides cells that
+have no responses left in the selection:
+
+```python
+# train only on conspecific stims across the chimeric pool
+combined = aa1 + aa2
+combined.select_stims_by_attr("type", "conspecific")
+# - cells that have responses to >=1 conspecific stim survive
+# - cells that only have responses to flatrip / non-conspecific stims are hidden
+```
+
 ## Caller invariants we don't enforce
 
 - **Neuron and stim UIDs should be mutually exclusive across sources.**

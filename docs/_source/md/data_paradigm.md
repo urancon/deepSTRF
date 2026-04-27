@@ -173,17 +173,64 @@ per_neuron  = per_element.sum(dim=(0, 2)) / valid.float().sum(dim=(0, 2))
 6. **Subclasses of `NeuralDataset` must call `self.validate()` as the
    last line of `__init__`** (the old `self.compute_nrn_masks()` call is
    no longer needed — `nrn_masks` is a `@property` derived from responses).
-7. **`__len__` and `__getitem__` honour the current neuron selection.**
+7. **`__len__` and `__getitem__` honour the current selection — bidirectionally.**
    See §8 below — the contract deserves its own section.
 
-## 8. Iteration filters by the current neuron selection
+## 8. Iteration honours the current selection (bidirectional)
 
-Both `len(ds)` and `ds[i]` operate on the *iterable subset of stimuli* —
-the stimuli for which at least one currently selected neuron (in `self.I`)
-has valid response data. Stimuli that have only NaN responses against the
-selection are hidden.
+deepSTRF datasets carry two independent selection filters:
 
-Why this matters:
+| Attribute     | Type           | "No restriction" sentinel | Default         |
+|---------------|----------------|---------------------------|-----------------|
+| `self.I`      | `list[int]`    | `[]`                      | `[]` (= all neurons) |
+| `self.S_sel`  | `list[int]` or `None` | `None`             | `None` (= all stims) |
+
+The two filters compose. `__len__` and `__getitem__` always agree on the
+iterable subset of stimuli, defined as the **intersection** of:
+
+- the stimuli with at least one valid response among the currently selected
+  neurons (`self.I`-side filter), and
+- the stimuli explicitly listed in `self.S_sel`, if it is set (`self.S_sel`-side filter).
+
+The same intersection drives the *neuron* side: when `self.S_sel` is set,
+neurons whose only valid responses lie outside the selected stim subset
+are also hidden from the yielded responses. So selecting NAT4's val
+subset (18 stims) automatically drops the 33 A1 cells that have no val
+data — they would otherwise surface as full-NaN responses.
+
+This is what we mean by "bidirectional": narrowing one side narrows the
+other side too, when missingness in `nrn_masks` makes that the
+information-preserving choice.
+
+### Selection API
+
+```python
+# neuron-side (one of the following)
+ds.select_neuron(i)                          # single
+ds.select_population([0, 1, 5])              # explicit list
+ds.select_pop_by_nrn_attr("area", "MLd")     # by neuron metadata
+ds.select_pop_by_stim_attr("subset", "val")  # neurons with >=1 valid resp on val stims
+
+# stim-side (one of the following)
+ds.select_stim(i)                            # single
+ds.select_stims([0, 5, 10])                  # explicit list
+ds.select_stims_by_attr("subset", "val")     # by stim metadata
+ds.reset_stim_selection()                    # clear S_sel (back to None)
+```
+
+Why two selectors are sometimes both needed:
+
+- `select_pop_by_stim_attr("subset", "val")` keeps the neurons with val
+  data, but leaves *all* stims iterable (you might want est responses
+  for those neurons too).
+- `select_stims_by_attr("subset", "val")` keeps the val stims, and
+  *also* drops the cells that lack val data via the bidirectional rule.
+
+So the "I want to train on val only, with val-having cells only" recipe
+is one call to `select_stims_by_attr("subset", "val")` — the bidirectional
+rule does the other half.
+
+### Why this matters
 
 - **DataLoader compatibility.** PyTorch iterates `range(len(ds))` and
   calls `ds[i]` for each. The two have to agree, or the loader requests
@@ -213,14 +260,31 @@ ds[30]                                       # IndexError, not a fully-NaN AA2 s
 
 ds.select_pop_by_nrn_attr("area", "MLd")     # MLd neurons across A and B
 len(ds)                                      # however many stims any MLd neuron heard
+
+# stim filter + bidirectional rule
+nat4 = NAT4_Dataset(area="A1")               # 593 stims, 849 cells
+nat4.select_stims_by_attr("subset", "val")   # 18 val stims, 816 val-having cells
+len(nat4)                                    # 18; the 33 val-less cells are gone
 ```
+
+### `S_sel = None` vs `S_sel = []`
+
+The two are intentionally distinct:
+
+- `S_sel = None` means "no restriction" — iteration spans all stims.
+  Returned by `reset_stim_selection()` and the default at construction.
+- `S_sel = []` means "explicit zero-stim selection" — iteration yields
+  zero items. This is what `select_stims_by_attr("foo", "bar")` produces
+  when no stim matches. The asymmetry with `self.I` (which uses `[]` for
+  "no restriction") is deliberate: selecting by an attribute that no stim
+  carries should *not* silently disable the filter.
 
 ### Raw access vs iteration
 
 The stored attributes (`self.stims`, `self.responses`, `self.stim_meta`,
 `self.neuron_metadata`, `self.nrn_masks`) are *not* filtered. They keep
-the dataset's full structure regardless of `self.I`. To address a raw
-stim by its absolute index, read those attributes directly:
+the dataset's full structure regardless of `self.I` or `self.S_sel`. To
+address a raw stim by its absolute index, read those attributes directly:
 
 ```python
 ds.stims[42]                # raw stim 42, regardless of selection

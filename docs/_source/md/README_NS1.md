@@ -47,10 +47,44 @@
 
 
 
-## **Setup using our scripts:**
+## Setup
 
-0. Download the data at [the original dataset repository](https://osf.io/ayw2p/) as well as the **"ns1_drc_spectrograms.pt"** file
-1. Put files (**MetadateSHEnCneurons.mat** + **spikesandwav/ folder** + **ns1_drc_spectrograms.pt**) inside the **data/** folder. 
-2. Launch `NS1_DRC_preprocessing.py`.
-3. The processed data file should appear as a pytorch file called **ns1_drc_responses.pt**
-4. You can use it right away by creating a `NS1_DRC_Dataset(...)` object with the path to the **data/** folder
+Easiest path — auto-download from OSF (no account required) plus the
+pre-computed spectrogram from the DNet GitHub repo:
+
+```python
+from deepSTRF.datasets.audio import NS1_Dataset
+
+ds = NS1_Dataset(download=True, dt_ms=5)
+```
+
+Default cache dir is `platformdirs.user_cache_dir('deepSTRF')/NS1`,
+overridable via `$DEEPSTRF_DATA_DIR`. `download=True` is idempotent.
+
+If you already have the data laid out manually:
+
+1. Download the response data from [the original OSF repository](https://osf.io/ayw2p/).
+2. Download the pre-computed stimulus spectrogram (`test_data_5ms.mat`)
+   from the [DNet code repository](https://github.com/monzilur/DNet) of
+   [Rahman et al. (2019)](https://doi.org/10.1371/journal.pcbi.1006618).
+3. Place `MetadataSHEnCneurons.mat`, the extracted `spikesandwav/`
+   folder, and `test_data_5ms.mat` inside a `data/` folder.
+4. `ds = NS1_Dataset('/path/to/data', dt_ms=5)`.
+
+## Filtering
+
+`stim_meta` carries a `"type"` field with values
+`{"water_sounds", "ferret_vocalization", "insects_buzzing", "human_speech", "unknown"}`,
+and `neuron_metadata` carries `cell_id`, `area`, `depth_um`,
+`noise_ratio`, `single_n` / `single_t` (single-unit flags) and a few
+others. Combined with the
+[base-class selection API](data_paradigm.md#8-iteration-honours-the-current-selection-bidirectional):
+
+```python
+ds.select_stims_by_attr("type", "human_speech")     # only the 4 speech stims
+ds.select_pop_by_nrn_attr("single_t", "Yes")        # only single units
+```
+
+NS1's `nrn_masks` is full coverage (every cell saw every stim), so the
+bidirectional rule does not prune any cell. It will, however, prune cells
+in concatenated datasets that mix NS1 with sparser sources.
