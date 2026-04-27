@@ -111,9 +111,9 @@ class ParametricSTRF(nn.Module):
         torch.nn.init.constant_(self.SIG, 0.23)
         torch.nn.init.kaiming_uniform_(self.weight)
 
-        # bias term
+        # bias term — one per output channel (conv2d convention)
         if bias:
-            self.bias = torch.nn.Parameter(torch.rand(1))
+            self.bias = torch.nn.Parameter(torch.zeros(self.C_out))
             torch.nn.init.uniform_(self.bias, -1., 1.)
         else:
             self.bias = None
@@ -155,9 +155,9 @@ class SeparableSTRF(nn.Module):
         torch.nn.init.kaiming_uniform_(self.weight_f)
         torch.nn.init.kaiming_uniform_(self.weight_t)
 
-        # bias term
+        # bias term — one per output channel (conv2d convention)
         if bias:
-            self.bias = torch.nn.Parameter(torch.rand(1))
+            self.bias = torch.nn.Parameter(torch.zeros(self.C_out))
             torch.nn.init.uniform_(self.bias, -1., 1.)
         else:
             self.bias = None
