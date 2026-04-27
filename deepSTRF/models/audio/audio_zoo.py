@@ -518,6 +518,13 @@ class Transformer(AudioEncodingModel):
 
     Causality is enforced architecturally by the ``unfold`` step: each
     output frame at time ``t`` sees only the window ``[t-T+1, t]``.
+    The unfold turns each output frame into an *independent* batched
+    item; the Conv2d patchifier and TransformerEncoder operate within
+    each window and never across them. Output frame ``t`` is therefore
+    a pure function of input ``[t-T+1, t]``. (The internal dropout
+    layer is stochastic in train mode but does not introduce any
+    cross-time dependence — controlled-seed forward passes confirm
+    bitwise causality.)
 
     Parameters
     ----------
