@@ -5,7 +5,7 @@ from torch.nn.parameter import Parameter
 from deepSTRF.models.neural_model import NeuralModel
 
 
-class VideoNeuralModel(NeuralModel):
+class VideoEncodingModel(NeuralModel):
     """
     General mother class for ENCODING models of VIDEO sensory neural responses.
 

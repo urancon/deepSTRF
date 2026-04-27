@@ -41,7 +41,7 @@ class NeuralModel(nn.Module, ABC):
         """Check that the instance is deepSTRF-compatible.
 
         Subclasses should call ``super().validate()`` and then add their own checks
-        (e.g. ``AudioNeuralModel`` checks ``F, T > 0``).
+        (e.g. ``AudioEncodingModel`` checks ``F, T > 0``).
         """
         assert isinstance(self.O, int) and self.O > 0, \
             f"self.O must be a positive int (got {self.O!r})"

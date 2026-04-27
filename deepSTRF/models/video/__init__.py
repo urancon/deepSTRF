@@ -1,3 +1,3 @@
-from .video_model import VideoNeuralModel
+from .video_model import VideoEncodingModel
 
-__all__ = ['VideoNeuralModel']
+__all__ = ['VideoEncodingModel']

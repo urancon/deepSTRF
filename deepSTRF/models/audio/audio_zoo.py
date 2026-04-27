@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional
 
-from .audio_model import AudioNeuralModel
+from .audio_model import AudioEncodingModel
 
 import deepSTRF.models.layers as layers
 #from deepSTRF.models.dependencies.s4 import S4Block  # TODO: problem of circular import with this dependency
@@ -17,7 +17,7 @@ from deepSTRF.models.prefiltering import AdapTrans
 #  - BatchNorm is non local (i.e. non causal) !!!
 
 
-class Linear(AudioNeuralModel):
+class Linear(AudioEncodingModel):
     """
     The canonical, unregularized, unparametrized Linear (L) model.
 
@@ -88,7 +88,7 @@ class Linear(AudioNeuralModel):
 class LinearNonlinear(Linear):
     """
     A Linear model, but with a nonlinear activation function at its output.
-    Because both are so close in implementation, this class indirectly inherits from AudioNeuralModel through Linear.
+    Because both are so close in implementation, this class indirectly inherits from AudioEncodingModel through Linear.
 
     """
     def __init__(self, n_frequency_bands=34, temporal_window_size: int = 9, out_neurons: int = 1, output_activation: nn.Module = nn.Sigmoid(), prefiltering=None, parameterization=None):
@@ -98,7 +98,7 @@ class LinearNonlinear(Linear):
 
 
 
-class NetworkReceptiveField(AudioNeuralModel):
+class NetworkReceptiveField(AudioEncodingModel):
     """
     The Network Receptive Field (NRF) model, a LN model with a hidden layer comprising multiple units.
 
@@ -172,7 +172,7 @@ class NetworkReceptiveField(AudioNeuralModel):
         return strf.detach()
 
 
-class DNet(AudioNeuralModel):
+class DNet(AudioEncodingModel):
     """
     The Dynamic Network (DNet) model, basically a NRF model in which hidden and output units are stateful and leaky.
 
@@ -251,7 +251,7 @@ class DNet(AudioNeuralModel):
         return strf.detach()
 
 
-class ConvNet2D(AudioNeuralModel):
+class ConvNet2D(AudioEncodingModel):
     """
     Adapted from, but not entirely equivalent to the so-called '2D-CNN' of Pennington et al. (2023),
         "A convolutional neural network provides a generalizable model of natural sound coding by neural populations
@@ -306,7 +306,7 @@ class ConvNet2D(AudioNeuralModel):
         return y
 
 
-class Transformer(AudioNeuralModel):
+class Transformer(AudioEncodingModel):
     """
     Attention-based, Transformer model.
 
@@ -377,7 +377,7 @@ class Transformer(AudioNeuralModel):
         return y
 
 
-class StateNet(AudioNeuralModel):
+class StateNet(AudioEncodingModel):
     """
     Fully stateful model. Without delays and only relies on temporal recurrence to implicitly extract information from
     stimulus sequences.

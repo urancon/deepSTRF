@@ -6,7 +6,7 @@ from deepSTRF.models.neural_model import NeuralModel
 from deepSTRF.models.prefiltering import get_CFs, freq_to_tau, tau_to_a, AdapTrans, Willmore_Adaptation
 
 
-class AudioNeuralModel(NeuralModel):
+class AudioEncodingModel(NeuralModel):
     """
     General mother class for ENCODING models of AUDIO sensory neural responses.
 
