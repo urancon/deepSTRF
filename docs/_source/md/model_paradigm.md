@@ -73,16 +73,33 @@ def forward(self, x):
     return self.readout(f)
 ```
 
-Concrete models populate the four slots in their `__init__`. The base
-defines reasonable defaults (`nn.Identity()` for `wav2spec`, `prefiltering`
-and `core`), so a minimal LN model is just:
+Concrete models populate the slots in their `__init__`. The base
+defines reasonable defaults (`nn.Identity()` for `wav2spec`,
+`prefiltering`, and `core`); the `readout` slot has no default and must
+be set by every concrete model — `validate()` enforces this.
+
+Here is the actual implementation of `Linear` in `audio_zoo.py`, the
+minimal reference example:
 
 ```python
 class Linear(AudioEncodingModel):
-    def __init__(self, F, T, N, prefiltering=None, kernel=None, activation=None):
-        super().__init__(F=F, T=T, out_neurons=N, prefiltering=prefiltering)
-        self.readout = STRFReadout(F, T, self.C_in, N, kernel=kernel,
-                                   activation=activation or nn.Identity())
+    def __init__(self, n_frequency_bands=34, temporal_window_size=9, out_neurons=1,
+                 output_activation=None, prefiltering=None, kernel=None):
+        super().__init__(
+            n_frequency_bands=n_frequency_bands,
+            temporal_window_size=temporal_window_size,
+            out_neurons=out_neurons,
+            prefiltering=prefiltering,
+        )
+        # core: causal per-timestep frequency normalization
+        self.core = CausalLayerNorm(self.F, dim=-2)
+        # readout: pluggable STRF kernel + output activation
+        self.readout = STRFReadout(
+            F=self.F, T=self.T, C_in=self.C_in, out_neurons=self.O,
+            kernel=kernel,
+            activation=output_activation or nn.Identity(),
+        )
+        # forward inherited from NeuralModel
 ```
 
 Subclasses *may* override `forward` when the architecture genuinely cannot
@@ -147,8 +164,8 @@ This is a hard contract, not an aspiration. It matters for:
 | `nn.Conv{1,2,3}d` with `padding=0`     | ✓       | left-pad explicitly with `nn.ZeroPad`       |
 | `F.pad(..., (K-1, 0))`                 | ✓       | left-only temporal padding                  |
 | `F.pad(..., (K-1, 0), mode='replicate')` | ✓     | causal extrapolation                        |
-| `nn.GroupNorm(1, C)`                   | ✓       | per-sample, per-channel — ignores T and B   |
-| `nn.LayerNorm` (over channel)          | ✓       | same                                        |
+| `CausalLayerNorm(C, dim=1)`            | ✓       | LayerNorm over the channel axis at every (B, F, T) position |
+| `CausalLayerNorm(F, dim=-2)`           | ✓       | LayerNorm over the frequency axis at every (B, C, T) position |
 | `nn.GRU` / `nn.LSTM` / `nn.RNN`        | ✓       | inherently causal                           |
 | RNN-style SSMs (S4, Mamba)             | ✓       | inherently causal                           |
 | `nn.TransformerEncoder` + causal mask  | ✓       | mask required — without it, attention is bidirectional |
@@ -160,12 +177,14 @@ This is a hard contract, not an aspiration. It matters for:
 | `nn.BatchNorm{1,2,3}d`                 | Pools statistics across batch and time      |
 | `padding=(0, (K-1)//2)` (symmetric)    | Includes future timesteps                   |
 | `nn.AdaptiveAvgPool` along T           | Pools over the full clip                    |
+| `nn.GroupNorm(G, C)` over `(F, T)`     | Pools statistics over time within each sample |
 | `nn.TransformerEncoder` without mask   | Attention sees all positions                |
 
-**Use `GroupNorm(1, C)` instead of `BatchNorm`** — it's the per-sample,
-per-channel variant of LayerNorm and composes naturally with `Conv2d`
-outputs. Mathematically equivalent for our purposes, causal by
-construction.
+**Use `CausalLayerNorm` instead of `BatchNorm`** — it normalizes across
+a single axis (channel or frequency, by ``dim`` argument) at each
+position of every other axis, never pooling across time. Defined in
+`deepSTRF.models.layers`; thin wrapper around `nn.LayerNorm` with a
+`movedim` to reach a non-trailing target axis.
 
 ## 5. Where the weights live
 
@@ -180,30 +199,37 @@ Heuristic for placing learnable parameters:
 
 ### Worked example: LN model
 
-For a Linear-Nonlinear model the entire learnable apparatus is the STRF
-kernel `(N, C_in, F, T)` — N independent filters, one per neuron.
+For a Linear-Nonlinear model the entire trainable apparatus that
+distinguishes one neuron from another is the STRF kernel
+`(N, C_in, F, T)` — N independent filters, one per neuron — held by the
+readout. The core does only one thing: per-timestep frequency
+normalization.
 
 ```python
 self.wav2spec     = nn.Identity()
 self.prefiltering = AdapTrans(...) or nn.Identity()
-self.core         = nn.Identity()                 # no shared features
+self.core         = CausalLayerNorm(F, dim=-2)    # input freq norm
 self.readout      = STRFReadout(F, T, C_in, N,
                                 kernel=...,
                                 activation=nn.Sigmoid())
 ```
 
-LN's `core = Identity()` is honest: there is no shared feature extraction;
-every neuron projects directly from the (prefiltered) spectrogram. The
-template handles deeper models the same way — they just populate `core`.
+The core's LayerNorm has `2*F` parameters (γ, β per frequency band) but
+is stim-shared across all N neurons. The per-neuron weights all live
+in the readout. The template handles deeper models the same way — they
+just populate `core` with more layers.
 
 ### Worked example: ConvNet2D
 
 ```python
 self.prefiltering = ...
-self.core         = nn.Sequential(   # 3× (Conv2d → GroupNorm → LeakyReLU)
-                       Conv2d(C_in, C, K), GroupNorm(1, C), LeakyReLU(),
-                       Conv2d(C, C, K),    GroupNorm(1, C), LeakyReLU(),
-                       Conv2d(C, C, K),    GroupNorm(1, C), LeakyReLU(),
+self.core         = nn.Sequential(
+                       CausalLayerNorm(F, dim=-2),                     # input freq norm
+                       nn.ZeroPad2d((3*(K[1]-1), 0, 0, 0)),             # explicit causal left-pad
+                       Conv2d(C_in, C, K), CausalLayerNorm(C, dim=1), LeakyReLU(),
+                       Conv2d(C, C, K),    CausalLayerNorm(C, dim=1), LeakyReLU(),
+                       Conv2d(C, C, K),    CausalLayerNorm(C, dim=1), LeakyReLU(),
+                       nn.Flatten(start_dim=1, end_dim=2),              # (B, C, F_down, T) → (B, C*F_down, T)
                     )
 self.readout      = LinearReadout(C * F_down, N,
                                   hidden=H,
@@ -252,7 +278,7 @@ For users who don't want to construct a prefilter by hand:
 ```python
 from deepSTRF.models.prefiltering import make_prefiltering
 
-prefilt = make_prefiltering("adaptrans", F=34, dt=5.0,
+prefilt = make_prefiltering("adaptrans", n_frequency_bands=34, dt=5.0,
                             min_freq=500, max_freq=20000, scale="mel")
 ```
 
@@ -307,8 +333,10 @@ LinearReadout(in_features, out_neurons,
               bias: bool = True)
 ```
 
-Accepts `(B, T, in_features)` or `(B, in_features, T)` (auto-detected) and
-emits `(B, N, 1, T)`. The transpose convention is handled inside.
+Accepts `(B, in_features, T)` (channel-as-dim-1 convention, matching
+`Conv2d` outputs) or `(B, in_features, 1, T)` (the singleton-spatial-axis
+shape produced by an STRF-style conv that collapsed `F → 1`); both shapes
+route through the same projection. Always emits `(B, N, 1, T)`.
 
 ## 8. Output activations
 
@@ -357,16 +385,20 @@ A dedicated `gradmap.md` and tutorial notebook are planned (see
 Every concrete model must satisfy:
 
 1. **Slots populated.** `wav2spec`, `prefiltering`, `core`, `readout`
-   are all `nn.Module` instances (default `nn.Identity()` is fine).
-2. **Output shape.** A forward pass on `(1, 1, F, T)` returns
-   `(1, N, 1, T)`. The base's `validate()` runs this smoke test.
-3. **Causality.** `forward(x)[..., :t]` is independent of `x[..., t:]`.
-   Not auto-checked (would require a fuzz test) but is a hard rule.
-4. **`out_neurons > 0`**, output activation is an `nn.Module`.
+   are all `nn.Module` instances. The first three default to
+   `nn.Identity` if the subclass doesn't set them; `readout` has no
+   default and must be assigned before `validate()` is called.
+2. **`out_neurons > 0`** (`self.O > 0`).
+3. **Output rank.** `forward(x)` emits `(B, N, R=1, T)`. The contract
+   tests in `tests/test_audio_models.py` enforce this for every
+   concrete audio model.
+4. **Causality.** `forward(x)[..., :t]` is independent of `x[..., t:]`.
+   Enforced by the bit-causality test in
+   `tests/test_audio_models.py::test_bitwise_causality_in_eval_mode`.
 
 Subclasses extend `validate()` with modality-specific invariants —
-`AudioEncodingModel.validate()` checks `F > 0`, `T > 0`, `C_in ∈ {1, 2}`;
-`VideoEncodingModel.validate()` checks `H > 0`, `W > 0`, `T > 0`.
+`AudioEncodingModel.validate()` checks `F, T > 0` and `C_in >= 1`;
+`VideoEncodingModel.validate()` checks `H, W, T > 0`.
 
 ## 11. Invariants for model authors
 
