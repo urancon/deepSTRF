@@ -530,65 +530,75 @@ class Transformer(AudioEncodingModel):
     durations (see ``TODO.md``).
     """
 
-    def __init__(self, n_frequency_bands=34, temporal_window_size=1, token_size=(34, 1), embedding_dim=48, n_heads=1,
-                 n_layers=1, out_neurons: int = 1, output_activation: nn.Module = None, prefiltering: nn.Module = None):
-        super(Transformer, self).__init__(n_frequency_bands, temporal_window_size, out_neurons=out_neurons, prefiltering=prefiltering)
-        self.output_activation = output_activation if output_activation is not None else nn.Identity()
-
-        # patch dimensions and strides
+    def __init__(self, n_frequency_bands: int = 34, temporal_window_size: int = 1,
+                 token_size: tuple = (34, 1), embedding_dim: int = 48,
+                 n_heads: int = 1, n_layers: int = 1,
+                 out_neurons: int = 1,
+                 output_activation: nn.Module = None,
+                 prefiltering: nn.Module = None):
+        super().__init__(
+            n_frequency_bands=n_frequency_bands,
+            temporal_window_size=temporal_window_size,
+            out_neurons=out_neurons,
+            prefiltering=prefiltering,
+        )
         self.K_f, self.K_t = token_size
-
-        # padding left only (causal inference)
-        self.pad = nn.ZeroPad2d(((self.T - 1), 0, 0, 0))
-
-        # im2col --> create context windows for attention/transformer layers
-        self.unfold_context = nn.Unfold(kernel_size=(self.F, self.T), stride=(1, 1), padding=(0, 0))
-
-        # Patchify with learnable embdeddings
         self.embedding_dim = embedding_dim
-        self.conv_patches = nn.Conv2d(self.C_in, self.embedding_dim, kernel_size=(self.K_f, self.K_t), stride=(self.K_f, self.K_t))
-
-        # determine sizes to define the readout layer
-        prospective_input = torch.rand(1, self.C_in, self.F, self.T)
-        # prospective_patches = self.unfold_patches(prospective_input)
-        prospective_patches = self.conv_patches(prospective_input).flatten(-2, -1)
-        _, patch_dim, n_patches = prospective_patches.shape
-        self.H = patch_dim
-
         self.n_heads = n_heads
         self.n_layers = n_layers
-        self.positional_encoding = torch.nn.Parameter(torch.rand(1, n_patches, patch_dim))
+
+        # core: per-frame causal context attention.
+        # The unfold step turns each output frame at time t into an independent
+        # batched item carrying the (F, T) spectrogram window [t-T+1, t]. The
+        # patchifier + transformer encoder + global mean-pool then operates
+        # within each window. Output: (B, patch_dim, L).
+        self.pad = nn.ZeroPad2d((self.T - 1, 0, 0, 0))
+        self.unfold_context = nn.Unfold(kernel_size=(self.F, self.T), stride=(1, 1), padding=(0, 0))
+        self.conv_patches = nn.Conv2d(self.C_in, self.embedding_dim,
+                                      kernel_size=(self.K_f, self.K_t),
+                                      stride=(self.K_f, self.K_t))
+
+        # probe a (1, C_in, F, T) window to determine patch_dim and n_patches
+        with torch.no_grad():
+            prospective = self.conv_patches(torch.zeros(1, self.C_in, self.F, self.T)).flatten(-2, -1)
+        _, patch_dim, n_patches = prospective.shape
+        self.H = patch_dim
+
+        self.positional_encoding = nn.Parameter(torch.rand(1, n_patches, patch_dim))
         self.tsfm = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=patch_dim, nhead=self.n_heads, dim_feedforward=32, dropout=0.1,
-                                       batch_first=True),
+            nn.TransformerEncoderLayer(d_model=patch_dim, nhead=self.n_heads,
+                                       dim_feedforward=32, dropout=0.1, batch_first=True),
             num_layers=self.n_layers,
         )
 
-        self.readout = nn.Linear(patch_dim, self.O)
+        # readout: per-frame linear projection of the pooled patch embedding to N neurons.
+        self.readout = LinearReadout(
+            in_features=patch_dim, out_neurons=self.O,
+            activation=output_activation if output_activation is not None else nn.Identity(),
+        )
 
     def forward(self, x):
-        # x.shape must be (B, 1, F, T)
-        B, C, F, L = x.shape
-        y = self.prefiltering(x)                                    # (B, C=1|2, F, L)
-        y = self.unfold_context(self.pad(y))  # (B, C*F*T, L)
-        y = y.permute(0, 2, 1).flatten(0, 1)  # (B*L, C*F*T)
+        """
+        Per-frame attention over a left-padded T-frame STRF window.
 
-        y = y.reshape(-1, self.C_in, self.F, self.T)    # (B*L, C, F, T)
-        y = self.conv_patches(y)                        # (B*L, C+, F-, T-)
-        y = y.flatten(start_dim=-2, end_dim=-1)         # (B*L, patch_dim = C+, n_patches = F- * T-)
-        y = y.permute(0, 2, 1)                          # (B*L, n_patches, patch_dim)
-
-        y = self.tsfm(y + self.positional_encoding)  # (B*L, n_patches, patch_dim)
-
-        # global average pooling
-        y = y.mean(1, keepdim=True)  # (B*L, 1, patch_dim)
-
-        y = y.flatten(start_dim=1, end_dim=2)   # (B*L, n_patches * patch_dim)
-        y = y.unflatten(dim=0, sizes=(B, L))    # B, L, n_patches * patch_dim)
-        y = self.readout(y)                     # (B, L, N)
-        y = self.output_activation(y)           # (B, L, N)
-        y = y.permute(0, 2, 1)                  # (B, N, L)  TODO: --> (B, N, 1, L)
-        return y
+        Overrides the base template because the architecture is built around
+        an outer per-frame loop (implemented via unfold + reshape) that
+        doesn't decompose into the canonical core / readout slots — each
+        output frame is a fully independent batched computation.
+        """
+        # x: (B, 1, F, L)
+        B, _, _, L = x.shape
+        y = self.prefiltering(x)                          # (B, C_in, F, L)
+        y = self.unfold_context(self.pad(y))              # (B, C_in*F*T, L)
+        y = y.permute(0, 2, 1).flatten(0, 1)              # (B*L, C_in*F*T)
+        y = y.reshape(-1, self.C_in, self.F, self.T)      # (B*L, C_in, F, T)
+        y = self.conv_patches(y)                          # (B*L, embed, F-, T-)
+        y = y.flatten(-2, -1).permute(0, 2, 1)            # (B*L, n_patches, patch_dim)
+        y = self.tsfm(y + self.positional_encoding)       # (B*L, n_patches, patch_dim)
+        y = y.mean(dim=1)                                 # (B*L, patch_dim)
+        y = y.unflatten(0, (B, L))                        # (B, L, patch_dim)
+        y = y.transpose(1, 2)                             # (B, patch_dim, L)
+        return self.readout(y)                            # (B, N, 1, L)
 
 
 class StateNet(AudioEncodingModel):
