@@ -60,59 +60,16 @@ class LearnableExponentialDecay(nn.Module):
 
         # convolve input spectrogram with the kernel
         x = x.squeeze(2)                                                        # (B, 1, F, T)  --> (B, F, T)
-        x = nn.functional.pad(x, pad=(self.K - 1, 0), mode='replicate')         # (B, F, T) --> (B, F, T+K-1)
+        x = nn.functional.pad(x, pad=(self.K - 1, 0), mode='replicate')         # (B, F, T) --> (B, F, T+K-1)   # TODO: padding à gauche!
         x = nn.functional.conv1d(x, kernel, stride=1, groups=self.input_size)   # (B, F, T+K-1) --> (B, F, T)
         x = x.unsqueeze(2)                                                      # (B, F, T) --> (B, 1, F, T)
 
         return x
 
-    def count_trainable_params(self):
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
     def tau(self):
         with torch.no_grad():
             tau = 1 + self.d ** 2
         return tau
-
-
-class ParametricSigmoid(nn.Module):
-    """
-    4-parameter parametric sigmoid activation, as commonly used in the auditory neural response fitting literature.
-    As described in Willmore et al. (2016), "Incorporating Midbrain Adaptation to Mean Sound Level
-    Improves Models of Auditory Cortical Processing", JNeuroscience:
-
-        "a is the minimum firing rate, b is the output dynamic range, c is the input inflection point, and d is the
-        reciprocal of the gain"
-
-    """
-    def __init__(self, num_features: int, bias: bool = True):
-        super(ParametricSigmoid, self).__init__()
-
-        self.N = num_features
-        self.bias = bias
-
-        if self.bias:
-            self.a = torch.nn.Parameter(torch.zeros(self.N))
-            torch.nn.init.uniform_(self.a, 0., 1.)
-
-        self.b = torch.nn.Parameter(torch.ones(self.N))
-        self.c = torch.nn.Parameter(torch.zeros(self.N))
-        self.d = torch.nn.Parameter(torch.ones(self.N))
-
-        torch.nn.init.uniform_(self.b, 0.5, 1.5)
-        torch.nn.init.uniform_(self.c, -0.5, 0.5)
-        torch.nn.init.uniform_(self.d, 0.5, 1.5)
-
-    def forward(self, x):
-        # x.shape = (B, N) or (B, T, N) or (*, N)
-        if self.bias:
-            y = self.b / (1 + torch.exp(-(x - self.c) / self.d)) + self.a
-        else:
-            y = self.b / (1 + torch.exp(-(x - self.c) / self.d))
-        return y
-
-    def count_trainable_params(self):
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
 #    ##################
@@ -121,9 +78,17 @@ class ParametricSigmoid(nn.Module):
 
 class ParametricSTRF(nn.Module):
     """
-    TODO: add description
-      DCLS, separable, etc.
+    SPECTRO-Temporal Receptive Field (2D) kernel.
 
+    The kernel is parameterized as a set of gaussians:
+      - at a given (x,y) position,
+      - with a given variance (sigma_x, sigma_y) along both dimensions
+      - with a given weight value
+        ==> 5 degrees of freedom per gaussian.
+
+    Drastically reduces the number of learnable parameters.
+
+    See Khalfaoui-Hassani et al. (2023), "Dilated convolutions with learnable spacings (DCLS)", ICLR,
     """
     def __init__(self, F: int, T: int, C_in, C_out, num_gaussians: int = 1, bias: bool = True):
         super(ParametricSTRF, self).__init__()
@@ -154,6 +119,7 @@ class ParametricSTRF(nn.Module):
             self.bias = None
 
     def build_kernel(self, device='cpu'):
+        # create a (C_out, C_in, Kf, Kt) kernel
         kernel = self.DCK(self.weight, self.P, self.SIG)
         return kernel.to(device)
 
@@ -161,11 +127,52 @@ class ParametricSTRF(nn.Module):
         # x.shape = (B, N) or (B, T, N) or (*, N)
         x = torch.nn.functional.pad(x, ((self.T - 1), 0, 0, 0), mode='constant', value=0.)
         strf_kernel = self.build_kernel(x.device)
-        out = torch.nn.functional.conv2d(x, strf_kernel, stride=(1, 1))
+        out = torch.nn.functional.conv2d(x, strf_kernel, self.bias, stride=(1, 1))
         return out
 
-    def count_trainable_params(self):
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+class SeparableSTRF(nn.Module):
+    """
+    SPECTRO-Temporal Receptive Field (2D) kernel.
+
+    Frequency-time separable.
+
+    Drastically reduces the number of learnable parameters.
+    """
+    def __init__(self, F: int, T: int, C_in, C_out, bias: bool = True):
+        super(SeparableSTRF, self).__init__()
+
+        self.F = F
+        self.T = T
+        self.C_in = C_in
+        self.C_out = C_out
+
+        # parameters
+        self.weight_f = torch.nn.Parameter(torch.rand(self.C_in, self.C_out, F, 1))
+        self.weight_t = torch.nn.Parameter(torch.rand(self.C_in, self.C_out, 1, T))
+
+        # initialization
+        torch.nn.init.kaiming_uniform_(self.weight_f)
+        torch.nn.init.kaiming_uniform_(self.weight_t)
+
+        # bias term
+        if bias:
+            self.bias = torch.nn.Parameter(torch.rand(1))
+            torch.nn.init.uniform_(self.bias, -1., 1.)
+        else:
+            self.bias = None
+
+    def build_kernel(self, device='cpu'):
+        # create a (C_out, C_in, Kf, Kt) kernel
+        kernel = self.weight_f.unsqueeze(-1) * self.weight_t.unsqueeze(-2)
+        return kernel.to(device)
+
+    def forward(self, x):
+        # x.shape = (B, N) or (B, T, N) or (*, N)
+        x = torch.nn.functional.pad(x, ((self.T - 1), 0, 0, 0), mode='constant', value=0.)
+        strf_kernel = self.build_kernel(x.device)
+        out = torch.nn.functional.conv2d(x, strf_kernel, self.bias, stride=(1, 1))
+        return out
 
 
 class LocallyConnected1d(nn.Module):
@@ -218,7 +225,7 @@ class LocallyConnected1d(nn.Module):
         return y  # contrarily to RRF2d we have here torch.equal(y, self.fold(y).squeeze(-1)) == True because L=S_out
 
     def __str__(self):
-        s = f'RRF1d(input_size={(self.S_in,)}, in_channels={self.C_in}, out_channels={self.C_out}, ' \
+        s = f'LocallyConnected1d(input_size={(self.S_in,)}, in_channels={self.C_in}, out_channels={self.C_out}, ' \
             f'kernel_size={self.K}, stride={self.stride}'
         if self.padding != 0:
             s += f', padding={self.padding}'
