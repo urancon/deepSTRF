@@ -51,74 +51,80 @@ def a_to_tau(a, dt: float = 1):
     return - dt / torch.log(a)
 
 
-class Willmore_Adaptation(nn.Module):
+class ICAdaptation(nn.Module):
     """
-    High-pass exponential filter with frequency dependent time constants.
+    High-pass exponential filter with frequency-dependent time constants —
+    a paper-faithful re-implementation of the inferior-colliculus
+    adaptation prefilter described by Willmore et al. (2016).
 
-    See paper:
-        Willmore et al. (2016), "Incorporating Midbrain Adaptation to Mean Sound Level Improves Models of Auditory
-        Cortical Processing", J.Neurosci., https://doi.org/10.1523/JNEUROSCI.2441-15.2016
+    Independently filters each frequency band of an input spectrogram
+    along the temporal dimension with a parameterized exponential kernel:
 
-    Independently filters each frequency band of an input spectrogram along temporal dimension with a parametrized
-    exponential kernel:
+        kernel = [...; -Cwa²; -Cwa; -Cw; +1]    with    C = 1/(... + a² + a + 1)
 
-        kernel = [...; -Cwa²; -Cwa; -Cw; +1]    with    C=1/(... + a² + a + 1)
-                                                                so that the sum of the negative terms equals w
+    where the sum of the negative terms equals ``w``. The filter
+    effectively computes the difference between the current value of
+    the signal in each frequency band and an exponential average of its
+    recent past, then applies a half-wave rectification.
 
-    This filter effectively computes the difference between the current value of the signal in each frequency band and
-    an exponential average of its recent past.
+    Parameters
+    ----------
+    init_a_vals : 1D Tensor of length ``F``
+        Per-frequency ``a`` parameters (related to the exponential time
+        constant: higher ``a`` → longer time constant).
+    kernel_size : int, default 2
+        Length of the temporal kernel (in frames).
 
-    The kernel is flat along frequency dimension, and we apply padding='same' to keep the same time dimension
-    As a result, takes a 1-channel tensor as input, and returns a 2-channel tensor as output.
-    input_spectrogram.shape = (B, 1, F, T)
-    output_spectrogram.shape = (B, 2, F, T)
+    Reference
+    ---------
+    Willmore, Schoppe, King, Schnupp, Harper (2016). "Incorporating
+    Midbrain Adaptation to Mean Sound Level Improves Models of
+    Auditory Cortical Processing." J. Neurosci. 36(2): 280–289.
+    https://doi.org/10.1523/JNEUROSCI.2441-15.2016
 
+    Notes
+    -----
+    Intentionally non-learnable: the time constants are derived
+    analytically from the cochlear frequency map (see
+    ``freq_to_tau``) and are paper-faithful. For a learnable
+    extension, use :class:`AdapTrans`.
+
+    Input  shape: ``(B, 1, F, T)``.
+    Output shape: ``(B, 1, F, T)``.
     """
+
+    out_channels: int = 1
+
     def __init__(self, init_a_vals, kernel_size: int = 2):
-        """
-        init_a_vals: a 1D vector of 'a' parameters (related to the time constant of the kernel's exponential). The
-         higher the 'a', the higher the corresponding time constant of the exponential
-
-        init_w_vals: a 1D vector of 'w' parameters (representing the weight given to the exponential average of the
-         signal in its recent past)
-
-        """
-        super(Willmore_Adaptation, self).__init__()
-        self.device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
-        # make sure passed a and w are one-dimensional
+        super().__init__()
+        # make sure passed a is one-dimensional
         assert len(init_a_vals.shape) == 1
 
         # general attributes
         self.F = len(init_a_vals)
         self.K = kernel_size
 
-        # learnable parameters (one per freq.)
-        self.a = init_a_vals
+        # frozen, paper-faithful (Willmore et al. 2016) — registered as
+        # buffer so it follows .to(device) but isn't trained.
+        self.register_buffer('a', init_a_vals)
 
     def build_kernels(self):
         """
-        Creates two parametrized kernels:
-         - one for the ON response, highlighting onsets in the signal
-         - one for the OFF response (offsets), which is the flipped version of the ON kernel
-
+        Creates a parametrized kernel: a high-pass exponential filter that
+        highlights onsets in the signal.
         """
-        # normalization constant
-        a_device = self.a.to(self.device)
-        ones_device = torch.ones(self.K - 1).to(self.device)
-        range_device = torch.arange(0, self.K - 1).to(self.device)
+        device = self.a.device
 
-        C = 1 / (torch.outer(a_device, ones_device) ** range_device).sum(dim=1)
-        C = C.to(self.device)
+        # normalization constant
+        ones = torch.ones(self.K - 1, device=device)
+        rng = torch.arange(0, self.K - 1, device=device)
+
+        C = 1 / (torch.outer(self.a, ones) ** rng).sum(dim=1)
 
         # kernel begins with an exponential whose elements sum to -w, then finishes with +1
-        kernel = torch.ones(self.F, 1, self.K).to(self.device)
-
-        C_device = C.to(self.device)
-        #w_device = torch.ones_like(self.a).to(self.device)
-
-        #kernel[:, 0, 1:] = (-C_device * w_device).unsqueeze(-1) * (torch.outer(a_device, ones_device) ** range_device)
-        kernel[:, 0, 1:] = -C_device.unsqueeze(-1) * (torch.outer(a_device, ones_device) ** range_device)
-        kernel = torch.flip(kernel, dims=(2,)).to(self.device)
+        kernel = torch.ones(self.F, 1, self.K, device=device)
+        kernel[:, 0, 1:] = -C.unsqueeze(-1) * (torch.outer(self.a, ones) ** rng)
+        kernel = torch.flip(kernel, dims=(2,))
 
         return kernel
 
@@ -127,20 +133,17 @@ class Willmore_Adaptation(nn.Module):
         Convolves each frequency band of input 1-channel spectrogram with filters and standardize the output.
 
         :param spectro_in: shape is (B, C, F, T) with B=Batch, C=Channels=1 (raw spectrogram), F=#Frequency_bands, T=#Timesteps
-        :return: a tensor of shape (B, 2, F, T). First channel is for the ON response, second channel for the OFF one.
+        :return: a tensor of shape (B, 1, F, T) of the high-pass-filtered, full-wave-rectified spectrogram.
         """
-        #device = spectro_in.device
-
         # reshape input spectrogram from single-channel 2D representation to multi-channel 1D
         spectro_in = spectro_in.squeeze(1)                                      # (B, 1, F, T)  --> (B, F, T)
 
         # build high-pass exponential kernel
         kernel = self.build_kernels()
-        kernel = kernel.to(self.device)
 
         # convolve input spectrogram with the kernels
-        spectro_in = F.pad(spectro_in, pad=(self.K-1, 0), mode='replicate').to(self.device)            # (B, F, T)     --> (B, F, T+1)
-        out = F.conv1d(spectro_in, kernel, stride=1, groups=self.F)                # (B, F, T+1)   --> (B, F, T)
+        spectro_in = F.pad(spectro_in, pad=(self.K-1, 0), mode='replicate')     # (B, F, T)     --> (B, F, T+K-1)
+        out = F.conv1d(spectro_in, kernel, stride=1, groups=self.F)             # (B, F, T+K-1) --> (B, F, T)
 
         # full-wave rectification
         out = torch.relu(out)
@@ -155,38 +158,62 @@ class Willmore_Adaptation(nn.Module):
         filter = kernel[frequency_bin, :].squeeze().detach().cpu().numpy()
 
         plt.figure()
-        plt.stem(torch.arange(0, self.K, 1).numpy(), filter, 'r', markerfmt='ro', label='Willmore')
+        plt.stem(torch.arange(0, self.K, 1).numpy(), filter, 'r', markerfmt='ro', label='ICAdaptation')
         plt.legend()
         plt.show()
 
 
+# Backwards-compatibility alias — the original class name was kept long
+# enough to be cited in older notebooks. Will be removed in a future release.
+Willmore_Adaptation = ICAdaptation
+
+
 class AdapTrans(nn.Module):
     """
-    Computes adapted ON and OFF spectrograms, through high-pass exponential filters with frequency dependent time
-    constants.
+    Adaptive ON/OFF spectrogram prefilter — the learnable extension of the
+    inferior-colliculus adaptation prefilter.
 
-    See paper:
-        Rançon et al. (2024), "A general theoretical framework unifying the adaptive, transient and sustained properties
-        of ON and OFF auditory responses", BioRxiv, 10.1101/2024.01.17.576002
+    Computes ON and OFF spectrograms through high-pass exponential
+    filters with frequency-dependent, learnable time constants. Each
+    frequency band is independently filtered along the temporal
+    dimension with a parameterized exponential kernel:
 
+        kernel = [...; -Cwa²; -Cwa; -Cw; +1]    with    C = 1/(... + a² + a + 1)
 
-    Independently filters each frequency band of an input spectrogram along temporal dimension with a parametrized
-    exponential kernel:
+    where the sum of the negative terms equals ``w``. The filter
+    computes the difference between the current value of the signal
+    in each frequency band and an exponential average of its recent
+    past, with separate ``(a, w)`` pairs giving rise to ON and OFF
+    polarities.
 
-        kernel = [...; -Cwa²; -Cwa; -Cw; +1]    with    C=1/(... + a² + a + 1)
-                                                                so that the sum of the negative terms equals w
+    Parameters
+    ----------
+    init_a_vals : 1D Tensor of length ``F``
+        Per-frequency ``a`` parameters (related to the time constant).
+    init_w_vals : 1D Tensor of length ``F``
+        Per-frequency ``w`` parameters (relative weight of the past
+        average vs the present sample).
+    kernel_size : int, default 2
+        Length of the temporal kernel (in frames).
+    learnable : bool, default True
+        If True, ``a`` and ``w`` are learnable nn.Parameters; if False,
+        they are frozen buffers (still follow ``.to(device)``).
 
-    This filter effectively computes the difference between the current value of the signal in each frequency band and
-    an exponential average of its recent past.
+    Reference
+    ---------
+    Rançon, Bornschein, King, Schnupp, Willmore (2024). "A general
+    theoretical framework unifying the adaptive, transient and
+    sustained properties of ON and OFF auditory responses." BioRxiv.
+    https://doi.org/10.1101/2024.01.17.576002
 
-    The kernel is flat along frequency dimension, and we apply padding='same' to keep the same time dimension
-    As a result, takes a 1-channel tensor as input, and returns a 2-channel tensor as output.
-    input_spectrogram.shape = (B, 1, F, T)
-    output_spectrogram.shape = (B, 2, F, T)
-
-    Version of AdapTrans with different (a, w) pairs for each polarity
-
+    Notes
+    -----
+    Input  shape: ``(B, 1, F, T)``.
+    Output shape: ``(B, 2, F, T)`` — channel 0 is ON, channel 1 is OFF.
     """
+
+    out_channels: int = 2
+
     def __init__(self, init_a_vals, init_w_vals, kernel_size: int = 2, learnable: bool = True):
         """
         init_a_vals: a 1D vector of 'a' parameters (related to the time constant of the kernel's exponential). The
@@ -197,7 +224,6 @@ class AdapTrans(nn.Module):
 
         """
         super(AdapTrans, self).__init__()
-        self.device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
         # make sure passed a and w are one-dimensional
         assert init_a_vals.shape == init_w_vals.shape
         assert len(init_a_vals.shape) == 1
@@ -210,12 +236,16 @@ class AdapTrans(nn.Module):
         init_d_vals = torch.sqrt(1/torch.Tensor(init_a_vals) - 1)
         init_p_vals = torch.sqrt(1/torch.Tensor(init_w_vals) - 1)
 
-        # learnable parameters (one per freq.)
-        self.d_on = init_d_vals if not learnable else Parameter(init_d_vals)
-        self.d_off = init_d_vals if not learnable else Parameter(init_d_vals)
-        #self.p_on = init_p_vals if not learnable else Parameter(init_p_vals)
-        #self.p_off = init_p_vals if not learnable else Parameter(init_p_vals)
-        self.p = init_p_vals if not learnable else Parameter(init_p_vals)
+        # parameters (one per freq.) — Parameter when learnable, buffer otherwise.
+        # Both follow the module's .to(device); raw tensor attributes do not.
+        if learnable:
+            self.d_on = Parameter(init_d_vals.clone())
+            self.d_off = Parameter(init_d_vals.clone())
+            self.p = Parameter(init_p_vals.clone())
+        else:
+            self.register_buffer('d_on', init_d_vals.clone())
+            self.register_buffer('d_off', init_d_vals.clone())
+            self.register_buffer('p', init_p_vals.clone())
 
     def build_kernels(self):
         """
@@ -232,49 +262,35 @@ class AdapTrans(nn.Module):
         """
         Creates the ON kernel
         """
-        # normalization constant
-        a_device = 1 / (1 + d.to(self.device).pow(2))
-        ones_device = torch.ones(self.K - 1).to(self.device)
-        range_device = torch.arange(0, self.K - 1).to(self.device)
+        device = d.device
 
-        C = 1 / (torch.outer(a_device, ones_device) ** range_device).sum(dim=1)
-        C = C.to(self.device)
+        # normalization constant
+        a = 1 / (1 + d.pow(2))
+        ones = torch.ones(self.K - 1, device=device)
+        rng = torch.arange(0, self.K - 1, device=device)
+
+        C = 1 / (torch.outer(a, ones) ** rng).sum(dim=1)
 
         # ON kernel begins with an exponential whose elements sum to -w, then finishes with +1
-        kernel_ON = torch.ones(self.F, 1, self.K).to(self.device)
+        kernel_ON = torch.ones(self.F, 1, self.K, device=device)
+        w = 1 / (1 + p.pow(2))
 
-        C_device = C.to(self.device)
-        w_device = 1 / (1 + p.to(self.device).pow(2))
-
-        kernel_ON[:, 0, 1:] = (-C_device * w_device).unsqueeze(-1) * (torch.outer(a_device, ones_device) ** range_device)
-        kernel_ON = torch.flip(kernel_ON, dims=(2,)).to(self.device)
+        kernel_ON[:, 0, 1:] = (-C * w).unsqueeze(-1) * (torch.outer(a, ones) ** rng)
+        kernel_ON = torch.flip(kernel_ON, dims=(2,))
 
         return kernel_ON
 
     def OFF_kernel(self, d, p):
         """
-        Creates the ON kernel
+        Creates the OFF kernel — the ON kernel flipped about zero, then
+        renormalized so its tail equals -w.
         """
-        # normalization constant
-        a_device = 1 / (1 + d.to(self.device).pow(2))
-        ones_device = torch.ones(self.K - 1).to(self.device)
-        range_device = torch.arange(0, self.K - 1).to(self.device)
+        kernel_ON = self.ON_kernel(d, p)
+        w = 1 / (1 + p.pow(2))
 
-        C = 1 / (torch.outer(a_device, ones_device) ** range_device).sum(dim=1)
-        C = C.to(self.device)
-
-        # ON kernel begins with an exponential whose elements sum to -w, then finishes with +1
-        kernel_ON = torch.ones(self.F, 1, self.K).to(self.device)
-
-        C_device = C.to(self.device)
-        w_device = 1 / (1 + p.to(self.device).pow(2))
-
-        kernel_ON[:, 0, 1:] = (-C_device * w_device).unsqueeze(-1) * (torch.outer(a_device, ones_device) ** range_device)
-        kernel_ON = torch.flip(kernel_ON, dims=(2,)).to(self.device)
-
-        # OFF kernel begins with an exponential whose elements sum to +1, then finishes with +w
-        kernel_OFF = - kernel_ON / w_device.unsqueeze(1).unsqueeze(1).to(self.device)
-        kernel_OFF[:, 0, -1] = - w_device
+        # OFF kernel begins with an exponential whose elements sum to +1, then finishes with -w
+        kernel_OFF = - kernel_ON / w.unsqueeze(1).unsqueeze(1)
+        kernel_OFF[:, 0, -1] = - w
 
         return kernel_OFF
 
@@ -285,19 +301,16 @@ class AdapTrans(nn.Module):
         :param spectro_in: shape is (B, C, F, T) with B=Batch, C=Channels=1 (raw spectrogram), F=#Frequency_bands, T=#Timesteps
         :return: a tensor of shape (B, 2, F, T). First channel is for the ON response, second channel for the OFF one.
         """
-        #device = spectro_in.device
-
         # reshape input spectrogram from single-channel 2D representation to multi-channel 1D
         spectro_in = spectro_in.squeeze(1)                                      # (B, 1, F, T)  --> (B, F, T)
 
-        # build ON and OFF high-pass exponential kernels
+        # build ON and OFF high-pass exponential kernels (live on parameter device, follows .to(device))
         kernel_ON, kernel_OFF = self.build_kernels()
-        kernel_ON, kernel_OFF = kernel_ON.to(self.device), kernel_OFF.to(self.device)
 
         # convolve input spectrogram with the kernels
-        spectro_in = nn.functional.pad(spectro_in, pad=(self.K-1, 0), mode='replicate').to(self.device)            # (B, F, T)     --> (B, F, T+1)
-        out_ON = nn.functional.conv1d(spectro_in, kernel_ON, stride=1, groups=self.F)                # (B, F, T+1)   --> (B, F, T)
-        out_OFF = nn.functional.conv1d(spectro_in, kernel_OFF, stride=1, groups=self.F)              # (B, F, T+1)   --> (B, F, T)
+        spectro_in = nn.functional.pad(spectro_in, pad=(self.K-1, 0), mode='replicate')                              # (B, F, T)     --> (B, F, T+K-1)
+        out_ON = nn.functional.conv1d(spectro_in, kernel_ON, stride=1, groups=self.F)                                # (B, F, T+K-1) --> (B, F, T)
+        out_OFF = nn.functional.conv1d(spectro_in, kernel_OFF, stride=1, groups=self.F)                              # (B, F, T+K-1) --> (B, F, T)
 
         # reshape output from a 1D back to 2D representation
         spectro_out = torch.stack([out_ON, out_OFF], dim=1)                              # (B, 2, F, T)
@@ -322,3 +335,59 @@ class AdapTrans(nn.Module):
         plt.stem(torch.arange(0, self.K, 1).numpy(), OFF_filter, 'b', markerfmt='bo', label='OFF')
         plt.legend()
         plt.show()
+
+
+def make_prefiltering(kind: str, n_frequency_bands: int, dt: float,
+                      min_freq: float = 500.0, max_freq: float = 20000.0,
+                      scale: str = 'mel', learnable: bool = True,
+                      init_w: float = 0.75) -> nn.Module:
+    """
+    Factory for constructing a prefilter module from compact arguments.
+
+    Convenience wrapper that derives per-frequency ``a`` (and ``w``)
+    initial values from the cochlear frequency map, then instantiates
+    the requested prefilter class. Equivalent to building the prefilter
+    by hand; the factory exists so that user code does not need to
+    repeat the ``get_CFs`` / ``freq_to_tau`` / ``tau_to_a`` pipeline.
+
+    Parameters
+    ----------
+    kind : {'adaptrans', 'icadaptation', 'willmore'}
+        Which prefilter to build. ``'willmore'`` is an alias for
+        ``'icadaptation'``.
+    n_frequency_bands : int
+        Number of input frequency bands ``F`` of the spectrogram.
+    dt : float
+        Time bin width in milliseconds (matches ``dataset.dt_ms``).
+    min_freq, max_freq : float
+        Frequency range (in Hz) spanned by the cochlear filterbank that
+        produced the spectrogram. Defaults: 500 / 20 000 Hz.
+    scale : {'mel', 'greenwood'}, default 'mel'
+        Frequency-axis scaling used to derive per-band time constants.
+    learnable : bool, default True
+        Only relevant for ``'adaptrans'``. ``ICAdaptation`` is always
+        frozen (paper-faithful).
+    init_w : float, default 0.75
+        Only relevant for ``'adaptrans'``: initial value of the past-vs-
+        present weight ``w``.
+
+    Returns
+    -------
+    nn.Module
+        Configured prefilter instance with an ``out_channels`` attribute.
+    """
+    cf = get_CFs(min_freq, max_freq, n_frequency_bands, scale)
+    tau = freq_to_tau(cf)
+    a = tau_to_a(tau, dt=dt)
+    K = round(3 * max(tau).item()) + 1
+
+    kind = kind.lower()
+    if kind == 'adaptrans':
+        w = torch.ones_like(a) * init_w
+        return AdapTrans(init_a_vals=a, init_w_vals=w, kernel_size=K, learnable=learnable)
+    if kind in ('icadaptation', 'willmore'):
+        return ICAdaptation(init_a_vals=a, kernel_size=K)
+    raise ValueError(
+        f"Unknown prefilter kind {kind!r}. Currently supported: "
+        f"'adaptrans', 'icadaptation' (alias 'willmore')."
+    )

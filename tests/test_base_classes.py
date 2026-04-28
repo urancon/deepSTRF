@@ -128,12 +128,13 @@ def test_audio_neural_dataset_validate_requires_F():
 # -----------------------------------------------------------------------------
 
 def _make_concrete_neural_model(**kwargs):
-    """Minimal concrete NeuralModel subclass for testing non-abstract behavior."""
+    """Minimal NeuralModel subclass for testing — populates the required readout slot."""
     from deepSTRF.models.neural_model import NeuralModel
 
     class _Concrete(NeuralModel):
-        def forward(self, stimulus):
-            return stimulus
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.readout = nn.Identity()
 
     return _Concrete(**kwargs)
 
@@ -146,25 +147,21 @@ def test_neural_model_is_nn_module_and_abc():
     assert issubclass(NeuralModel, ABC)
 
 
-def test_neural_model_cannot_instantiate_without_forward():
-    """ABC enforcement: bare NeuralModel() must fail because forward is abstract."""
-    from deepSTRF.models.neural_model import NeuralModel
-
-    with pytest.raises(TypeError):
-        NeuralModel()
-
-
 def test_neural_model_concrete_instantiation_and_defaults():
     m = _make_concrete_neural_model()
     assert m.O == 1
-    assert isinstance(m.output_activation, nn.Module)
+    # Four canonical slots default to nn.Module instances
+    assert isinstance(m.wav2spec, nn.Module)
+    assert isinstance(m.prefiltering, nn.Module)
+    assert isinstance(m.core, nn.Module)
+    assert isinstance(m.readout, nn.Module)
 
     m2 = _make_concrete_neural_model(out_neurons=7)
     assert m2.O == 7
 
 
 def test_neural_model_count_trainable_params_zero_by_default():
-    """A bare concrete model has no trainable params (only Identity output activation)."""
+    """A bare concrete model has no trainable params (Identity slots only)."""
     m = _make_concrete_neural_model()
     assert m.count_trainable_params() == 0
 
@@ -177,5 +174,17 @@ def test_neural_model_validate_passes_on_valid_instance():
 def test_neural_model_validate_fails_on_bad_state():
     m = _make_concrete_neural_model()
     m.O = 0
+    with pytest.raises(AssertionError):
+        m.validate()
+
+
+def test_neural_model_validate_fails_without_readout():
+    """validate() must reject a model whose readout slot was not populated."""
+    from deepSTRF.models.neural_model import NeuralModel
+
+    class _NoReadout(NeuralModel):
+        pass
+
+    m = _NoReadout()
     with pytest.raises(AssertionError):
         m.validate()
