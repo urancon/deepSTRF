@@ -241,10 +241,13 @@ CCnorm_n = cov(pred_n, psth_n) / sqrt( var(pred_n) · SP_n )
 where `pred_n`, `psth_n` are the 1-D vectors of valid `(b, t)` positions
 for neuron `n` (concatenated across stims via boolean indexing, §3),
 and `SP_n` is the Sahani–Linden signal power for neuron `n` (§6.5,
-per-stim-then-`nanmean` across stims). Replaces the noise-inflated
-`var(psth)` in the denominator of the raw Pearson correlation with the
-unbiased signal-only variance estimator. Cells with `SP_n ≤ 0` (the
-noise-floor regime where the unbiased estimator fails) return NaN.
+length-weighted across stims). The aggregation convention for the
+denominator is chosen to match the natural sample-count weighting that
+the numerator's concatenated `cov` and `var` perform automatically — see
+§11. Replaces the noise-inflated `var(psth)` in the denominator of the
+raw Pearson correlation with the unbiased signal-only variance estimator.
+Cells with `SP_n ≤ 0` (the noise-floor regime where the unbiased
+estimator fails) return NaN.
 
 #### `method='hsu'`
 
@@ -255,14 +258,15 @@ by Schoppe et al. 2016.
 CCnorm_n     = corr(pred_n, psth_n) / CCmax_n
 CCmax_{b,n}  = sqrt( 2 · ρ_half_{b,n} / (1 + ρ_half_{b,n}) )           (Spearman–Brown, per stim)
 ρ_half_{b,n} = E_{i,j}[ corr( psth_half_{i,b,n}, psth_half_{j,b,n} ) ] (over disjoint half-trial splits)
-CCmax_n      = nanmean_b ( CCmax_{b,n} )
+CCmax_n      = sum_b ( T_b · CCmax_{b,n} ) / sum_b T_b                 (length-weighted, §11)
 ```
 
 Computed per-stim by sampling up to `ccmax_iters=126` disjoint
-half-trial pairs, then averaged across stims (`nanmean`). Same
-robustness convention as `signal_power` (§6.5). Per-stim cells with
-`ρ_half ≤ 0` (worse-than-chance ceiling — too noisy to estimate)
-contribute NaN to the average.
+half-trial pairs, then length-weighted across stims with `T_b` as the
+weight. Same robustness convention as `signal_power` (§6.5). Per-stim
+cells with `ρ_half ≤ 0` (worse-than-chance ceiling — too noisy to
+estimate) are dropped from the weighted average rather than
+contaminating it.
 
 #### Single-trial degenerate case
 
@@ -307,27 +311,34 @@ Solving for `SP_{b,n}`:
 SP_{b,n} = ( R · var_t(psth_{b,n}) - TP_{b,n} ) / (R - 1)
 ```
 
-The per-neuron quantity is the **mean across stimuli** of the per-stim
-estimates:
+The per-neuron quantity is the **length-weighted average** of the
+per-stim estimates:
 
 ```text
-SP_n = nanmean_b ( SP_{b,n} )
+SP_n = sum_b ( T_b · SP_{b,n} ) / sum_b T_b
 ```
 
-This per-stim-then-average convention is what makes the metric robust to
-the variable-`R` setting of the data paradigm: each stim contributes its
-own valid repeat count, and stims with fewer than 2 valid repeats or
-fewer than 2 valid time bins are skipped entirely. Cells without any
-qualifying stim return NaN under `reduction='none'`.
+where `T_b` is the number of valid time bins for stim `b`. This is the
+BLUE estimator under the assumption that every per-stim `SP_{b,n}` is
+unbiased: weighting by sample count gives the minimum-variance combiner.
+It also matches the natural sample weighting that `cov` and `var` apply
+in the numerator of `corrcoef` / `normalized_corrcoef` (which run over
+the full concatenated `(b, t)` series), so a 500 ms clip drives the
+denominator the same way it drives the numerator. See §11 for the
+derivation.
+
+A given `(b, n)` cell is included iff it has ≥ 2 valid repeats and ≥ 2
+valid time bins. Cells without any qualifying stim return NaN under
+`reduction='none'`.
 
 ### 6.6 `noise_power(responses, mask=None, reduction='mean')`
 
 ```text
 NP_{b,n} = TP_{b,n} - SP_{b,n}
-NP_n     = nanmean_b ( NP_{b,n} )
+NP_n     = sum_b ( T_b · NP_{b,n} ) / sum_b T_b
 ```
 
-Same per-stim-then-average convention as `signal_power`.
+Same length-weighted aggregation as `signal_power`.
 
 ### 6.7 `snr(responses, mask=None, reduction='mean')`
 
@@ -480,7 +491,81 @@ re-open this doc.
   not shipped in v1.
 - **Chunked-coherence for NaN-padded variable-length stims** (§6.8).
 
-## 11. References
+## 11. Why length-weighting? (BLUE derivation)
+
+Several v1 metrics combine per-stim estimates into a per-neuron number:
+`signal_power`, `noise_power`, `snr`, and `normalized_corrcoef(method='hsu')`.
+The *aggregation* across stims is length-weighted:
+
+```text
+X_n = sum_b ( T_b · X_{b,n} ) / sum_b T_b
+```
+
+with `T_b` the number of valid time bins for stim `b`. This subsection
+records *why*, since "average across stims" is also a valid choice and
+the literature is split.
+
+### Setup
+
+Let `X_{b,n}` be a per-stim estimate of some neuron-level quantity
+`X_n` (e.g. signal power). Treat `X_{b,n}` as an unbiased estimator
+with variance `Var(X_{b,n}) ∝ 1 / T_b` — i.e. estimator variance shrinks
+linearly with the number of time samples used. This is the standard
+behaviour of variance-of-variance estimators on stationary signals:
+doubling `T` halves the noise on the variance estimate.
+
+The general weighted estimator
+
+```text
+X̂_n = sum_b ( w_b · X_{b,n} ) / sum_b w_b
+```
+
+is unbiased for any positive `w_b` summing to one. Its variance is
+minimised — i.e. it is the **Best Linear Unbiased Estimator (BLUE)** —
+when `w_b ∝ 1 / Var(X_{b,n}) = T_b`. So weighting by `T_b` extracts
+the most information possible from the per-stim estimates under that
+variance assumption.
+
+### Coherence with the numerator
+
+`corrcoef(pred_n, psth_n)` and `var(pred_n)` in the Schoppe formula
+operate over the **concatenated** valid `(b, t)` time series for neuron
+`n`. A 500 ms clip contributes 10× the samples of a 50 ms clip and
+correspondingly drives the numerator's `cov` / `var` 10× harder. If we
+were to combine per-stim SPs with equal weights instead of length
+weights, the numerator and denominator would weight stims differently,
+which makes the resulting CCnorm value awkward to interpret —
+especially when comparing models on heterogeneous-length validation
+sets. Length-weighting on the denominator brings everything into
+agreement.
+
+### The equal-weight alternative
+
+`mean_b X_{b,n}` is also defensible:
+
+- Pros: each stim contributes one *answer*, not one *fact*. If you
+  trust short-stim estimates as much as long-stim estimates (e.g. your
+  short stims are repeated many more times so the per-stim variance
+  gain compensates), equal weighting reflects that.
+- Cons: ignores the variance structure described above; short noisy
+  stims can pull the average around.
+
+We pick length-weighting as the default because it composes correctly
+with the natural sample-count weighting elsewhere in the pipeline. A
+future kwarg `weighting='length' | 'equal'` could expose the choice if a
+clear use case emerges.
+
+### Practical consequence
+
+A neuron with two clips — a 500 ms validation stim with `SP=10` and a
+50 ms validation stim with `SP=1` — gets `SP_n ≈ (500·10 + 50·1)/550 ≈
+9.18` under length-weighting, vs `5.5` under equal weighting. The
+length-weighted answer matches what `var(psth_n)` over the concatenated
+time series would have given (modulo the `1/(R−1)` Bessel correction);
+the equal-weighted answer would produce an internally inconsistent
+CCnorm.
+
+## 12. References
 
 - **Sahani, M. & Linden, J. F. (2003).** "How linear are auditory cortical
   responses?" *Advances in Neural Information Processing Systems (NIPS)*.

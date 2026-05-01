@@ -314,6 +314,36 @@ def test_signal_power_handles_nan_padded_repeats():
     assert not torch.isnan(sp).any()
 
 
+def test_signal_power_long_stim_dominates_short_stim():
+    """Length-weighted SP: a long high-variance stim should dominate a short low-variance stim."""
+    g = torch.Generator().manual_seed(0)
+    # Stim 0: long (T=400), high signal variance ≈ 4
+    sig0 = torch.randn(400, generator=g) * 2.0
+    # Stim 1: short (T=20), low signal variance ≈ 0.01, NaN-padded to T=400
+    sig1 = torch.randn(20, generator=g) * 0.1
+    sig1_padded = torch.cat([sig1, torch.full((380,), float("nan"))])
+
+    R = 4
+    responses = torch.stack(
+        [sig0.unsqueeze(0).expand(R, 400),                            # (R, 400)
+         sig1_padded.unsqueeze(0).expand(R, 400)],                    # (R, 400)
+        dim=0,
+    ).unsqueeze(1)                                                    # (B=2, N=1, R, T=400)
+
+    sp = signal_power(responses, reduction="none")[0].item()
+
+    # Length-weighted: w0=400, w1=20. SP_n ≈ (400 * Var(sig0) + 20 * Var(sig1)) / 420
+    sp_long = sig0.var(unbiased=True).item()
+    sp_short = sig1.var(unbiased=True).item()
+    expected_lw = (400 * sp_long + 20 * sp_short) / 420.0
+    expected_eqavg = 0.5 * (sp_long + sp_short)
+
+    # The length-weighted answer is much closer to sp_long; the equal-mean version
+    # would give the average of the two stims (factor of ~2 different here).
+    assert abs(sp - expected_lw) < 0.1
+    assert abs(sp - expected_eqavg) > 1.0
+
+
 def test_snr_high_when_clean():
     g = torch.Generator().manual_seed(0)
     signal = torch.randn(1, 1, 1, 500, generator=g)

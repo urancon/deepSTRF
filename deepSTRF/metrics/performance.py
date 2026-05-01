@@ -128,9 +128,19 @@ def _sahani_linden_per_neuron(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Return (SP, NP) per neuron, both shape ``(N,)``.
 
-    Per-stimulus computation, then ``nanmean`` across stims. A given (b, n) cell
-    is included iff it has ≥ 2 valid repeats and ≥ 2 valid time bins. Cells that
-    have no qualifying stim get NaN.
+    Per-stimulus computation, then **length-weighted** average across stims:
+
+        SP_n = sum_b ( T_b · SP_{b,n} ) / sum_b T_b
+
+    where ``T_b`` is the number of valid time bins for stim ``b``. This matches
+    the natural sample-count weighting of ``cov`` and ``var`` over the
+    concatenated ``(b, t)`` time series in ``corrcoef`` / ``normalized_corrcoef``,
+    so long stims drive the SP estimate proportionally to their information
+    content (the BLUE estimator under the assumption that each per-stim
+    ``SP_{b,n}`` is unbiased — see ``metrics_paradigm.md`` §6.5).
+
+    A given ``(b, n)`` cell is included iff it has ≥ 2 valid repeats and ≥ 2
+    valid time bins. Cells that have no qualifying stim get NaN.
     """
     B, N, R, T = responses.shape
     nan = responses.new_full((), float("nan"))
@@ -139,6 +149,7 @@ def _sahani_linden_per_neuron(
     for n in range(N):
         sp_stims = []
         np_stims = []
+        weights = []
         for b in range(B):
             v_bn = valid[b, n]                       # (R, T)
             valid_repeats = v_bn.any(dim=-1)         # (R,)
@@ -154,9 +165,13 @@ def _sahani_linden_per_neuron(
             sp = (R_v * var_psth - tp) / (R_v - 1)
             sp_stims.append(sp)
             np_stims.append(tp - sp)
+            weights.append(float(T_v))
         if sp_stims:
-            sp_per_neuron.append(torch.stack(sp_stims).mean())
-            np_per_neuron.append(torch.stack(np_stims).mean())
+            sps = torch.stack(sp_stims)
+            nps = torch.stack(np_stims)
+            ws = sps.new_tensor(weights)
+            sp_per_neuron.append((sps * ws).sum() / ws.sum())
+            np_per_neuron.append((nps * ws).sum() / ws.sum())
         else:
             sp_per_neuron.append(nan)
             np_per_neuron.append(nan)
@@ -222,19 +237,21 @@ def _ccmax_per_neuron(
     valid: torch.Tensor,
     max_iters: int,
 ) -> torch.Tensor:
-    """Per-neuron CCmax (Hsu / Spearman-Brown) averaged across stims. Shape ``(N,)``.
+    """Per-neuron CCmax (Hsu / Spearman-Brown), length-weighted across stims.
 
-    Uses NaN-tolerant per-stim computation: drops invalid repeats and time bins,
-    then estimates ``ρ_half`` by averaging up to ``max_iters`` disjoint half-trial
-    splits before applying ``CCmax = sqrt(2 ρ_half / (1 + ρ_half))``. Stims with
-    fewer than 2 valid repeats are skipped; cells without any qualifying stim or
-    with ``ρ_half ≤ 0`` (worse than chance ceiling — too noisy to estimate) get NaN.
+    Same length-weighting convention as ``_sahani_linden_per_neuron``: each
+    per-stim CCmax_{b,n} is weighted by ``T_b`` (its valid time count) so that
+    long stims drive the ceiling estimate more than short ones, matching the
+    natural sample weighting of ``corrcoef`` over the concatenated time axis.
+    Per-stim cells with ``ρ_half ≤ 0`` are dropped (NaN-skip in the weighted
+    average). Cells with no qualifying stim get NaN.
     """
     B, N, R, T = responses.shape
     nan = responses.new_full((), float("nan"))
     out = []
     for n in range(N):
         ccmax_stims = []
+        weights = []
         for b in range(B):
             v_bn = valid[b, n]
             valid_repeats = v_bn.any(dim=-1)
@@ -258,11 +275,14 @@ def _ccmax_per_neuron(
                 continue
             rho_half = torch.stack(cc_halfs).mean()
             if rho_half.item() <= 0:
-                ccmax_stims.append(nan)
+                # too noisy to estimate ceiling; drop this stim from the weighted avg
                 continue
             ccmax_stims.append(torch.sqrt(2 * rho_half / (1 + rho_half)))
+            weights.append(float(T_v))
         if ccmax_stims:
-            out.append(torch.stack(ccmax_stims).nanmean())
+            cms = torch.stack(ccmax_stims)
+            ws = cms.new_tensor(weights)
+            out.append((cms * ws).sum() / ws.sum())
         else:
             out.append(nan)
     return torch.stack(out)
