@@ -309,6 +309,69 @@ def test_fve_can_be_negative_for_bad_pred():
 
 
 # -------------------------------------------------------------------------
+# Auto-PSTH collapse for prediction-vs-PSTH metrics
+# (mse_loss, poisson_loss, corrcoef, fve all accept either gt shape)
+# -------------------------------------------------------------------------
+
+
+def _pred_and_responses(B=2, N=3, R=4, T=20, seed=0, with_nan_pads=False):
+    g = torch.Generator().manual_seed(seed)
+    pred = torch.randn(B, N, 1, T, generator=g)
+    responses = torch.randn(B, N, R, T, generator=g).abs()  # poisson-friendly
+    if with_nan_pads:
+        # Mark a couple of (b, n, r) trial slabs as missing.
+        responses[0, 0, 1, :] = float("nan")
+        responses[1, 2, 3, :] = float("nan")
+    psth = responses.nanmean(dim=2, keepdim=True)
+    return pred, responses, psth
+
+
+@pytest.mark.parametrize("with_nan_pads", [False, True])
+def test_mse_loss_auto_psth_collapse(with_nan_pads):
+    pred, responses, psth = _pred_and_responses(with_nan_pads=with_nan_pads)
+    out_responses = mse_loss(pred, responses, reduction="none")
+    out_psth = mse_loss(pred, psth, reduction="none")
+    assert torch.allclose(out_responses, out_psth, equal_nan=True, atol=1e-6)
+
+
+@pytest.mark.parametrize("with_nan_pads", [False, True])
+@pytest.mark.parametrize("log_input", [False, True])
+def test_poisson_loss_auto_psth_collapse(with_nan_pads, log_input):
+    pred, responses, psth = _pred_and_responses(with_nan_pads=with_nan_pads)
+    out_responses = poisson_loss(pred, responses, reduction="none",
+                                 log_input=log_input)
+    out_psth = poisson_loss(pred, psth, reduction="none",
+                            log_input=log_input)
+    assert torch.allclose(out_responses, out_psth, equal_nan=True, atol=1e-6)
+
+
+@pytest.mark.parametrize("with_nan_pads", [False, True])
+def test_corrcoef_auto_psth_collapse(with_nan_pads):
+    pred, responses, psth = _pred_and_responses(with_nan_pads=with_nan_pads)
+    out_responses = corrcoef(pred, responses, reduction="none")
+    out_psth = corrcoef(pred, psth, reduction="none")
+    assert torch.allclose(out_responses, out_psth, equal_nan=True, atol=1e-6)
+
+
+@pytest.mark.parametrize("with_nan_pads", [False, True])
+def test_fve_auto_psth_collapse(with_nan_pads):
+    pred, responses, psth = _pred_and_responses(with_nan_pads=with_nan_pads)
+    out_responses = fve(pred, responses, reduction="none")
+    out_psth = fve(pred, psth, reduction="none")
+    assert torch.allclose(out_responses, out_psth, equal_nan=True, atol=1e-6)
+
+
+def test_auto_psth_collapse_passes_through_R1():
+    """Single-trial gt (R=1) is used as-is; no collapse."""
+    pred, _, psth = _pred_and_responses()
+    # A custom (B, N, 1, T) target that is NOT the PSTH — must not be collapsed.
+    custom_target = torch.zeros_like(psth)
+    out = mse_loss(pred, custom_target, reduction="none")
+    expected = (pred ** 2).mean(dim=(0, 2, 3))           # (N,)
+    assert torch.allclose(out, expected, atol=1e-6)
+
+
+# -------------------------------------------------------------------------
 # signal_power / noise_power / snr (Sahani–Linden)
 # -------------------------------------------------------------------------
 

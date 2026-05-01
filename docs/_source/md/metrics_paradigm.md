@@ -41,11 +41,12 @@ repeats. The two functional signatures handle this without a class
 hierarchy:
 
 ```python
-# prediction-vs-PSTH metrics: pred and gt have the SAME shape, R=1 on both sides.
-corrcoef(pred, gt_psth, mask=None, reduction='mean')              # (B, N, 1, T) × (B, N, 1, T)
-fve(pred, gt_psth, mask=None, reduction='mean')                   # (B, N, 1, T) × (B, N, 1, T)
-mse_loss(pred, gt_psth, mask=None, reduction='mean')              # (B, N, 1, T) × (B, N, 1, T)
-poisson_loss(pred, gt_psth, mask=None, reduction='mean')          # (B, N, 1, T) × (B, N, 1, T)
+# prediction-vs-PSTH metrics: gt may be the PSTH (B, N, 1, T) OR raw responses (B, N, R, T).
+# When R > 1 the metric collapses to PSTH internally via nanmean(dim=2, keepdim=True).
+corrcoef(pred, gt, mask=None, reduction='mean')                   # (B, N, 1, T) × (B, N, 1|R, T)
+fve(pred, gt, mask=None, reduction='mean')                        # (B, N, 1, T) × (B, N, 1|R, T)
+mse_loss(pred, gt, mask=None, reduction='mean')                   # (B, N, 1, T) × (B, N, 1|R, T)
+poisson_loss(pred, gt, mask=None, reduction='mean')               # (B, N, 1, T) × (B, N, 1|R, T)
 
 # repeat-aware metrics: ground truth keeps its R dimension.
 signal_power(responses, mask=None, reduction='mean')              # (B, N, R, T)
@@ -54,13 +55,42 @@ snr(responses, mask=None, reduction='mean')                       # (B, N, R, T)
 normalized_corrcoef(pred, responses, method='schoppe',            # (B, N, 1, T) × (B, N, R, T)
                     mask=None, reduction='mean')
 
-# eval-only frequency-domain metric: needs a regular grid, NaN-free
+# eval-only frequency-domain metric: needs a regular grid, NaN-free, PSTH-only
 coherence(pred, gt_psth, dt_ms, reduction='mean')                  # (B, N, 1, T) × (B, N, 1, T)
 ```
 
 The `R = 1` singleton on `pred` mirrors what the model emits. We do *not*
 silently squeeze it — that would break a future probabilistic model that
 populates the axis with multiple samples.
+
+### Auto-PSTH collapse on the `gt` argument
+
+The four prediction-vs-PSTH metrics (`mse_loss`, `poisson_loss`,
+`corrcoef`, `fve`) accept `gt` in either canonical shape:
+
+- `(B, N, 1, T)` — pre-computed PSTH or a deliberately chosen
+  single-trial target — used as-is.
+- `(B, N, R, T)` with `R > 1` — raw responses — collapsed to PSTH
+  internally via `nanmean(dim=2, keepdim=True)` before the formula is
+  applied.
+
+This means the canonical training step is
+
+```python
+loss = mse_loss(pred, responses)            # one line, auto-PSTH
+```
+
+with no caller-side `responses.nanmean(...)` boilerplate. NaN-padded
+missing-trial slabs flow through the `nanmean` cleanly: a position where
+every repeat is NaN comes out NaN at the collapsed PSTH and is dropped
+by the metric's NaN-derived mask (§4). When `gt` is already
+`(B, N, 1, T)` the collapse is a no-op, so passing a custom target
+(e.g. for a non-PSTH fitting objective) keeps working unchanged.
+
+The repeat-aware metrics (`signal_power`, `noise_power`, `snr`,
+`normalized_corrcoef`) and `coherence` do **not** auto-collapse: the
+first three need the per-trial structure for their formulas, and
+`coherence` is documented as PSTH-only and NaN-intolerant (§6.8).
 
 ## 3. The reduction over time happens inside
 
@@ -460,33 +490,32 @@ is correct for its supported shape — but adapted to the new
 Mirroring `data_paradigm.md` §6, the canonical loop now looks like:
 
 ```python
-from deepSTRF.metrics import mse_loss, corrcoef, normalized_corrcoef, signal_power
+from deepSTRF.metrics import mse_loss, corrcoef, normalized_corrcoef
 
 for stims, responses, valid_mask, stim_metas in loader:
-    pred     = model(stims)                                       # (B, N, 1, T)
-    gt_psth  = responses.nanmean(dim=2, keepdim=True)             # (B, N, 1, T)
+    pred = model(stims)                                          # (B, N, 1, T)
 
-    loss = mse_loss(pred, gt_psth)                                # scalar
+    loss = mse_loss(pred, responses)                             # auto-PSTH inside
     loss.backward()
     optimizer.step()
 
     if val_step:
-        cc       = corrcoef(pred, gt_psth, reduction='none')       # (N,)
-        cc_norm  = normalized_corrcoef(pred, responses,            # (N,)
+        cc       = corrcoef(pred, responses, reduction='none')    # (N,)  auto-PSTH
+        cc_norm  = normalized_corrcoef(pred, responses,           # (N,)  needs raw repeats
                                        method='schoppe',
                                        reduction='none')
 ```
 
 Notes:
 
-1. **No manual masking.** `gt_psth` carries the NaN sentinels through
-   from `responses.nanmean(dim=2, keepdim=True)`; every metric picks them
-   up via §4. The dataloader's `valid_mask` is informational; it is
-   redundant with `~gt_psth.isnan()` for prediction-vs-PSTH metrics.
-2. **`responses.nanmean(dim=2, keepdim=True)` is the canonical PSTH.**
-   It survives full-NaN slabs (returns NaN at those positions, which the
-   metric drops), survives R-padded NaNs, and keeps the `R=1` singleton
-   so it pairs trivially with `pred`.
+1. **No manual masking and no manual PSTH.** Pass `responses` directly to
+   any prediction-vs-PSTH metric; the auto-PSTH collapse (§2) and the
+   NaN-derived mask (§4) are both internal. The dataloader's `valid_mask`
+   is informational at this point.
+2. **Pass `responses.nanmean(dim=2, keepdim=True)` explicitly only when
+   you want a non-default target** — a custom objective, a single-trial
+   fit, etc. The `(B, N, 1, T)` shape is treated as authoritative and
+   passed through unchanged.
 3. **`reduction='none'` is the default for val metrics.** Per-neuron
    numbers are usually what you want for diagnostics (best/worst cells,
    distribution plots). Aggregate yourself with `cc.nanmean()` if a

@@ -13,7 +13,11 @@ import numpy as np
 import scipy.signal
 import torch
 
-from deepSTRF.metrics._masking import reduce_over_neurons, resolve_mask
+from deepSTRF.metrics._masking import (
+    collapse_to_psth_if_needed,
+    reduce_over_neurons,
+    resolve_mask,
+)
 
 _EPS = 1e-12
 
@@ -66,8 +70,14 @@ def corrcoef(
 ) -> torch.Tensor:
     """Pearson correlation per neuron over flattened valid (B, T) positions.
 
+    ``gt`` may be passed as either a pre-computed PSTH ``(B, N, 1, T)`` or a
+    raw responses tensor ``(B, N, R, T)`` with ``R > 1``; in the latter case
+    it is collapsed to PSTH via ``nanmean(dim=2, keepdim=True)`` before the
+    correlation is computed.
+
     See ``metrics_paradigm.md`` §6.3.
     """
+    gt = collapse_to_psth_if_needed(gt)
     _check_pred_gt(pred, gt)
     valid = resolve_mask(gt, mask)
     N = pred.shape[1]
@@ -95,7 +105,13 @@ def fve(
 
     ``FVE_n = 1 - SS_res / SS_tot`` where SS_tot is the variance of ``gt`` only.
     Negative when the prediction is worse than predicting the mean.
+
+    ``gt`` may be passed as either a pre-computed PSTH ``(B, N, 1, T)`` or a
+    raw responses tensor ``(B, N, R, T)`` with ``R > 1``; in the latter case
+    it is collapsed to PSTH via ``nanmean(dim=2, keepdim=True)`` before the
+    metric is computed.
     """
+    gt = collapse_to_psth_if_needed(gt)
     _check_pred_gt(pred, gt)
     valid = resolve_mask(gt, mask)
     N = pred.shape[1]

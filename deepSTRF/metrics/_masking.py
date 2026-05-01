@@ -12,6 +12,25 @@ import torch
 _VALID_REDUCTIONS = ("none", "mean", "sum")
 
 
+def collapse_to_psth_if_needed(gt: torch.Tensor) -> torch.Tensor:
+    """Collapse a raw responses tensor to its PSTH if its R-axis has size > 1.
+
+    Lets prediction-vs-PSTH metrics accept either canonical shape:
+
+    - ``(B, N, 1, T)`` — pre-computed PSTH or single-trial target — used
+      as-is.
+    - ``(B, N, R, T)`` with ``R > 1`` — raw responses — collapsed to
+      ``(B, N, 1, T)`` via ``nanmean`` over the repeat axis.
+
+    The ``nanmean`` preserves NaN-padded missing-trial slabs as NaN at the
+    collapsed PSTH position, which the metric's own NaN-derived mask then
+    drops cleanly. See ``docs/_source/md/metrics_paradigm.md`` §2.
+    """
+    if gt.dim() == 4 and gt.shape[2] > 1:
+        return gt.nanmean(dim=2, keepdim=True)
+    return gt
+
+
 def resolve_mask(gt: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Tensor:
     """Return the effective valid-positions mask for ``gt``.
 
