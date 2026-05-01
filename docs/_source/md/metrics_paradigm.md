@@ -238,9 +238,13 @@ Frontiers in Neuroscience.
 CCnorm_n = cov(pred_n, psth_n) / sqrt( var(pred_n) · SP_n )
 ```
 
-where `SP_n` is the Sahani–Linden signal power for neuron `n` (§6.5).
-Replaces the noise-inflated `var(psth)` in the denominator of the raw
-Pearson correlation with the unbiased signal-only variance estimator.
+where `pred_n`, `psth_n` are the 1-D vectors of valid `(b, t)` positions
+for neuron `n` (concatenated across stims via boolean indexing, §3),
+and `SP_n` is the Sahani–Linden signal power for neuron `n` (§6.5,
+per-stim-then-`nanmean` across stims). Replaces the noise-inflated
+`var(psth)` in the denominator of the raw Pearson correlation with the
+unbiased signal-only variance estimator. Cells with `SP_n ≤ 0` (the
+noise-floor regime where the unbiased estimator fails) return NaN.
 
 #### `method='hsu'`
 
@@ -248,12 +252,17 @@ Hsu, Borst & Theunissen 2004, with the `CCmax` formulation popularized
 by Schoppe et al. 2016.
 
 ```text
-CCnorm_n = corr(pred_n, psth_n) / CCmax_n
-CCmax_n  = sqrt( 2 · ρ_half / (1 + ρ_half) )                           (Spearman–Brown)
-ρ_half   = E_{i, j}[ corr( psth_half_{i,n}, psth_half_{j,n} ) ]        (over disjoint half-trial splits)
+CCnorm_n     = corr(pred_n, psth_n) / CCmax_n
+CCmax_{b,n}  = sqrt( 2 · ρ_half_{b,n} / (1 + ρ_half_{b,n}) )           (Spearman–Brown, per stim)
+ρ_half_{b,n} = E_{i,j}[ corr( psth_half_{i,b,n}, psth_half_{j,b,n} ) ] (over disjoint half-trial splits)
+CCmax_n      = nanmean_b ( CCmax_{b,n} )
 ```
 
-Computed by sampling up to `ccmax_iters=126` disjoint half-trial pairs.
+Computed per-stim by sampling up to `ccmax_iters=126` disjoint
+half-trial pairs, then averaged across stims (`nanmean`). Same
+robustness convention as `signal_power` (§6.5). Per-stim cells with
+`ρ_half ≤ 0` (worse-than-chance ceiling — too noisy to estimate)
+contribute NaN to the average.
 
 #### Single-trial degenerate case
 
@@ -284,31 +293,41 @@ follow-up rather than ship a rushed fix.
 
 Sahani & Linden 2003, NIPS, "How linear are auditory cortical responses?".
 
-The variance of a noisy multi-trial response decomposes as
+For one `(b, n)` cell with `R` valid repeats, the variance of the
+multi-trial response decomposes as
 
 ```text
-TP_n = E_r [ var_t( y_{r, n}(t) ) ]                = SP_n + NP_n            (single-trial variance)
-       var_t( E_r[ y_{r, n}(t) ] )                 = SP_n + NP_n / R         (variance of the PSTH)
+TP_{b,n} = E_r [ var_t( y_{r, b, n}(t) ) ]            = SP_{b,n} + NP_{b,n}             (single-trial variance)
+           var_t( E_r[ y_{r, b, n}(t) ] )             = SP_{b,n} + NP_{b,n} / R          (variance of the PSTH)
 ```
 
-Solving for `SP_n`:
+Solving for `SP_{b,n}`:
 
 ```text
-SP_n = ( R · var_t(psth_n) - TP_n ) / (R - 1)
+SP_{b,n} = ( R · var_t(psth_{b,n}) - TP_{b,n} ) / (R - 1)
 ```
 
-with `psth_n = responses[..., n, :, :].nanmean(dim=R)`. Time and repeat
-reductions are NaN-aware; cells without ≥ 2 repeats return NaN under
-`reduction='none'`.
+The per-neuron quantity is the **mean across stimuli** of the per-stim
+estimates:
+
+```text
+SP_n = nanmean_b ( SP_{b,n} )
+```
+
+This per-stim-then-average convention is what makes the metric robust to
+the variable-`R` setting of the data paradigm: each stim contributes its
+own valid repeat count, and stims with fewer than 2 valid repeats or
+fewer than 2 valid time bins are skipped entirely. Cells without any
+qualifying stim return NaN under `reduction='none'`.
 
 ### 6.6 `noise_power(responses, mask=None, reduction='mean')`
 
 ```text
-NP_n = TP_n - SP_n
+NP_{b,n} = TP_{b,n} - SP_{b,n}
+NP_n     = nanmean_b ( NP_{b,n} )
 ```
 
-with `TP_n = E_r[ var_t( y_{r, n}(t) ) ]`. Same shape contract as
-`signal_power`.
+Same per-stim-then-average convention as `signal_power`.
 
 ### 6.7 `snr(responses, mask=None, reduction='mean')`
 

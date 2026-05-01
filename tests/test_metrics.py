@@ -12,7 +12,18 @@ import math
 import pytest
 import torch
 
-from deepSTRF.metrics import mse_loss, poisson_loss
+from deepSTRF.metrics import (
+    coherence,
+    corrcoef,
+    fve,
+    mse_loss,
+    noise_power,
+    normalized_corrcoef,
+    poisson_loss,
+    signal_power,
+    snr,
+)
+from deepSTRF.metrics.performance import compute_CCmax, compute_TTRC
 
 
 # -------------------------------------------------------------------------
@@ -180,3 +191,242 @@ def test_poisson_loss_invalid_reduction_raises():
     gt = torch.full((1, 1, 1, 4), 1.0)
     with pytest.raises(ValueError, match="reduction"):
         poisson_loss(pred, gt, reduction="None")  # capitalized typo from old API
+
+
+# -------------------------------------------------------------------------
+# corrcoef
+# -------------------------------------------------------------------------
+
+
+def test_corrcoef_self_is_one():
+    g = torch.Generator().manual_seed(0)
+    pred = torch.randn(2, 3, 1, 50, generator=g)
+    cc = corrcoef(pred, pred.clone(), reduction="none")
+    assert torch.allclose(cc, torch.ones(3), atol=1e-5)
+
+
+def test_corrcoef_anti_correlation_is_minus_one():
+    g = torch.Generator().manual_seed(0)
+    gt = torch.randn(1, 1, 1, 100, generator=g)
+    cc = corrcoef(-gt, gt, reduction="none")
+    assert torch.allclose(cc, torch.tensor([-1.0]), atol=1e-5)
+
+
+def test_corrcoef_constant_input_returns_nan():
+    pred = torch.zeros(1, 1, 1, 10)               # constant -> zero variance
+    gt = torch.randn(1, 1, 1, 10)
+    cc = corrcoef(pred, gt, reduction="none")
+    assert torch.isnan(cc[0])
+
+
+def test_corrcoef_drops_nan_positions():
+    g = torch.Generator().manual_seed(0)
+    gt = torch.randn(1, 1, 1, 100, generator=g)
+    gt_with_nan = gt.clone()
+    gt_with_nan[..., 50:] = float("nan")
+    pred = gt.clone()
+    cc = corrcoef(pred, gt_with_nan, reduction="none")
+    # corrcoef only over the 50 valid positions, where pred==gt → 1
+    assert torch.allclose(cc, torch.ones(1), atol=1e-5)
+
+
+def test_corrcoef_reduction_shape():
+    pred = torch.randn(1, 5, 1, 30)
+    gt = torch.randn(1, 5, 1, 30)
+    assert corrcoef(pred, gt, reduction="none").shape == (5,)
+    assert corrcoef(pred, gt, reduction="mean").dim() == 0
+    assert corrcoef(pred, gt, reduction="sum").dim() == 0
+
+
+# -------------------------------------------------------------------------
+# fve
+# -------------------------------------------------------------------------
+
+
+def test_fve_self_is_one():
+    g = torch.Generator().manual_seed(0)
+    gt = torch.randn(1, 3, 1, 50, generator=g)
+    out = fve(gt.clone(), gt, reduction="none")
+    assert torch.allclose(out, torch.ones(3), atol=1e-5)
+
+
+def test_fve_zero_pred_against_zero_mean_gt_is_zero():
+    """If pred is the mean of gt (i.e. 0 for zero-mean gt), FVE = 0."""
+    g = torch.Generator().manual_seed(0)
+    gt = torch.randn(1, 1, 1, 200, generator=g)
+    gt = gt - gt.mean()
+    pred = torch.zeros_like(gt)
+    out = fve(pred, gt, reduction="none")
+    assert torch.allclose(out, torch.zeros(1), atol=1e-5)
+
+
+def test_fve_can_be_negative_for_bad_pred():
+    g = torch.Generator().manual_seed(0)
+    gt = torch.randn(1, 1, 1, 200, generator=g)
+    pred = -gt * 5.0                         # wildly worse than predicting the mean
+    out = fve(pred, gt, reduction="none")
+    assert (out < 0).all()
+
+
+# -------------------------------------------------------------------------
+# signal_power / noise_power / snr (Sahani–Linden)
+# -------------------------------------------------------------------------
+
+
+def _two_repeat_signal_plus_noise(B=1, N=1, T=200, seed=0, sig_scale=1.0, noise_scale=0.0):
+    g = torch.Generator().manual_seed(seed)
+    signal = torch.randn(B, N, 1, T, generator=g) * sig_scale
+    noise = torch.randn(B, N, 2, T, generator=g) * noise_scale
+    return signal.expand(B, N, 2, T) + noise
+
+
+def test_signal_power_noiseless_is_signal_variance():
+    """With zero noise, SP should equal the signal variance."""
+    g = torch.Generator().manual_seed(0)
+    signal = torch.randn(1, 1, 1, 500, generator=g)
+    responses = signal.expand(1, 1, 4, 500)        # 4 identical repeats: noise = 0
+    sp = signal_power(responses, reduction="none")
+    expected = signal.var(unbiased=True)
+    assert torch.allclose(sp[0], expected, atol=1e-4)
+
+
+def test_noise_power_zero_for_identical_repeats():
+    g = torch.Generator().manual_seed(0)
+    signal = torch.randn(1, 1, 1, 500, generator=g)
+    responses = signal.expand(1, 1, 4, 500)
+    np_ = noise_power(responses, reduction="none")
+    assert torch.allclose(np_[0], torch.tensor(0.0), atol=1e-5)
+
+
+def test_signal_power_single_trial_returns_nan():
+    responses = torch.randn(2, 3, 1, 100)          # R = 1: undefined
+    sp = signal_power(responses, reduction="none")
+    assert torch.isnan(sp).all()
+
+
+def test_signal_power_handles_nan_padded_repeats():
+    """A cell with NaN in some repeats should still get a sensible SP."""
+    g = torch.Generator().manual_seed(0)
+    signal = torch.randn(1, 1, 1, 200, generator=g)
+    responses = signal.expand(1, 1, 4, 200).clone()
+    responses[0, 0, 2:, :] = float("nan")          # only 2 valid repeats
+    sp = signal_power(responses, reduction="none")
+    assert not torch.isnan(sp).any()
+
+
+def test_snr_high_when_clean():
+    g = torch.Generator().manual_seed(0)
+    signal = torch.randn(1, 1, 1, 500, generator=g)
+    noise = torch.randn(1, 1, 4, 500, generator=g) * 0.05
+    responses = signal.expand(1, 1, 4, 500) + noise
+    out = snr(responses, reduction="none")
+    assert out[0].item() > 50.0
+
+
+# -------------------------------------------------------------------------
+# normalized_corrcoef
+# -------------------------------------------------------------------------
+
+
+def test_normalized_corrcoef_single_trial_falls_back_to_raw():
+    g = torch.Generator().manual_seed(0)
+    gt = torch.randn(1, 2, 1, 100, generator=g)        # R = 1
+    pred = gt.clone()                                   # perfect prediction
+    out = normalized_corrcoef(pred, gt, method="schoppe", reduction="none")
+    assert torch.allclose(out, torch.ones(2), atol=1e-5)
+
+
+def test_normalized_corrcoef_invalid_method_raises():
+    pred = torch.randn(1, 1, 1, 50)
+    resp = torch.randn(1, 1, 4, 50)
+    with pytest.raises(ValueError, match="schoppe"):
+        normalized_corrcoef(pred, resp, method="bogus")
+
+
+def test_normalized_corrcoef_pred_R_must_be_one():
+    pred = torch.randn(1, 1, 2, 50)                    # bad: R=2 on pred
+    resp = torch.randn(1, 1, 4, 50)
+    with pytest.raises(ValueError, match="R-axis"):
+        normalized_corrcoef(pred, resp)
+
+
+def test_normalized_corrcoef_schoppe_perfect_pred():
+    """Noiseless responses + perfect prediction → CCnorm ≈ 1."""
+    g = torch.Generator().manual_seed(0)
+    signal = torch.randn(1, 1, 1, 500, generator=g)
+    responses = signal.expand(1, 1, 4, 500).clone()
+    pred = signal.clone()                               # (1, 1, 1, 500)
+    out = normalized_corrcoef(pred, responses, method="schoppe", reduction="none")
+    assert torch.isclose(out[0], torch.tensor(1.0), atol=1e-3)
+
+
+def test_normalized_corrcoef_hsu_perfect_pred():
+    g = torch.Generator().manual_seed(0)
+    signal = torch.randn(1, 1, 1, 500, generator=g)
+    responses = signal.expand(1, 1, 4, 500).clone()
+    pred = signal.clone()
+    out = normalized_corrcoef(pred, responses, method="hsu", reduction="none")
+    assert torch.isclose(out[0], torch.tensor(1.0), atol=1e-3)
+
+
+# -------------------------------------------------------------------------
+# coherence
+# -------------------------------------------------------------------------
+
+
+def test_coherence_rejects_nan_input():
+    pred = torch.randn(1, 1, 1, 256)
+    gt = torch.randn(1, 1, 1, 256)
+    gt[..., 0] = float("nan")
+    with pytest.raises(ValueError, match="NaN"):
+        coherence(pred, gt, dt_ms=5.0)
+
+
+def test_coherence_returns_per_neuron_scalar():
+    pred = torch.randn(1, 4, 1, 256)
+    gt = torch.randn(1, 4, 1, 256)
+    out = coherence(pred, gt, dt_ms=5.0, reduction="none")
+    assert out.shape == (4,)
+
+
+def test_coherence_self_is_high():
+    g = torch.Generator().manual_seed(0)
+    gt = torch.randn(1, 1, 1, 1024, generator=g)
+    out = coherence(gt.clone(), gt, dt_ms=5.0, reduction="none")
+    # mean MSC should be near 1 for identical signals
+    assert out[0].item() > 0.95
+
+
+# -------------------------------------------------------------------------
+# compute_CCmax / compute_TTRC (internal Wehr helpers)
+# -------------------------------------------------------------------------
+
+
+def test_compute_CCmax_R_one_returns_one():
+    responses = torch.randn(2, 1, 100)
+    out = compute_CCmax(responses)
+    assert torch.allclose(out, torch.ones(2))
+
+
+def test_compute_CCmax_shape_contract():
+    responses = torch.randn(3, 4, 100)
+    out = compute_CCmax(responses)
+    assert out.shape == (3,)
+
+
+def test_compute_CCmax_rejects_wrong_rank():
+    with pytest.raises(ValueError, match="\\(B, R, T\\)"):
+        compute_CCmax(torch.randn(1, 1, 1, 100))
+
+
+def test_compute_TTRC_R_one_returns_one():
+    out = compute_TTRC(torch.randn(2, 1, 50))
+    assert torch.allclose(out, torch.ones(2))
+
+
+def test_compute_TTRC_perfect_repeats():
+    g = torch.Generator().manual_seed(0)
+    base = torch.randn(1, 1, 200, generator=g)
+    responses = base.expand(1, 4, 200)              # 4 identical repeats
+    out = compute_TTRC(responses)
+    assert torch.allclose(out, torch.ones(1), atol=1e-5)
