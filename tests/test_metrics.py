@@ -154,20 +154,60 @@ def test_poisson_loss_shape_contract():
     assert per_neuron.shape == (3,)
 
 
-def test_poisson_loss_negative_pred_raises():
+def test_poisson_loss_negative_pred_raises_under_validate_input():
     pred = torch.tensor([[[[-0.1, 0.5, 1.0]]]])
     gt = torch.tensor([[[[1.0, 1.0, 1.0]]]])
-    with pytest.raises(ValueError, match="non-negative"):
-        poisson_loss(pred, gt)
+    with pytest.raises(ValueError, match="negative values"):
+        poisson_loss(pred, gt, validate_input=True)
 
 
-def test_poisson_loss_negative_pred_outside_mask_is_ok():
-    """A negative pred at a masked-out position should NOT raise."""
+def test_poisson_loss_default_silently_clamps_negative_pred():
+    """Under the default (validate_input=False), negative pred should NOT raise.
+
+    The implementation clamps inside log to avoid NaN; the linear pred term
+    keeps its sign so the gradient still pushes pred toward positive values.
+    """
+    pred = torch.tensor([[[[-0.1, 0.5, 1.0]]]])
+    gt = torch.tensor([[[[1.0, 1.0, 1.0]]]])
+    out = poisson_loss(pred, gt, reduction="none")
+    assert torch.isfinite(out).all(), "negative pred under default should produce a finite loss"
+
+
+def test_poisson_loss_negative_pred_outside_mask_is_ok_under_validate_input():
+    """A negative pred at a masked-out position should NOT raise even with validate_input=True."""
     pred = torch.tensor([[[[-0.1, 0.5, 1.0, 0.5]]]])
     gt = torch.tensor([[[[math.nan, 1.0, 1.0, 1.0]]]])
-    per_neuron = poisson_loss(pred, gt, reduction="none")
+    per_neuron = poisson_loss(pred, gt, reduction="none", validate_input=True)
     assert per_neuron.shape == (1,)
     assert not torch.isnan(per_neuron).item()
+
+
+def test_poisson_loss_log_input_matches_explicit_formula():
+    """log_input=True: loss = exp(pred) - gt * pred."""
+    pred = torch.tensor([[[[0.0, 1.0, -2.0, 3.0]]]])     # any reals OK
+    gt = torch.tensor([[[[1.0, 0.5, 2.0, 1.0]]]])
+    out = poisson_loss(pred, gt, log_input=True, reduction="none")
+    expected = (torch.exp(pred) - gt * pred).mean()
+    assert torch.allclose(out, expected.unsqueeze(0), atol=1e-6)
+
+
+def test_poisson_loss_log_input_handles_arbitrary_pred_signs():
+    """log_input=True should be finite for any real pred — that's the point."""
+    g = torch.Generator().manual_seed(0)
+    pred = torch.randn(1, 2, 1, 20, generator=g) * 5.0   # large negative + positive values
+    gt = torch.full((1, 2, 1, 20), 1.0)
+    out = poisson_loss(pred, gt, log_input=True)
+    assert torch.isfinite(out).all()
+
+
+def test_poisson_loss_log_input_minimised_at_pred_eq_log_gt():
+    """Sanity: with log_input=True, the loss is minimised at pred = log(gt)."""
+    gt = torch.full((1, 1, 1, 100), 2.0)                 # rate = 2
+    pred_optimal = torch.log(gt)                         # log-rate
+    pred_offset = pred_optimal + 0.5
+    loss_optimal = poisson_loss(pred_optimal, gt, log_input=True)
+    loss_offset = poisson_loss(pred_offset, gt, log_input=True)
+    assert loss_optimal.item() < loss_offset.item()
 
 
 def test_poisson_loss_drops_nan_positions_by_default():

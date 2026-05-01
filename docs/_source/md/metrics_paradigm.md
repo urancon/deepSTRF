@@ -181,26 +181,72 @@ mse_n = mean_{(b,t) ∈ valid_n}  (pred[b, n, 0, t] - gt[b, n, 0, t])²
 
 Differentiable. No `@torch.no_grad`.
 
-### 6.2 `poisson_loss(pred, gt, mask=None, reduction='mean', eps=1e-8)`
+### 6.2 `poisson_loss(pred, gt, mask=None, reduction='mean', log_input=False, validate_input=False, eps=1e-8)`
 
-Negative Poisson log-likelihood, dropping the `log(rate!)` term that does
-not depend on `pred`. Following Wang et al. 2025 and Singer et al. 2023:
+Negative Poisson log-likelihood, dropping the `log(gt!)` term. Two
+parameterisations of the prediction are supported, matching the
+canonical-link logic of generalised linear models:
+
+#### `log_input=False` (default): pred is the rate `λ`
 
 ```text
 poisson_n = mean_{(b,t) ∈ valid_n}  pred[b, n, 0, t]  -  gt[b, n, 0, t] · log(pred[b, n, 0, t] + ε)
 ```
 
-`pred` must be non-negative (e.g. `Softplus` output). Negative `pred` is
-not silently corrected — we raise `ValueError` if any masked-in element
-is negative, mirroring how `data_paradigm.md` errs on the side of loud
-failure.
+Requires `pred ≥ 0` for the `log` to be meaningful. The implementation
+*silently clamps* `pred` to `≥ ε` inside the `log` to prevent NaN from
+propagating when the model temporarily emits a small negative
+prediction. The linear `pred` term outside the `log` keeps its sign,
+so the gradient still pushes negative predictions toward positive
+values. With `validate_input=True`, the loss instead raises
+`ValueError` on the first negative prediction at a masked-in position
+— useful for debugging an output-activation bug, but adds a per-step
+CPU sync, so it is opt-in.
 
-`eps` keeps `log(0)` finite without changing the gradient meaningfully.
-Reduction over `N` is the same as `mse_loss`. Differentiable.
+#### `log_input=True`: pred is the log-rate `η = log(λ)`
 
-The current implementation in `losses.py` (`NegativePoissonLogLikelihood`)
-has a sign bug (`torch.log(-prediction + 1e-9)`). The rewrite removes
-this; see commit message of the dedicated commit.
+```text
+poisson_n = mean_{(b,t) ∈ valid_n}  exp(pred[b, n, 0, t])  -  gt[b, n, 0, t] · pred[b, n, 0, t]
+```
+
+Derivation: starting from the Poisson NLL `λ − gt · log(λ)` and
+substituting `λ = exp(η)`, the loss becomes `exp(η) − gt · η`, well-defined
+for any real-valued `η`. This is the **canonical link** for the Poisson
+distribution in GLM language — same role that the logit link plays for
+Bernoulli. Practically: pair `log_input=True` with **any** readout
+(Linear, ParametricSigmoid, etc.) and read the model output as
+log-rate. To recover rate for visualisation or downstream metrics
+expecting rate (e.g. `corrcoef` against a count-valued PSTH),
+`exp(pred)` first.
+
+#### Stirling term
+
+The full Poisson NLL has a `gt · log(gt) − gt + 0.5·log(2π·gt)` term
+(Stirling's approximation to `log(gt!)`). It is **not** added by
+default because:
+
+- It is constant in `pred`, so it does not affect optimisation.
+- It is meaningless when `gt` is non-integer (e.g. trial-averaged
+  PSTH binned counts — the typical deepSTRF target). `log(gt!)` is
+  defined only on non-negative integers.
+
+Users who want the full likelihood for AIC/BIC model comparison on
+integer count targets can add the term outside the loss.
+
+#### Pairing with output activations
+
+| Output activation                                | Recommended `log_input` | Why                                              |
+|---                                               |---                       |---                                                |
+| `nn.Softplus`                                     | `False`                  | Output already `> 0`; rate interpretation natural |
+| `ParametricSigmoid` with `non_negative_output=True` | `False`                | Same                                              |
+| `ParametricDoubleExponential` with `non_negative_output=True` | `False`        | Same                                              |
+| `nn.Identity` / Linear                            | `True`                   | Output unbounded; treat as log-rate               |
+| `nn.Sigmoid` (output in [0, 1])                   | `False`                  | Output already `> 0`                              |
+| Any with `non_negative_output=False`              | `True`                   | Output may go negative                            |
+
+The default `log_input=False` matches PyTorch's
+`torch.nn.PoissonNLLLoss(log_input=False)` and the historical deepSTRF
+behaviour.
 
 ### 6.3 `corrcoef(pred, gt, mask=None, reduction='mean')`
 
