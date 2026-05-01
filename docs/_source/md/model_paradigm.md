@@ -356,12 +356,41 @@ readout takes an `activation: nn.Module` kwarg.
 The parametric activations have one set of learnable parameters per
 output neuron (`N` instances each).
 
+### `non_negative_output` flag
+
+Both parametric activations expose a ``non_negative_output: bool``
+constructor kwarg. When True (the default), the parameters that gate
+non-negativity (Willmore: amplitude `b` + baseline `a`; Thorson:
+saturated rate `a` + baseline `b`) are stored as raw parameters and
+softplus-mapped to the strictly-positive half-line at every forward
+pass. The output is then guaranteed non-negative by construction —
+suitable for spike-count targets paired with
+``poisson_loss(log_input=False)`` (see ``metrics_paradigm.md`` §6.2).
+
+When False, parameters are direct (signed-output mode). Use this for
+LFP / EEG / centred PSTH targets where the output may legitimately be
+negative; pair with ``poisson_loss(log_input=True)`` if you still want
+a Poisson NLL.
+
+### Pairing with `poisson_loss`
+
+| Activation                                         | Recommended `poisson_loss(log_input=...)` |
+|---                                                  |---                                         |
+| `nn.Softplus`                                       | `False`                                    |
+| `ParametricSigmoid(non_negative_output=True)`       | `False`                                    |
+| `ParametricDoubleExponential(non_negative_output=True)` | `False`                                |
+| `nn.Identity` / Linear                              | `True` (treat output as log-rate)          |
+| Any with `non_negative_output=False`                | `True`                                     |
+
 ### Caveat
 
 In past internal experiments, parametric activations did not consistently
-improve correlations vs `nn.Sigmoid`. Re-implementation against the
-original papers is part of the modernization branch — bug or genuine
-finding is open. See `TODO.md`.
+improve correlations vs `nn.Sigmoid`. The closure-based ``forward`` of
+the original implementation, plus the absence of a non-negativity
+guarantee for the output, are now both fixed (the closure is replaced
+by a regular ``forward()`` method, and the default reparameterisation
+guarantees ``f(x) ≥ 0``). Whether the activations help in practice is
+re-open with these fixes in place.
 
 ## 9. STRF introspection
 
