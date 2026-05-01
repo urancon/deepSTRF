@@ -134,30 +134,40 @@ tensor.
 
 ## 6. Recommended training-loop loss pattern
 
+NaN handling at the loss / metric site is the responsibility of
+``deepSTRF.metrics`` — every shipped function in that module is
+NaN-aware by default. The training loop therefore stays simple:
+
 ```python
+from deepSTRF.metrics import mse_loss, corrcoef, normalized_corrcoef
+
 for stims, responses, valid_mask, stim_metas in loader:
-    pred_psth = model(stims)                    # (B, N, T_max), trained target is PSTH
-    gt_psth   = responses.nanmean(dim=2)        # (B, N, T_max), NaN where all repeats NaN
-    valid     = ~gt_psth.isnan()                # (B, N, T_max)
-    loss      = F.mse_loss(pred_psth[valid], gt_psth[valid])
+    pred    = model(stims)                                # (B, N, 1, T_max)
+    gt_psth = responses.nanmean(dim=2, keepdim=True)      # (B, N, 1, T_max)
+
+    loss = mse_loss(pred, gt_psth)                        # scalar; handles NaN internally
     loss.backward()
+    optimizer.step()
+
+    if val_step:
+        cc      = corrcoef(pred, gt_psth, reduction='none')
+        cc_norm = normalized_corrcoef(pred, responses, method='schoppe',
+                                      reduction='none')
 ```
 
-**Why boolean indexing.** `pred_psth[valid]` and `gt_psth[valid]` return flat
-1D tensors of the same length. The reduction in the loss is then
-automatically over the count of valid positions. Cleaner than multiplicative
-masking, and numerically safer (no risk of `0 * NaN = NaN` if NaN survives
-anywhere).
+Notes:
 
-**When to use multiplicative masking instead.** If you need per-neuron or
-per-stim losses that must preserve the `(B, N, T)` axis structure for
-further aggregation, boolean indexing flattens away that structure. In that
-case:
+- ``responses.nanmean(dim=2, keepdim=True)`` is the canonical PSTH —
+  carries NaN where all repeats are NaN, paired with ``pred`` shape.
+- The dataloader's ``valid_mask`` is informational; redundant with
+  ``~gt_psth.isnan()`` for prediction-vs-PSTH metrics.
+- For non-default masking (e.g. excluding stimulus onsets), every
+  metric accepts a ``mask=`` override.
 
-```python
-per_element = (pred_psth - gt_psth.nan_to_num(0.0)) ** 2 * valid.float()
-per_neuron  = per_element.sum(dim=(0, 2)) / valid.float().sum(dim=(0, 2))
-```
+**Detailed treatment** (per-neuron flattening, ``mask=`` override
+semantics, length-weighting across stims, single-trial degenerate
+handling, eval-only metrics): see
+[`metrics_paradigm.md`](metrics_paradigm.md).
 
 ## 7. Invariants for developers
 

@@ -135,6 +135,48 @@ intersected with `~isnan`") is harder to reason about when the user
 deliberately wants to mark NaN positions as valid (impossible — they would
 contaminate the result; we do not protect against this).
 
+### Loud failure on misuse
+
+If the user passes a `mask` that marks a NaN position as valid, the
+metric's per-element computation is performed at that position
+(`(pred − NaN)**2 = NaN`, `gt · log(pred + ε)` with `gt = NaN` = NaN,
+etc.). NaN propagates through the per-neuron sum into the per-neuron
+output. The result is then a visibly NaN per-neuron value — *not* a
+silently-dropped or zero-contaminated number. This matches the
+loud-failure ethos of the data paradigm (`data_paradigm.md` §4): users
+spot misuse via NaN in their reported metric, not via subtle drift.
+
+Implementation note: this is achieved by `masked_fill(~valid, 0.0) →
+sum / count` rather than `nanmean`, which would silently drop NaN.
+
+### Boolean indexing vs multiplicative masking
+
+Two natural ways to compute a masked reduction:
+
+```python
+# (a) Boolean indexing — flat 1-D vector of valid positions
+ssr = ((pred[valid] - gt[valid]) ** 2).mean()
+
+# (b) Multiplicative masking — preserves axis structure
+per_element = (pred - gt.nan_to_num(0.0)) ** 2 * valid.float()
+per_axis    = per_element.sum(dim=AXIS) / valid.float().sum(dim=AXIS)
+```
+
+The shipped metrics use **boolean indexing** internally for the per-neuron
+formula, because:
+
+- The flat 1-D form keeps `cov` / `var` / Pearson correlation textbook-clean
+  (no per-row `.nansum()` denominators).
+- It is numerically robust against `0 · NaN = NaN` traps that
+  multiplicative masking can hit when NaN has leaked into `pred`.
+
+Multiplicative masking is the right choice when you need to preserve the
+`(B, N, T)` axis structure for further aggregation (e.g. per-neuron
+losses with custom batch reduction outside the metric API). In that
+case, work directly with the dataloader's `valid_mask` rather than
+calling a deepSTRF metric — the metrics are designed to terminate at
+per-neuron scalars.
+
 ## 5. Reduction semantics (PyTorch convention)
 
 Every public metric has a `reduction` keyword with three values, matching
