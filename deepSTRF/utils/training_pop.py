@@ -6,7 +6,6 @@ import torch.backends.cudnn
 from torch.utils.data import DataLoader
 
 from deepSTRF.metrics import correlation_coefficient, normalized_correlation_coefficient
-from deepSTRF.metrics.performance import fill_missing_repeats
 
 
 #############
@@ -222,7 +221,11 @@ def evaluate(valtest_dataloader, model, criterion, device):
     epoch_valtest_loss /= len(valtest_dataloader)
 
     # correlation coefficient
-    whole_valtest_sequence_resps = fill_missing_repeats(whole_valtest_sequence_resps)
+    # NOTE: fill_missing_repeats was retired with the metrics rewrite — the new
+    # normalized_corrcoef is NaN-aware and handles variable repeat counts via
+    # the per-stim Sahani–Linden estimator. The cat() below assumes uniform R
+    # across stims, which is true for the current callers; revisit when the
+    # Fitter lands.
     whole_valid_sequence_resps = torch.cat(whole_valtest_sequence_resps, dim=-1)  # (B, R, S*T)
     whole_valid_sequence_preds = torch.cat(whole_valtest_sequence_preds, dim=-1)
     whole_valid_sequence_psths = torch.cat(whole_valtest_sequence_psths, dim=-1)

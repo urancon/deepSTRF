@@ -6,7 +6,6 @@ import torch.backends.cudnn
 from torch.utils.data import DataLoader
 
 from deepSTRF.metrics import correlation_coefficient, normalized_correlation_coefficient
-from deepSTRF.metrics.performance import fill_missing_repeats
 
 
 #############
