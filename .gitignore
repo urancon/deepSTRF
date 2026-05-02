@@ -6,7 +6,13 @@
 /CLAUDE.md
 /NEXT_PROMPT.md
 /IDEAS.md
+/ROUTINE.md
+/ROUTINES.md
+/TODO.md
 .claude/
+
+# --- Local notebook builders (one-off scripts that emit committed .ipynb) ---
+_build_*.py
 
 # --- Paper drafts and supplementary (NEVER push) ---
 /deepSTRF_paper_draft.pdf
