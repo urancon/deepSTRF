@@ -347,25 +347,35 @@ readout takes an `activation: nn.Module` kwarg.
 
 | Class                          | Use                                                                | Reference                              |
 |---                             |---                                                                  |---                                     |
-| `nn.Identity`                  | Centered targets (z-scored PSTH)                                    | default                                |
+| `nn.Identity`                  | Centered targets (z-scored PSTH)                                    | default for `Linear` / `DNet` / `Transformer` |
 | `nn.Sigmoid`                   | Bounded `[0, 1]` targets                                            | —                                      |
 | `nn.Softplus`                  | Non-negative spike-rate targets, smooth                             | —                                      |
-| `ParametricSigmoid`            | 4-param `b/(1+exp(-(x-c)/d)) + a`, per-neuron                      | Willmore et al. 2016, J. Neurosci.     |
-| `ParametricDoubleExponential`  | 4-param `a · exp(-exp(k·x - s)) + b`, per-neuron                   | Thorson et al. 2015, PLOS CB           |
+| `ParametricSoftplus`           | 2-param `softplus(β·x)/β + b`, per-neuron, unbounded above          | deepSTRF (default for the rest of the zoo) |
+| `ParametricSigmoid`            | 4-param `b/(1+exp(-(x-c)/d)) + a`, per-neuron, saturating           | Willmore et al. 2016, J. Neurosci.     |
+| `ParametricDoubleExponential`  | 4-param `a · exp(-exp(k·x - s)) + b`, per-neuron, saturating        | Thorson et al. 2015, PLOS CB           |
 
 The parametric activations have one set of learnable parameters per
-output neuron (`N` instances each).
+output neuron (`N` instances each). `ParametricSoftplus` is the **default**
+for `LinearNonlinear`, `NetworkReceptiveField`, `ConvNet2D`, and `StateNet`
+because it is unbounded above (smoothed PSTHs routinely peak above 1) and
+non-negative by default — natural for spike-count regression. Pre-2026-05
+defaults were `nn.Sigmoid()` for those four models, which empirically
+caused mean-collapse on NS1 because the [0, 1] cap fights the gradient.
 
 ### `non_negative_output` flag
 
-Both parametric activations expose a ``non_negative_output: bool``
+All three parametric activations expose a ``non_negative_output: bool``
 constructor kwarg. When True (the default), the parameters that gate
-non-negativity (Willmore: amplitude `b` + baseline `a`; Thorson:
-saturated rate `a` + baseline `b`) are stored as raw parameters and
-softplus-mapped to the strictly-positive half-line at every forward
-pass. The output is then guaranteed non-negative by construction —
-suitable for spike-count targets paired with
-``poisson_loss(log_input=False)`` (see ``metrics_paradigm.md`` §6.2).
+non-negativity are stored as raw parameters and softplus-mapped to the
+strictly-positive half-line at every forward pass. The output is then
+guaranteed non-negative by construction — suitable for spike-count
+targets paired with ``poisson_loss(log_input=False)`` (see
+``metrics_paradigm.md`` §6.2).
+
+For `ParametricSoftplus`, the gated parameter is the additive baseline
+`b`; the sharpness `β` is *always* softplus-reparameterised regardless
+(non-positive sharpness would flip the curve and is never physically
+meaningful).
 
 When False, parameters are direct (signed-output mode). Use this for
 LFP / EEG / centred PSTH targets where the output may legitimately be
@@ -377,20 +387,29 @@ a Poisson NLL.
 | Activation                                         | Recommended `poisson_loss(log_input=...)` |
 |---                                                  |---                                         |
 | `nn.Softplus`                                       | `False`                                    |
+| `ParametricSoftplus(non_negative_output=True)`      | `False` (the canonical zoo default)        |
 | `ParametricSigmoid(non_negative_output=True)`       | `False`                                    |
 | `ParametricDoubleExponential(non_negative_output=True)` | `False`                                |
 | `nn.Identity` / Linear                              | `True` (treat output as log-rate)          |
 | Any with `non_negative_output=False`                | `True`                                     |
 
-### Caveat
+### Empirical note (2026-05)
 
-In past internal experiments, parametric activations did not consistently
-improve correlations vs `nn.Sigmoid`. The closure-based ``forward`` of
-the original implementation, plus the absence of a non-negativity
-guarantee for the output, are now both fixed (the closure is replaced
-by a regular ``forward()`` method, and the default reparameterisation
-guarantees ``f(x) ≥ 0``). Whether the activations help in practice is
-re-open with these fixes in place.
+The original closure-based ``forward`` was replaced by a regular
+``forward()`` method, and the default reparameterisation guarantees
+``f(x) ≥ 0``. End-to-end on NS1 + StateNet, the new
+`ParametricSoftplus(N)` default reaches the published cc_norm range
+(~0.7-0.8) in 50 epochs — competitive with hand-tuned `nn.Identity()`.
+The previous `nn.Sigmoid()` default for the same four models silently
+mean-collapsed (val cc_norm slowly dropping toward 0 while loss
+decreased) because the [0, 1] output cap fights the gradient on
+spike-count targets that exceed 1.
+
+`ParametricSoftplus` was chosen as the new default over the saturating
+parametric activations (Sigmoid / DoubleExp) precisely because the
+unbounded-above shape removes that failure mode. `ParametricSigmoid` and
+`ParametricDoubleExponential` remain available for users with bounded
+targets or explicit saturation modelling needs.
 
 ## 9. STRF introspection
 

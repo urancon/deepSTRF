@@ -310,6 +310,7 @@ integer count targets can add the term outside the loss.
 | Output activation                                | Recommended `log_input` | Why                                              |
 |---                                               |---                       |---                                                |
 | `nn.Softplus`                                     | `False`                  | Output already `> 0`; rate interpretation natural |
+| `ParametricSoftplus` with `non_negative_output=True` (default) | `False`        | Same; default zoo activation (NS1, NAT4, ...)     |
 | `ParametricSigmoid` with `non_negative_output=True` | `False`                | Same                                              |
 | `ParametricDoubleExponential` with `non_negative_output=True` | `False`        | Same                                              |
 | `nn.Identity` / Linear                            | `True`                   | Output unbounded; treat as log-rate               |
