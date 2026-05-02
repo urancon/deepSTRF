@@ -62,7 +62,16 @@ class STRFReadout(nn.Module):
 
     def forward(self, x):
         # x: (B, C_in, F, T)
-        return self.activation(self.strf(x))
+        out = self.strf(x)                                  # (B, N, 1, T)
+        # Apply activation on (B, T, N) so per-neuron parametric activations
+        # (ParametricSoftplus / ParametricSigmoid / ParametricDoubleExponential)
+        # broadcast correctly with N as the last axis. Shape-invariant
+        # activations (Identity, nn.Sigmoid, nn.ReLU, ...) are unaffected.
+        out = out.squeeze(-2)                                # (B, N, T)
+        out = out.transpose(-1, -2)                          # (B, T, N)
+        out = self.activation(out)                           # (B, T, N)
+        out = out.transpose(-1, -2).unsqueeze(-2)            # (B, N, 1, T)
+        return out
 
     def STRF_weight(self, polarity: str = None):
         """

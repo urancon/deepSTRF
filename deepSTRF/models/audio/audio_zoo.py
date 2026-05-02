@@ -5,6 +5,7 @@ import torch.nn.functional
 from .audio_model import AudioEncodingModel
 
 import deepSTRF.models.layers as layers
+from deepSTRF.models.activations import ParametricSoftplus
 from deepSTRF.models.dependencies.lmu import LMU
 from deepSTRF.models.dependencies.mamba import MambaBlock, MambaConfig
 from deepSTRF.models.prefiltering import AdapTrans
@@ -118,14 +119,17 @@ class LinearNonlinear(Linear):
     pointwise output nonlinearity.
 
     Inherits everything from ``Linear`` and only changes the default
-    output activation from ``nn.Identity`` to ``nn.Sigmoid``. Pass any
-    ``nn.Module`` to ``output_activation`` to override.
+    output activation from ``nn.Identity`` to a per-neuron
+    :class:`ParametricSoftplus`. Pass any ``nn.Module`` to
+    ``output_activation`` to override.
 
     Parameters
     ----------
-    output_activation : nn.Module, default nn.Sigmoid()
-        Pointwise nonlinearity applied at the readout output. See
-        ``deepSTRF.models.activations`` for parametric variants
+    output_activation : nn.Module, default ParametricSoftplus(out_neurons)
+        Pointwise nonlinearity applied at the readout output. The default
+        is unbounded above and non-negative — natural for spike-count
+        regression on smoothed PSTHs that exceed 1. See
+        ``deepSTRF.models.activations`` for other parametric variants
         (``ParametricSigmoid``, ``ParametricDoubleExponential``).
 
     See Also
@@ -141,7 +145,8 @@ class LinearNonlinear(Linear):
             n_frequency_bands=n_frequency_bands,
             temporal_window_size=temporal_window_size,
             out_neurons=out_neurons,
-            output_activation=output_activation if output_activation is not None else nn.Sigmoid(),
+            output_activation=(output_activation if output_activation is not None
+                               else ParametricSoftplus(out_neurons)),
             prefiltering=prefiltering,
             kernel=kernel,
         )
@@ -230,7 +235,8 @@ class NetworkReceptiveField(AudioEncodingModel):
         # readout: per-neuron 1×1 projection from H hidden units.
         self.readout = LinearReadout(
             in_features=self.H, out_neurons=self.O,
-            activation=output_activation if output_activation is not None else nn.Sigmoid(),
+            activation=(output_activation if output_activation is not None
+                        else ParametricSoftplus(self.O)),
         )
         # forward inherited from NeuralModel — wav2spec → prefiltering → core → readout
 
@@ -394,8 +400,9 @@ class ConvNet2D(AudioEncodingModel):
         Width of the FC hidden layer.
     out_neurons : int, default 1
         Number of output neurons ``N``.
-    output_activation : nn.Module, default nn.Sigmoid()
-        Pointwise nonlinearity at the output.
+    output_activation : nn.Module, default ``ParametricSoftplus(out_neurons)``
+        Pointwise nonlinearity at the output. The default is unbounded
+        above and non-negative — natural for spike-count regression.
     prefiltering : dict or None
         Optional spectrogram prefilter spec.
 
@@ -465,7 +472,8 @@ class ConvNet2D(AudioEncodingModel):
             in_features=self.C * F_down,
             out_neurons=self.O,
             hidden=self.H,
-            activation=output_activation if output_activation is not None else nn.Sigmoid(),
+            activation=(output_activation if output_activation is not None
+                        else ParametricSoftplus(self.O)),
         )
         # forward inherited from NeuralModel
 
@@ -682,8 +690,9 @@ class StateNet(AudioEncodingModel):
         Recurrent / state-space backbone.
     out_neurons : int, default 1
         Number of output neurons ``N``.
-    output_activation : nn.Module, default nn.Sigmoid()
-        Pointwise nonlinearity at the output.
+    output_activation : nn.Module, default ``ParametricSoftplus(out_neurons)``
+        Pointwise nonlinearity at the output. The default is unbounded
+        above and non-negative — natural for spike-count regression.
     prefiltering : dict or None
         Optional spectrogram prefilter spec.
 
@@ -776,7 +785,8 @@ class StateNet(AudioEncodingModel):
         # per-neuron readout from the recurrent hidden state.
         self.readout = LinearReadout(
             in_features=self.H, out_neurons=self.O,
-            activation=output_activation if output_activation is not None else nn.Sigmoid(),
+            activation=(output_activation if output_activation is not None
+                        else ParametricSoftplus(self.O)),
         )
 
     def forward(self, x):

@@ -1,8 +1,20 @@
 """Output activations for deepSTRF readouts.
 
-Two parametric activations from the auditory-fitting literature, each with
-opt-out non-negativity reparameterisation that pairs naturally with
-``poisson_loss(log_input=False)`` (see ``metrics_paradigm.md`` §6.2).
+Three parametric activations, each with opt-out non-negativity
+reparameterisation that pairs naturally with
+``poisson_loss(log_input=False)`` (see ``metrics_paradigm.md`` §6.2):
+
+- :class:`ParametricSigmoid` — saturating, bounded above (Willmore 2016).
+- :class:`ParametricDoubleExponential` — saturating, bounded above
+  (Thorson 2015).
+- :class:`ParametricSoftplus` — non-saturating, unbounded above. Natural
+  default for spike-count regression where the response can take any
+  non-negative magnitude.
+
+All three follow the same input-shape contract: parameters are
+``(N,)``-shaped per-neuron tensors that broadcast against the last axis
+of the input. Use these inside readouts that emit
+``(..., N)``-last-axis tensors (e.g. :class:`LinearReadout`).
 """
 
 from __future__ import annotations
@@ -203,4 +215,91 @@ class ParametricDoubleExponential(nn.Module):
         return (
             f"N={self.N}, bias={self.bias}, "
             f"non_negative_output={self.non_negative_output}"
+        )
+
+
+class ParametricSoftplus(nn.Module):
+    r"""Per-neuron Softplus with learnable sharpness β and additive baseline.
+
+    Output:
+
+    .. math::
+
+        f(x) = \frac{1}{\beta} \log\!\bigl(1 + \exp(\beta x)\bigr) + b
+
+    where ``β > 0`` is the per-neuron sharpness (β → ∞ approaches ReLU,
+    β → 0 approaches a soft linear with slope ½) and ``b`` is the per-neuron
+    additive baseline. Both are always learnable per-neuron.
+
+    Unlike :class:`ParametricSigmoid` and
+    :class:`ParametricDoubleExponential`, the underlying curve is
+    **unbounded above** — natural for spike-count regression on smoothed
+    PSTHs that can take any non-negative magnitude (e.g. NS1: peaks
+    ~3 spikes/bin after Hsu/Borst/Theunissen 21 ms Hanning smoothing).
+
+    Parameters
+    ----------
+    num_features : int
+        ``N``: number of independent per-neuron parameter sets.
+    non_negative_output : bool, default True
+        When True, ``b`` is stored as a raw parameter and softplus-mapped
+        to the strictly-positive half-line at every forward pass.
+        Combined with the always-non-negative softplus core, this
+        guarantees ``f(x) ≥ 0`` for every ``x``. When False, ``b`` is
+        unconstrained — pair with ``poisson_loss(log_input=True)`` for
+        signed-output targets (LFP / EEG / centred PSTH).
+
+    Notes
+    -----
+    ``β`` is **always** non-negativity-reparameterised
+    (``β = softplus(_raw_beta)``) regardless of ``non_negative_output``,
+    because a non-positive sharpness would flip the curve and is never
+    physically meaningful.
+
+    The implementation expects an input whose **last axis is N** (matching
+    the :class:`ParametricSigmoid` / :class:`ParametricDoubleExponential`
+    contract); that is what :class:`LinearReadout` and
+    :class:`STRFReadout` emit at the activation step.
+    """
+
+    def __init__(
+        self,
+        num_features: int,
+        non_negative_output: bool = True,
+    ):
+        super().__init__()
+        self.N = num_features
+        self.non_negative_output = non_negative_output
+
+        # β > 0 always (structural softplus on _raw_beta). Init: softplus
+        # spans ~0.69 to ~1.31, mild jitter for symmetry-breaking.
+        self._raw_beta = nn.Parameter(torch.empty(self.N))
+        nn.init.uniform_(self._raw_beta, 0.0, 1.0)
+
+        # Per-neuron baseline. With non_negative_output=True, softplus-reparam
+        # so b ≥ 0; init range gives ~0.20 to ~0.69 (small positive baseline,
+        # healthy sigmoid gradient on the raw param).
+        self._raw_b = nn.Parameter(torch.empty(self.N))
+        if non_negative_output:
+            nn.init.uniform_(self._raw_b, -1.5, 0.0)
+        else:
+            nn.init.uniform_(self._raw_b, 0.0, 0.5)
+
+    @property
+    def beta(self) -> torch.Tensor:
+        """Per-neuron sharpness, always > 0."""
+        return F.softplus(self._raw_beta)
+
+    @property
+    def b(self) -> torch.Tensor:
+        """Per-neuron additive baseline, post-reparameterisation."""
+        return F.softplus(self._raw_b) if self.non_negative_output else self._raw_b
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        beta = self.beta
+        return F.softplus(beta * x) / beta + self.b
+
+    def extra_repr(self) -> str:
+        return (
+            f"N={self.N}, non_negative_output={self.non_negative_output}"
         )
