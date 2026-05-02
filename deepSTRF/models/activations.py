@@ -272,18 +272,25 @@ class ParametricSoftplus(nn.Module):
         self.non_negative_output = non_negative_output
 
         # β > 0 always (structural softplus on _raw_beta). Init: softplus
-        # spans ~0.69 to ~1.31, mild jitter for symmetry-breaking.
+        # spans ~5 to ~6 — sharp / near-ReLU at start so f(0) = log(2)/β is
+        # small (~0.12-0.14). A milder init around β≈1 makes f(0) ≈ 0.7,
+        # which is way above typical spike-count target means (~0.1-0.3) and
+        # causes a "mean-collapse" failure mode where training reduces loss
+        # by suppressing prediction magnitude rather than learning structure
+        # (verified empirically on NS1 + StateNet, 2026-05-02).
         self._raw_beta = nn.Parameter(torch.empty(self.N))
-        nn.init.uniform_(self._raw_beta, 0.0, 1.0)
+        nn.init.uniform_(self._raw_beta, 5.0, 6.0)
 
         # Per-neuron baseline. With non_negative_output=True, softplus-reparam
-        # so b ≥ 0; init range gives ~0.20 to ~0.69 (small positive baseline,
-        # healthy sigmoid gradient on the raw param).
+        # so b ≥ 0; init very near zero (softplus → ~0.005 to ~0.05) so the
+        # activation does not impose a hard positive floor at start. The
+        # gradient on _raw_b is sigmoid(_raw_b), small (~0.01-0.05) but
+        # non-vanishing — the optimizer still moves it.
         self._raw_b = nn.Parameter(torch.empty(self.N))
         if non_negative_output:
-            nn.init.uniform_(self._raw_b, -1.5, 0.0)
+            nn.init.uniform_(self._raw_b, -5.0, -3.0)
         else:
-            nn.init.uniform_(self._raw_b, 0.0, 0.5)
+            nn.init.uniform_(self._raw_b, -0.1, 0.1)
 
     @property
     def beta(self) -> torch.Tensor:
