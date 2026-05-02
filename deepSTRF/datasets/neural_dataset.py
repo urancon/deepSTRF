@@ -312,6 +312,15 @@ class NeuralDataset(Dataset, ABC):
         """Clear ``self.S_sel`` so all stimuli are eligible again."""
         self.S_sel = None
 
+    def reset_pop_selection(self):
+        """Clear the population selection so all neurons are eligible again.
+
+        Mirror of ``reset_stim_selection``. Restores ``self.I`` to its
+        empty default (interpreted as "no neuron-side restriction" by
+        ``_selected()``).
+        """
+        self.I = []
+
     def smooth_responses(self, window_ms: float = 21.0) -> None:
         """Temporally smooth each non-NaN response in place with a Hanning window.
 
