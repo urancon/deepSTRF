@@ -370,11 +370,14 @@ class ParametricSTRF(nn.Module):
 
 class SeparableSTRF(nn.Module):
     """
-    SPECTRO-Temporal Receptive Field (2D) kernel.
+    Spectro-Temporal Receptive Field (2D) kernel, frequency-time separable.
 
-    Frequency-time separable.
-
-    Drastically reduces the number of learnable parameters.
+    The effective ``(C_out, C_in, F, T)`` kernel is the rank-1 outer
+    product ``w_F(f) · w_T(t)`` of two per-``(C_out, C_in)`` factors.
+    Drastically reduces parameter count compared to a vanilla
+    ``nn.Conv2d`` STRF (``C_out·C_in·(F + T)`` vs ``C_out·C_in·F·T``)
+    while preserving the conv2d call signature so it drops in as a
+    ``kernel=`` arg on any STRFReadout-using model.
     """
     def __init__(self, F: int, T: int, C_in, C_out, bias: bool = True):
         super(SeparableSTRF, self).__init__()
@@ -384,9 +387,11 @@ class SeparableSTRF(nn.Module):
         self.C_in = C_in
         self.C_out = C_out
 
-        # parameters
-        self.weight_f = torch.nn.Parameter(torch.rand(self.C_in, self.C_out, F, 1))
-        self.weight_t = torch.nn.Parameter(torch.rand(self.C_in, self.C_out, 1, T))
+        # Per-(C_out, C_in) frequency and temporal factors. Shapes are chosen
+        # so the rank-1 outer product weight_f * weight_t broadcasts directly
+        # to a (C_out, C_in, F, T) conv2d-compatible kernel.
+        self.weight_f = torch.nn.Parameter(torch.empty(self.C_out, self.C_in, F, 1))
+        self.weight_t = torch.nn.Parameter(torch.empty(self.C_out, self.C_in, 1, T))
 
         # initialization
         torch.nn.init.kaiming_uniform_(self.weight_f)
@@ -400,8 +405,8 @@ class SeparableSTRF(nn.Module):
             self.bias = None
 
     def build_kernel(self, device='cpu'):
-        # create a (C_out, C_in, Kf, Kt) kernel
-        kernel = self.weight_f.unsqueeze(-1) * self.weight_t.unsqueeze(-2)
+        # (C_out, C_in, F, 1) * (C_out, C_in, 1, T) → (C_out, C_in, F, T)
+        kernel = self.weight_f * self.weight_t
         return kernel.to(device)
 
     def forward(self, x):
