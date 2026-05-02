@@ -7,10 +7,6 @@ from deepSTRF.metrics.performance import (
     normalized_corrcoef,
     signal_power,
     snr,
-    # Deprecated aliases — kept until utils/training*.py is replaced by the
-    # forthcoming Fitter (refactor/training-utility).
-    correlation_coefficient,
-    normalized_correlation_coefficient,
 )
 
 __all__ = [

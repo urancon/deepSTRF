@@ -506,28 +506,3 @@ def compute_TTRC(responses: torch.Tensor) -> torch.Tensor:
             continue
         out.append(torch.stack(cc_pairs).mean())
     return torch.stack(out)
-
-
-# -----------------------------------------------------------------------------
-# Backward-compatibility aliases (deprecated; remove in next major refactor)
-# -----------------------------------------------------------------------------
-
-
-def correlation_coefficient(*args, **kwargs):
-    """Deprecated alias of :func:`corrcoef`.
-
-    Kept so tracked legacy callers (utils/training.py, utils/training_pop.py)
-    continue to import. Will be removed once the training utility branch
-    lands.
-    """
-    return corrcoef(*args, **kwargs)
-
-
-def normalized_correlation_coefficient(*args, **kwargs):
-    """Deprecated alias of :func:`normalized_corrcoef`.
-
-    Kept so tracked legacy callers (utils/training.py, utils/training_pop.py)
-    continue to import. Will be removed once the training utility branch
-    lands.
-    """
-    return normalized_corrcoef(*args, **kwargs)
