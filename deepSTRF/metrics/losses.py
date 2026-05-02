@@ -11,6 +11,7 @@ from typing import Optional
 import torch
 
 from deepSTRF.metrics._masking import (
+    collapse_to_psth_if_needed,
     per_neuron_mean,
     reduce_over_neurons,
     resolve_mask,
@@ -27,15 +28,22 @@ def mse_loss(
 
     Parameters
     ----------
-    pred, gt
-        Tensors of identical shape ``(B, N, 1, T)``. ``gt`` may contain NaN.
+    pred
+        Prediction tensor of shape ``(B, N, 1, T)``.
+    gt
+        Ground-truth tensor of shape ``(B, N, 1, T)`` (PSTH or single-trial
+        target) **or** ``(B, N, R, T)`` with ``R > 1`` (raw responses), in
+        which case it is collapsed to PSTH via ``nanmean(dim=2, keepdim=True)``
+        before the loss is computed. ``gt`` may contain NaN; positions where
+        the resulting PSTH is NaN are dropped from the per-neuron mean.
     mask
-        Optional bool tensor broadcastable to ``gt``. If None, defaults to
-        ``~gt.isnan()``. If provided, REPLACES (does not augment) the
-        NaN-derived mask.
+        Optional bool tensor broadcastable to the post-collapse ``gt`` shape
+        ``(B, N, 1, T)``. If None, defaults to ``~gt.isnan()``. If provided,
+        REPLACES (does not augment) the NaN-derived mask.
     reduction
         ``'none'`` → ``(N,)``; ``'mean'``/``'sum'`` → scalar via nanmean/nansum.
     """
+    gt = collapse_to_psth_if_needed(gt)
     if pred.shape != gt.shape:
         raise ValueError(
             f"pred shape {tuple(pred.shape)} must equal gt shape "
@@ -85,7 +93,13 @@ def poisson_loss(
     integer ``gt`` it is constant in ``pred`` so it does not affect
     optimisation. Users who want the full likelihood for AIC/BIC can add
     it themselves.
+
+    ``gt`` may be passed as either a pre-computed PSTH ``(B, N, 1, T)`` or a
+    raw responses tensor ``(B, N, R, T)`` with ``R > 1``; in the latter case
+    it is collapsed to PSTH via ``nanmean(dim=2, keepdim=True)`` before the
+    loss is computed.
     """
+    gt = collapse_to_psth_if_needed(gt)
     if pred.shape != gt.shape:
         raise ValueError(
             f"pred shape {tuple(pred.shape)} must equal gt shape "

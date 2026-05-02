@@ -18,6 +18,7 @@ Welcome to the official documentation of the deepSTRF repository !
    _source/md/dataset_concatenation.md
    _source/md/model_paradigm.md
    _source/md/metrics_paradigm.md
+   _source/md/fitter.md
    _source/md/README_tutorial.md
    _source/md/README_formats.md
    _source/md/README_publications.md
