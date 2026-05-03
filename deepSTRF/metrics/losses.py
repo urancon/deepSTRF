@@ -54,7 +54,13 @@ def mse_loss(
             f"expected pred and gt with 4 dims (B, N, R, T), got {pred.dim()}"
         )
     valid = resolve_mask(gt, mask)
-    diff_sq = (pred - gt) ** 2
+    # Replace NaN positions in gt with 0 BEFORE the residual so the
+    # autograd path stays finite. The forward sum is unchanged because
+    # per_neuron_mean masks these positions out; without this the
+    # gradient ``2*(pred - NaN) * 0`` evaluates to NaN under IEEE 754
+    # and contaminates upstream parameters.
+    gt_safe = torch.where(valid, gt, torch.zeros_like(gt))
+    diff_sq = (pred - gt_safe) ** 2
     per_neuron = per_neuron_mean(diff_sq, valid)
     return reduce_over_neurons(per_neuron, reduction)
 
@@ -110,9 +116,13 @@ def poisson_loss(
             f"expected pred and gt with 4 dims (B, N, R, T), got {pred.dim()}"
         )
     valid = resolve_mask(gt, mask)
+    # Same NaN-gradient-leak protection as in mse_loss: replace NaN
+    # positions in gt with 0 before the loss formula, so the autograd
+    # path stays finite.
+    gt_safe = torch.where(valid, gt, torch.zeros_like(gt))
 
     if log_input:
-        elem = torch.exp(pred) - gt * pred
+        elem = torch.exp(pred) - gt_safe * pred
     else:
         if validate_input and (pred.masked_fill(~valid, 0.0) < 0).any():
             raise ValueError(
@@ -121,7 +131,7 @@ def poisson_loss(
                 "activation, set log_input=True (interpret pred as log-rate), "
                 "or drop validate_input=True to silently clamp inside log."
             )
-        elem = pred - gt * torch.log(pred.clamp(min=eps) + eps)
+        elem = pred - gt_safe * torch.log(pred.clamp(min=eps) + eps)
 
     per_neuron = per_neuron_mean(elem, valid)
     return reduce_over_neurons(per_neuron, reduction)
