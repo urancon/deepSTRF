@@ -82,8 +82,11 @@ class Linear(AudioEncodingModel):
             out_neurons=out_neurons,
             prefiltering=prefiltering,
         )
-        # core: causal per-timestep frequency normalization
-        self.core = layers.CausalLayerNorm(self.F, dim=-2)
+        # core: per-frequency BatchNorm — affine, absorbable into the readout
+        # kernel at eval time, and (unlike the previous CausalLayerNorm) it
+        # preserves per-timestep absolute amplitude. Causal in eval mode
+        # (running stats are scalars per band).
+        self.core = layers.BatchNormFreq(self.F)
         # readout: pluggable STRF kernel + output activation
         self.readout = STRFReadout(
             F=self.F, T=self.T, C_in=self.C_in, out_neurons=self.O,
@@ -222,11 +225,11 @@ class NetworkReceptiveField(AudioEncodingModel):
         )
         self.H = n_hidden
 
-        # core: input freq norm → hidden STRF projection → channel norm → tanh
+        # core: per-band input norm → hidden STRF projection → channel norm → tanh
         # The hidden STRF projection emits (B, H, 1, T); LinearReadout downstream
         # squeezes the singleton spatial axis automatically.
         self.core = nn.Sequential(
-            layers.CausalLayerNorm(self.F, dim=-2),
+            layers.BatchNormFreq(self.F),
             layers.CausalSTRFConv(self.F, self.T, self.C_in, self.H, kernel=kernel),
             layers.CausalLayerNorm(self.H, dim=1),
             nn.Tanh(),
