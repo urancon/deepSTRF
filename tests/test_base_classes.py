@@ -188,3 +188,84 @@ def test_neural_model_validate_fails_without_readout():
     m = _NoReadout()
     with pytest.raises(AssertionError):
         m.validate()
+
+
+# ---------------------------------------------------------------------------
+# standardize_stims
+# ---------------------------------------------------------------------------
+
+
+def _stim_dataset_fixture():
+    """Tiny dataset with three (1, F=4, T=10) stims; per-band scales differ."""
+    from deepSTRF.datasets.neural_dataset import NeuralDataset
+
+    class _Fixture(NeuralDataset):
+        def __init__(self):
+            super().__init__("/tmp/nowhere", dt_ms=1.0)
+            self.N_neurons = 1
+            self.stim_meta = [("s0",), ("s1",), ("s2",)]
+            torch.manual_seed(0)
+            # Per-band scales: band 0 ~ N(2, 1), band 1 ~ N(0, 0.5),
+            # band 2 ~ N(-1, 2), band 3 ~ N(0, 0.1).  Different across stims.
+            scales = torch.tensor([1.0, 0.5, 2.0, 0.1]).view(1, 4, 1)
+            offsets = torch.tensor([2.0, 0.0, -1.0, 0.0]).view(1, 4, 1)
+            self.stims = [
+                torch.randn(1, 4, 10) * scales + offsets for _ in range(3)
+            ]
+            self.responses = [[torch.zeros(1, 10)] for _ in range(3)]
+            self.neuron_metadata = [{"uid": "n0"}]
+            self.validate()
+
+    return _Fixture()
+
+
+def test_standardize_stims_per_band_makes_unit_std():
+    """Per-band standardization on all stims yields per-band std == 1."""
+    fx = _stim_dataset_fixture()
+    fx.standardize_stims(per_band=True)
+    cat = torch.cat(fx.stims, dim=-1)            # (1, F=4, T_total)
+    assert torch.allclose(cat.mean(dim=(0, 2)), torch.zeros(4), atol=1e-6)
+    assert torch.allclose(cat.std(dim=(0, 2)), torch.ones(4), atol=1e-6)
+
+
+def test_standardize_stims_subset_applies_to_all():
+    """Stats from a subset are applied to ALL stims, including unselected ones."""
+    fx = _stim_dataset_fixture()
+    # Compute stats from stims 0 and 1; stim 2 (held-out test) should be
+    # transformed with the same stats but its post-standardized std need
+    # not be 1.
+    fx.standardize_stims(stim_indices=[0, 1], per_band=True)
+    train_cat = torch.cat([fx.stims[0], fx.stims[1]], dim=-1)
+    held_out = fx.stims[2]
+    # stims 0, 1: per-band std = 1 by construction.
+    assert torch.allclose(train_cat.std(dim=(0, 2)), torch.ones(4), atol=1e-6)
+    # stim 2: per-band std generally != 1 (different sample).
+    held_std = held_out.std(dim=(0, 2))
+    assert not torch.allclose(held_std, torch.ones(4), atol=1e-2)
+
+
+def test_standardize_stims_stores_normalization_dict():
+    fx = _stim_dataset_fixture()
+    out = fx.standardize_stims(stim_indices=[0, 1], per_band=True)
+    assert out is fx.stim_normalization
+    assert set(out) == {"mean", "std", "per_band", "stim_indices"}
+    assert out["per_band"] is True
+    assert out["stim_indices"] == [0, 1]
+    assert out["mean"].shape == (1, 4, 1)
+    assert out["std"].shape == (1, 4, 1)
+
+
+def test_standardize_stims_global_scalar_path():
+    fx = _stim_dataset_fixture()
+    out = fx.standardize_stims(per_band=False)
+    assert out["mean"].dim() == 0
+    assert out["std"].dim() == 0
+    cat = torch.cat(fx.stims, dim=-1)
+    assert abs(cat.mean().item()) < 1e-6
+    assert abs(cat.std().item() - 1.0) < 1e-6
+
+
+def test_standardize_stims_empty_subset_raises():
+    fx = _stim_dataset_fixture()
+    with pytest.raises(ValueError, match="no stims"):
+        fx.standardize_stims(stim_indices=[])
