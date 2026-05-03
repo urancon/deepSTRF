@@ -337,10 +337,10 @@ class DNet(AudioEncodingModel):
         self.H = n_hidden
         decay_kernel = round(init_tau * 7)
 
-        # core: input freq norm → hidden STRF projection → channel norm
+        # core: per-band input norm → hidden STRF projection → channel norm
         #       → sigmoid → per-hidden-unit causal exponential decay
         self.core = nn.Sequential(
-            layers.CausalLayerNorm(self.F, dim=-2),
+            layers.BatchNormFreq(self.F),
             layers.CausalSTRFConv(self.F, self.T, self.C_in, self.H, kernel=kernel),
             layers.CausalLayerNorm(self.H, dim=1),
             nn.Sigmoid(),
@@ -456,7 +456,7 @@ class ConvNet2D(AudioEncodingModel):
         # explicit left-pad of 3*(K_T-1) zeros restores the time length.
         F_down = self.F - 3 * (self.K[0] - 1)  # frequency dim after 3 convs
         self.core = nn.Sequential(
-            layers.CausalLayerNorm(self.F, dim=-2),
+            layers.BatchNormFreq(self.F),
             nn.ZeroPad2d((3 * (self.K[1] - 1), 0, 0, 0)),
             nn.Conv2d(self.C_in, self.C, kernel_size=self.K, stride=1),
             layers.CausalLayerNorm(self.C, dim=1),
