@@ -96,18 +96,22 @@ class AudioEncodingModel(NeuralModel):
         """
         B = self.O      # use the batch dimension to parallelize across neurons
 
-        # initial stim = null stimulus = absence of bias / no information
+        # initial stim = null stimulus = absence of bias / no information.
+        # Place it on whatever device the model lives on so this works
+        # regardless of whether the user moved the model to CUDA.
+        device = next(self.parameters()).device
         T_eff = T if T is not None else self.T
-        stim_opt = Parameter(torch.zeros(B, 1, self.F, T_eff), requires_grad=True)
+        stim_opt = Parameter(torch.zeros(B, 1, self.F, T_eff, device=device),
+                             requires_grad=True)
 
-        # forward pass — output is (B=N, N, 1, T_eff)
+        # forward pass — output is (B=N, N, R=1, T_eff)
         response = self.forward(stim_opt)
 
-        # Spike-Triggered-Average loss = sum of diagonal activations at last timestep
-        # response[:, :, 0, -1] is (N, N); trace gathers the diagonal — each row's
-        # neuron predicted from its own batched null input.
-        loss = - torch.trace(response[..., -1].squeeze(-2) if response.dim() == 4
-                             else response[..., -1])
+        # Spike-Triggered-Average loss = sum of diagonal activations at last
+        # timestep. response[:, :, 0, -1] is (N, N): row b is the prediction
+        # for all N output neurons given the b-th batched null stim; the
+        # diagonal picks each row's matching neuron.
+        loss = - torch.trace(response[:, :, 0, -1])
 
         # backward pass populates stim_opt.grad
         loss.backward()
