@@ -100,15 +100,24 @@ and a one-liner about the training recipe.
 - **Fitter config:** `max_epochs=80, patience=15, monitor="val_cc_norm", mode="max"`.
 - **Random seed:** `0` (via `set_random_seed`).
 
-**Test metrics** *(filled in at upload time — see metadata.json on the Hub):*
+**Test metrics** (held-out 3-stim split, recorded at upload time — see
+`metadata.json` on the Hub for the full blob):
 
-| Metric                          | Value |
-|---------------------------------|-------|
-| `cc` (mean across cells)        | _TBD_ |
-| `cc_norm` (Schoppe, mean)       | _TBD_ |
-| `cc_norm` (Schoppe, median)     | _TBD_ |
+| Metric                          | Value  |
+|---------------------------------|--------|
+| `cc` (Pearson r, mean)          | +0.659 |
+| `cc` (Pearson r, median)        | +0.681 |
+| `cc_norm` (Schoppe, mean)       | +0.770 |
+| `cc_norm` (Schoppe, median)     | +0.796 |
+| MSE loss                        |  0.016 |
 
-**Training cost:** ~3–5 min on a single mid-range GPU (~80 epochs).
+For orientation: published mean `cc_norm` for StateNet on NS1 is in the
+0.7–0.8 range with leave-one-out training.
+
+**Training cost:** ~5 min on a single mid-range GPU, 80 epochs.
+
+**Trained at deepSTRF commit:** `c07e561f` (= the commit that introduced
+this registry entry — pinning it reproduces the recipe exactly).
 
 **Reproducing**
 
