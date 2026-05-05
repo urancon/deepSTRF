@@ -98,6 +98,50 @@ def test_mse_loss_neuron_with_no_valid_positions_is_nan():
     assert torch.allclose(mse_loss(pred, gt, reduction="mean"), torch.tensor(4.0))
 
 
+def test_mse_loss_does_not_propagate_nan_through_gradient():
+    """Regression: NaN positions in gt must not contaminate gradients on pred.
+
+    The forward sum drops NaN positions via the per-neuron mask, but a naive
+    ``(pred - gt)**2`` first computes NaN intermediates, and the autograd path
+    ``2*(pred - gt) * 0`` evaluates to NaN under IEEE 754. Surfaced
+    end-to-end on AA1 + Transformer — the loss was finite at every step but
+    parameter gradients were NaN, causing the model to diverge to NaN within
+    one optimizer step.
+    """
+    pred = torch.full((1, 3, 1, 4), 0.5, requires_grad=True)
+    gt = torch.full((1, 3, 1, 4), math.nan)
+    gt[0, 0, 0, :] = 1.0           # neuron 0 fully valid
+    gt[0, 1, 0, :2] = 2.0          # neuron 1 partial
+    # neuron 2 fully NaN
+    loss = mse_loss(pred, gt, reduction="mean")
+    assert torch.isfinite(loss).all()
+    loss.backward()
+    assert pred.grad is not None
+    assert torch.isfinite(pred.grad).all(), (
+        f"NaN leaked into gradient: {pred.grad}"
+    )
+    # Gradient at NaN positions should be zero (mask zeros them out)
+    assert torch.allclose(pred.grad[0, 2], torch.zeros_like(pred.grad[0, 2]))
+
+
+def test_poisson_loss_does_not_propagate_nan_through_gradient():
+    """Same regression as for mse_loss, applied to poisson_loss
+    (both branches: log_input=True and =False)."""
+    for log_input in (False, True):
+        pred = torch.full((1, 2, 1, 4), 0.3, requires_grad=True)
+        gt = torch.full((1, 2, 1, 4), math.nan)
+        gt[0, 0, 0, :] = 1.0
+        loss = poisson_loss(pred, gt, log_input=log_input, reduction="mean")
+        assert torch.isfinite(loss).all(), f"loss non-finite (log_input={log_input})"
+        loss.backward()
+        assert torch.isfinite(pred.grad).all(), (
+            f"NaN in gradient (log_input={log_input}): {pred.grad}"
+        )
+        # Gradient at fully-NaN-cell positions should be zero
+        assert torch.allclose(pred.grad[0, 1], torch.zeros_like(pred.grad[0, 1]))
+        pred.grad.zero_()
+
+
 def test_mse_loss_mask_override_replaces_nan_mask():
     pred = torch.zeros(1, 1, 1, 4)
     gt = torch.tensor([[[[1.0, 1.0, 1.0, 1.0]]]])

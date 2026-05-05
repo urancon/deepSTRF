@@ -15,6 +15,7 @@ import torch
 from deepSTRF.models.activations import (
     ParametricDoubleExponential,
     ParametricSigmoid,
+    ParametricSoftplus,
 )
 
 
@@ -167,6 +168,94 @@ def test_parametric_double_exp_is_differentiable():
 
 
 # -------------------------------------------------------------------------
+# ParametricSoftplus
+# -------------------------------------------------------------------------
+
+
+def test_parametric_softplus_default_output_is_non_negative():
+    torch.manual_seed(0)
+    m = ParametricSoftplus(num_features=8)               # default non_negative_output=True
+    out = m(_wide_input(N=8))
+    assert (out >= 0).all(), f"output went below zero at min={out.min().item()}"
+
+
+def test_parametric_softplus_signed_mode_can_go_negative():
+    saw_negative = False
+    for seed in range(5):
+        torch.manual_seed(seed)
+        m = ParametricSoftplus(num_features=4, non_negative_output=False)
+        # nudge baseline negative to ensure we do see negative output for at
+        # least some inputs
+        with torch.no_grad():
+            m._raw_b.uniform_(-3.0, -1.5)
+        out = m(_wide_input(N=4, seed=seed))
+        if (out < 0).any():
+            saw_negative = True
+            break
+    assert saw_negative, "non_negative_output=False should permit negative output"
+
+
+def test_parametric_softplus_forward_shape():
+    m = ParametricSoftplus(num_features=8)
+    x = torch.randn(2, 8)
+    assert m(x).shape == x.shape
+
+
+def test_parametric_softplus_unbounded_above():
+    """Softplus saturates linearly above; for large positive x, output ~ β·x/β = x.
+    The whole point: unlike Sigmoid/DoubleExponential, no upper saturation."""
+    torch.manual_seed(0)
+    m = ParametricSoftplus(num_features=4)
+    x = torch.linspace(0.0, 1000.0, 100).unsqueeze(-1).expand(100, 4)
+    out = m(x)
+    assert out.max() > 100.0, (
+        f"ParametricSoftplus should be unbounded above; got max={out.max().item():.2f} "
+        f"on inputs up to 1000."
+    )
+
+
+def test_parametric_softplus_beta_always_positive():
+    """β must be > 0 even when the raw param is initialised very negative."""
+    m = ParametricSoftplus(num_features=8)
+    with torch.no_grad():
+        m._raw_beta.fill_(-50.0)
+    assert (m.beta > 0).all()
+
+
+def test_parametric_softplus_state_dict_round_trip():
+    torch.manual_seed(0)
+    m1 = ParametricSoftplus(num_features=8)
+    m2 = ParametricSoftplus(num_features=8)
+    m2.load_state_dict(m1.state_dict())
+    x = _wide_input(N=8)
+    assert torch.allclose(m1(x), m2(x), atol=1e-7)
+
+
+def test_parametric_softplus_is_differentiable():
+    m = ParametricSoftplus(num_features=4)
+    x = torch.randn(3, 4, requires_grad=True)
+    m(x).sum().backward()
+    assert x.grad is not None
+    assert m._raw_beta.grad is not None
+    assert m._raw_b.grad is not None
+
+
+def test_parametric_softplus_per_neuron_params_independent():
+    """Distinct β / b per neuron — gradient on neuron i should not touch
+    neuron j's parameters."""
+    torch.manual_seed(0)
+    m = ParametricSoftplus(num_features=3)
+    x = torch.randn(8, 3)
+    # Touch only neuron 1's outputs:
+    out = m(x)[:, 1].sum()
+    out.backward()
+    # Gradients should be nonzero on neuron 1's slot, zero on others.
+    assert m._raw_beta.grad[1].abs() > 0
+    assert m._raw_beta.grad[0].abs() == 0
+    assert m._raw_beta.grad[2].abs() == 0
+
+
+# -------------------------------------------------------------------------
 # Cross-class: pairing with poisson_loss(log_input=False)
 # -------------------------------------------------------------------------
 
@@ -176,7 +265,7 @@ def test_parametric_activations_pair_with_poisson_loss():
     poisson_loss(log_input=False) NaN, even with extreme inputs."""
     from deepSTRF.metrics import poisson_loss
 
-    for cls in (ParametricSigmoid, ParametricDoubleExponential):
+    for cls in (ParametricSigmoid, ParametricDoubleExponential, ParametricSoftplus):
         torch.manual_seed(0)
         m = cls(num_features=4)
         x = torch.randn(2, 4, 1, 50) * 10.0             # (B, N, R=1, T)

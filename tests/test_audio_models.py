@@ -321,3 +321,31 @@ def test_transformer_freq_patch_size_must_divide_F():
     with pytest.raises(ValueError, match="must divide"):
         Transformer(n_frequency_bands=34, freq_patch_size=5,  # 34 % 5 != 0
                     embedding_dim=32, n_heads=2, n_layers=1, out_neurons=N)
+
+
+# ---------------------------------------------------------------------------
+# STRF_gradmap — should produce one (1, F, T) gradient map per neuron and
+# work whether the model is on CPU or GPU.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("factory", ALL_FACTORIES)
+def test_strf_gradmap_shape(factory):
+    _seed()
+    m = factory().eval()
+    g = m.STRF_gradmap()
+    assert g.shape[0] == N
+    assert g.shape[1] == 1
+    assert g.shape[2] == F
+    # T_eff defaults to model.T (>= 1)
+    assert g.shape[3] >= 1
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_strf_gradmap_on_cuda():
+    """Regression: gradmap must allocate the null stim on the model's
+    device, not silently fall back to CPU when the model is on GPU."""
+    _seed()
+    m = _make_convnet2d().eval().to('cuda')
+    g = m.STRF_gradmap()
+    assert g.is_cuda
+    assert g.shape == (N, 1, F, m.T)

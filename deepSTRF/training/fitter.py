@@ -136,6 +136,15 @@ class Fitter:
         Called as ``log_fn(epoch_dict)`` once per epoch. Default: a small
         formatter that prints ``epoch | k=v | ...``. Override to log to
         WandB, MLflow, a file, etc.
+    track_train_metrics
+        If ``True`` (default), recompute ``val_metrics`` over the training
+        predictions accumulated this epoch and add them to the epoch dict
+        as ``'train_<name>'``. Useful for diagnosing overfitting but
+        expensive on large datasets — accumulating ``(B, N, R, T)``
+        responses across all train batches is the dominant per-epoch cost
+        when ``N × R × T`` is in the millions (e.g. AA2's 494-cell
+        population). Set to ``False`` to skip; ``train_loss`` is always
+        reported.
     """
 
     def __init__(
@@ -154,6 +163,7 @@ class Fitter:
         mode: str = "max",
         ckpt_path: Optional[Union[str, Path]] = None,
         log_fn: Callable[[Mapping[str, Any]], None] = _format_epoch,
+        track_train_metrics: bool = True,
     ) -> None:
         if mode not in ("max", "min"):
             raise ValueError(f"mode must be 'max' or 'min', got {mode!r}")
@@ -181,6 +191,7 @@ class Fitter:
         self.mode = mode
         self.ckpt_path = Path(ckpt_path) if ckpt_path is not None else None
         self.log_fn = log_fn
+        self.track_train_metrics = track_train_metrics
 
     # ------------------------------------------------------------------
     # Hooks (subclass and override, or pass kwargs at construction time)
@@ -286,15 +297,24 @@ class Fitter:
 
             loss_sum += float(loss.detach().item())
             n_batches += 1
-            preds_list.append(pred.detach())
-            responses_list.append(responses.detach())
+            # Accumulate on CPU so the concatenated metrics tensor does not
+            # have to fit in GPU memory — for large datasets (494 cells × 81
+            # train stims × 20 trials × 511 frames on AA2) the GPU concat
+            # exceeds typical visible memory by several gigabytes. Skip the
+            # accumulation entirely when train-side metrics are disabled —
+            # halves wall time on large datasets where users only care
+            # about val metrics.
+            if self.track_train_metrics:
+                preds_list.append(pred.detach().cpu())
+                responses_list.append(responses.detach().cpu())
 
         out: Dict[str, Any] = {"loss": loss_sum / max(n_batches, 1)}
-        with torch.no_grad():
-            preds_cat = _pad_and_cat(preds_list)
-            responses_cat = _pad_and_cat(responses_list)
-            for name, fn in self.val_metrics.items():
-                out[name] = fn(preds_cat, responses_cat)
+        if self.track_train_metrics:
+            with torch.no_grad():
+                preds_cat = _pad_and_cat(preds_list)
+                responses_cat = _pad_and_cat(responses_list)
+                for name, fn in self.val_metrics.items():
+                    out[name] = fn(preds_cat, responses_cat)
         return out
 
     def _evaluate(self, loader: DataLoader) -> Dict[str, Any]:
@@ -312,8 +332,10 @@ class Fitter:
                 if hasattr(self.model, "detach"):
                     self.model.detach()
 
-                preds_list.append(pred)
-                responses_list.append(responses)
+                # Same CPU-accumulation as in _train_one_epoch — see comment
+                # there for the AA2-scale memory rationale.
+                preds_list.append(pred.cpu())
+                responses_list.append(responses.cpu())
 
             preds_cat = _pad_and_cat(preds_list)
             responses_cat = _pad_and_cat(responses_list)

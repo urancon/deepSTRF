@@ -1,4 +1,5 @@
 from abc import ABC
+from typing import Optional, Sequence
 
 import torch
 from torch.utils.data.dataset import Dataset
@@ -311,6 +312,79 @@ class NeuralDataset(Dataset, ABC):
     def reset_stim_selection(self):
         """Clear ``self.S_sel`` so all stimuli are eligible again."""
         self.S_sel = None
+
+    def reset_pop_selection(self):
+        """Clear the population selection so all neurons are eligible again.
+
+        Mirror of ``reset_stim_selection``. Restores ``self.I`` to its
+        empty default (interpreted as "no neuron-side restriction" by
+        ``_selected()``).
+        """
+        self.I = []
+
+    def standardize_stims(self, stim_indices: Optional[Sequence[int]] = None,
+                          per_band: bool = True, eps: float = 1e-8) -> dict:
+        """Standardize ``self.stims`` in place: ``(x − mean) / std``.
+
+        Statistics are computed over the stims selected by
+        ``stim_indices`` (typically train + validation indices) and
+        applied to **all** stims in the dataset — so the held-out test
+        stims are automatically transformed with the same train+val
+        statistics, preventing leakage of test-set first-order moments
+        into the standardisation while still ensuring train / val / test
+        all live in the same standardised space.
+
+        Parameters
+        ----------
+        stim_indices : sequence of int, optional
+            Indices of stims to compute statistics from. If None
+            (default), statistics are computed over **all** stims —
+            equivalent to "no held-out test set"; useful for
+            single-split exploratory analysis but introduces a tiny
+            (first-order) leakage if a test set is held out downstream.
+        per_band : bool, default True
+            If True, statistics are per-frequency-band (axis ``-2``):
+            mean / std are tensors of shape broadcastable to
+            ``(C, F, 1)``. If False, a single scalar mean and std are
+            computed over the whole concatenated stim tensor.
+        eps : float, default 1e-8
+            Floor on ``std`` to avoid division by zero on constant bands.
+
+        Returns
+        -------
+        dict
+            ``{'mean': Tensor, 'std': Tensor, 'per_band': bool,
+            'stim_indices': list | None}`` — also stored on
+            ``self.stim_normalization`` for inspection (e.g. to fold
+            into a model kernel for STRF visualisation).
+
+        Notes
+        -----
+        Not idempotent: calling twice double-standardizes. To re-do with
+        different statistics, rebuild the dataset.
+        """
+        sub = (self.stims if stim_indices is None
+               else [self.stims[i] for i in stim_indices])
+        if not sub:
+            raise ValueError("standardize_stims: no stims to compute statistics from")
+        cat = torch.cat(sub, dim=-1)
+        if per_band:
+            # cat shape: (C, F, T_total) for audio. Reduce over (T_total,)
+            # and the leading (C,) channel dim, keep F.
+            non_F_dims = tuple(d for d in range(cat.dim()) if d != cat.dim() - 2)
+            mean = cat.mean(dim=non_F_dims, keepdim=True)
+            std = cat.std(dim=non_F_dims, keepdim=True).clamp(min=eps)
+        else:
+            mean = cat.mean()
+            std = cat.std().clamp(min=eps)
+        self.stims = [(s - mean) / std for s in self.stims]
+        self.stim_normalization = {
+            'mean': mean.detach().clone(),
+            'std': std.detach().clone(),
+            'per_band': per_band,
+            'stim_indices': (list(stim_indices) if stim_indices is not None else None),
+        }
+        return self.stim_normalization
 
     def smooth_responses(self, window_ms: float = 21.0) -> None:
         """Temporally smooth each non-NaN response in place with a Hanning window.
