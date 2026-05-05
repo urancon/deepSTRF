@@ -62,6 +62,8 @@ dependencies = [
     "wandb>=0.15",
     "requests>=2.28",       # auto-download (OSF, etc.)
     "platformdirs>=3.0",    # default cache dir for downloaded datasets
+    "huggingface_hub>=0.20", # pretrained model weights — download / upload
+    "safetensors>=0.4",     # state_dict serialization for HF Hub checkpoints
 ]
 
 [project.optional-dependencies]

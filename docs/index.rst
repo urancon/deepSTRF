@@ -39,6 +39,7 @@ Welcome to the official documentation of the deepSTRF repository !
 
    _source/md/README_models.md
    _source/md/README_AdapTrans.md
+   _source/md/pretrained_models.md
 
 
 .. toctree::

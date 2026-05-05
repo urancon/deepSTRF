@@ -14,6 +14,13 @@
 # --- Local notebook builders (one-off scripts that emit committed .ipynb) ---
 _build_*.py
 
+# --- Local training/push scripts for pretrained model uploads (NEVER push) ---
+# One-off recipes that train a model and push the checkpoint to HF Hub. The
+# canonical reproducible recipe is recorded in docs/_source/md/pretrained_models.md;
+# this script is the throwaway driver. See pretrained_models.md "Reproducing".
+_train_push_*.py
+_train_push_*.json
+
 # --- Paper drafts and supplementary (NEVER push) ---
 /deepSTRF_paper_draft.pdf
 *paper_draft*
