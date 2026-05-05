@@ -259,7 +259,7 @@ def upload_pretrained(
 
     Creates the repo on the fly if it doesn't exist (idempotent — safe to
     call repeatedly). The user must be authenticated with write access to
-    ``repo_id`` (run ``huggingface-cli login`` once or pass ``token=``).
+    ``repo_id`` (run ``hf auth login`` once or pass ``token=``).
 
     Parameters
     ----------

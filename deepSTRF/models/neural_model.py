@@ -193,7 +193,7 @@ class NeuralModel(nn.Module, ABC):
         Saves the checkpoint to a temporary folder and uploads it via
         :func:`deepSTRF.utils.hub.upload_pretrained`. Creates the repo on
         the fly if it doesn't exist; user must be authenticated with
-        write access (``huggingface-cli login`` or ``token=``).
+        write access (``hf auth login`` or ``token=``).
 
         Returns
         -------
