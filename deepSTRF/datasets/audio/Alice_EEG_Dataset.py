@@ -242,6 +242,8 @@ class Alice_EEG_Dataset(AudioNeuralDataset):
                  dt_ms: float = 10.0,
                  n_frequency_bands: int = 8,
                  treat_subjects_as: str = "neurons",
+                 hp_freq_hz: Optional[float] = 1.0,
+                 lp_freq_hz: Optional[float] = None,
                  download: bool = False):
         """
         Parameters
@@ -262,6 +264,17 @@ class Alice_EEG_Dataset(AudioNeuralDataset):
             Matches Brodbeck 2023 Fig 4.
         treat_subjects_as : {"neurons", "repeats"}, default "neurons"
             See the class docstring.
+        hp_freq_hz : float or None, default 1.0
+            High-pass cutoff applied via ``raw.filter`` before downsampling
+            and segmentation. The Brodbeck restructure ships data with a
+            0.1 Hz HP, which leaves enough slow drift across the ~12 min
+            recording that per-segment baselines vary by >1 SD — fatal for
+            held-out fve. Brodbeck applies 1 Hz HP in the paper's analysis
+            pipeline; we mirror that as the default. Pass ``None`` to skip.
+        lp_freq_hz : float or None, default None
+            Optional low-pass cutoff. Useful if you want to focus on the
+            cortical-tracking band (< 40 Hz) or the envelope-tracking band
+            (< 8 Hz).
         download : bool, default False
             If True and the data is missing under ``path``, fetch the four
             zips from the UMd DRUM mirror (~2.5 GiB total; anonymous HTTPS).
@@ -285,6 +298,8 @@ class Alice_EEG_Dataset(AudioNeuralDataset):
         self.species = "human"
         self.behavioral_state = "passive-listening"
         self.F = int(n_frequency_bands)
+        self.hp_freq_hz = hp_freq_hz
+        self.lp_freq_hz = lp_freq_hz
 
         if treat_subjects_as not in ("neurons", "repeats"):
             raise ValueError(
@@ -390,6 +405,12 @@ class Alice_EEG_Dataset(AudioNeuralDataset):
 
             # find segment onsets from the 12 numeric annotations '1'..'12'
             seg_onsets_s = self._extract_segment_onsets(raw, expected=12)
+
+            # band-pass before downsampling — suppress slow DC drift that
+            # makes per-segment baselines diverge across the recording.
+            if self.hp_freq_hz is not None or self.lp_freq_hz is not None:
+                raw.filter(l_freq=self.hp_freq_hz, h_freq=self.lp_freq_hz,
+                           verbose=False)
 
             # downsample EEG (anti-aliasing handled by MNE) and rescale onsets
             raw.resample(target_fs, verbose=False)
