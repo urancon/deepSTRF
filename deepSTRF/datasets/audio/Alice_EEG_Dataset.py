@@ -15,7 +15,58 @@ import torch
 import torchaudio
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
-from deepSTRF.utils.data_download import default_cache_dir
+from deepSTRF.utils.data_download import default_cache_dir, stream_download, unzip
+
+
+# UMd Digital Repository (DRUM) bitstream UUIDs for Brodbeck's restructured
+# Alice EEG release (DOI 10.13016/pulf-lndn). Verified 2026-05-15 against
+# https://drum.lib.umd.edu/handle/1903/27591. Anonymous downloads work over
+# HTTPS — no credentials required. Total payload ~2.5 GiB.
+_DRUM_BITSTREAMS = {
+    "eeg.0.zip":   "264ca110-f7f4-4fd5-9b00-896102b841ad",
+    "eeg.1.zip":   "bef532d8-cf74-4b9d-9b4c-5c1f81610ce9",
+    "eeg.2.zip":   "25fc51ae-d1fa-4094-85af-65dd4cf30251",
+    "stimuli.zip": "df241468-26ee-42df-b27f-3f438cfc5a3f",
+}
+
+
+def download_alice_eeg(dest: Optional[str] = None) -> str:
+    """Download Brodbeck's restructured Alice EEG release from UMd DRUM.
+
+    Idempotent: skips any zip that's already on disk and any subdirectory
+    that's already unpacked. Returns the dataset directory.
+
+    Parameters
+    ----------
+    dest : str, optional
+        Defaults to the platformdirs cache (overridable via
+        ``$DEEPSTRF_DATA_DIR``).
+
+    Notes
+    -----
+    ~2.5 GiB total across four zips. Anonymous HTTPS; no auth.
+    """
+    dest_path = str(default_cache_dir("Alice_EEG") if dest is None else dest)
+    os.makedirs(dest_path, exist_ok=True)
+
+    for filename, uuid in _DRUM_BITSTREAMS.items():
+        zip_path = os.path.join(dest_path, filename)
+        if not os.path.exists(zip_path):
+            url = f"https://drum.lib.umd.edu/bitstreams/{uuid}/download"
+            stream_download(url, zip_path)
+
+        if filename.startswith("eeg."):
+            target = os.path.join(dest_path, filename[:-len(".zip")])
+            sentinel = glob.glob(os.path.join(target, "eeg", "S*",
+                                              "S*_alice-raw.fif"))
+        else:
+            target = dest_path
+            sentinel = glob.glob(os.path.join(dest_path, "stimuli", "*.wav"))
+        if not sentinel:
+            os.makedirs(target, exist_ok=True)
+            unzip(zip_path, target)
+
+    return dest_path
 
 
 # -----------------------------------------------------------------------------
@@ -212,9 +263,9 @@ class Alice_EEG_Dataset(AudioNeuralDataset):
         treat_subjects_as : {"neurons", "repeats"}, default "neurons"
             See the class docstring.
         download : bool, default False
-            If True and the data is missing under ``path``, fetch from the
-            UMd DRUM mirror (~2.5 GB; anonymous HTTPS). **Not implemented in
-            this commit** — set up in a follow-up.
+            If True and the data is missing under ``path``, fetch the four
+            zips from the UMd DRUM mirror (~2.5 GiB total; anonymous HTTPS).
+            Idempotent — skips any zip / unpacked subtree already present.
         """
         try:
             import mne  # noqa: F401
@@ -227,12 +278,7 @@ class Alice_EEG_Dataset(AudioNeuralDataset):
         if path is None:
             path = str(default_cache_dir("Alice_EEG"))
         if download:
-            raise NotImplementedError(
-                "download=True wiring is scheduled for a follow-up commit. "
-                "For now, manually fetch the Brodbeck restructure from "
-                "https://doi.org/10.13016/pulf-lndn (4 zips, ~2.5 GB) and "
-                "unzip them under `path`."
-            )
+            download_alice_eeg(path)
 
         super().__init__(path, dt_ms)
 
