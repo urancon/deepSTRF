@@ -5,6 +5,7 @@ from .Wehr_Dataset import WehrDataset
 from .CRCNS_AA1_Dataset import CRCNS_AA1_Dataset
 from .CRCNS_AA2_Dataset import CRCNS_AA2_Dataset
 from .CRCNS_AA4_Dataset import CRCNS_AA4_Dataset, AA4_ANIMAL_IDS
+from .Alice_EEG_Dataset import Alice_EEG_Dataset, download_alice_eeg
 
 __all__ = ['AudioNeuralDataset',
            'WehrDataset',
@@ -12,4 +13,5 @@ __all__ = ['AudioNeuralDataset',
            'NAT4_Dataset',
            'CRCNS_AA1_Dataset',
            'CRCNS_AA2_Dataset',
-           'CRCNS_AA4_Dataset', 'AA4_ANIMAL_IDS']
+           'CRCNS_AA4_Dataset', 'AA4_ANIMAL_IDS',
+           'Alice_EEG_Dataset', 'download_alice_eeg']
