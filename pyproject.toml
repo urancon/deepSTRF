@@ -105,6 +105,13 @@ s4 = [
     "pykeops>=2.1",
 ]
 
+# EEG datasets (currently: Alice EEG). MNE-Python parses the .fif files
+# Brodbeck 2023 rereleased, and exposes channel montages + bad-channel /
+# artifact annotations natively.
+eeg = [
+    "mne>=1.5",
+]
+
 [project.urls]
 Homepage = "https://github.com/urancon/deepSTRF"
 Documentation = "https://deepstrf.readthedocs.io/"
