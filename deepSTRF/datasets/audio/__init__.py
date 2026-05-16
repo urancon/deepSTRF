@@ -15,5 +15,5 @@ __all__ = ['AudioNeuralDataset',
            'CRCNS_AA1_Dataset',
            'CRCNS_AA2_Dataset',
            'CRCNS_AA4_Dataset', 'AA4_ANIMAL_IDS',
-           'Espejo_Dataset']
+           'Espejo_Dataset',
            'Alice_EEG_Dataset', 'download_alice_eeg']
