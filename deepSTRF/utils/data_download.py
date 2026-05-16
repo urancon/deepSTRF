@@ -8,6 +8,7 @@ Public surface:
     - ``osf_download(guid, dest)``                      — public OSF storage files
     - ``github_raw_download(repo, path, dest, ref=)``   — public GitHub raw files
     - ``zenodo_download(record_id, filename, dest)``    — public Zenodo records
+    - ``figshare_download(article_id, dest_dir, filename=)`` — public figshare articles
     - ``crcns_download(file_path, dest, username=, password=)`` — CRCNS (free account)
 """
 
@@ -263,6 +264,72 @@ def zenodo_download(
     """
     url = f"https://zenodo.org/api/records/{record_id}/files/{filename}/content"
     return stream_download(url, dest_path, **kwargs)
+
+
+def figshare_download(
+    article_id: Union[int, str],
+    dest_dir: Union[str, Path],
+    *,
+    filename: Optional[str] = None,
+    **kwargs,
+) -> Path:
+    """Download one file from a public figshare article.
+
+    Resolves the article's file list via the public REST API
+    (``https://api.figshare.com/v2/articles/<id>``) and streams the matching
+    file into ``dest_dir``. With ``filename=None``, the article must contain
+    exactly one file; pass an explicit name to disambiguate when there are
+    several.
+
+    Parameters
+    ----------
+    article_id : int | str
+        Numeric figshare article id (the trailing component of the DOI
+        ``10.6084/m9.figshare.<id>``, e.g. ``29203457``).
+    dest_dir : path-like
+        Directory the file is downloaded into. Created if missing.
+    filename : str, optional
+        Name of the file to fetch. Required when the article carries more
+        than one file. Matched case-sensitively against the file's ``name``
+        field returned by the API.
+
+    Returns
+    -------
+    Path
+        Path to the downloaded file under ``dest_dir``.
+
+    Example
+    -------
+    >>> figshare_download(29203457, "/tmp/meliza")
+    PosixPath('/tmp/meliza/zebf-auditory-restoration-1.zip')
+    """
+    api_url = f"https://api.figshare.com/v2/articles/{article_id}"
+    resp = requests.get(api_url, timeout=(30, 60))
+    resp.raise_for_status()
+    files = resp.json().get("files", [])
+    if not files:
+        raise RuntimeError(f"figshare article {article_id} lists no files")
+
+    if filename is None:
+        if len(files) > 1:
+            names = ", ".join(f["name"] for f in files)
+            raise ValueError(
+                f"figshare article {article_id} has {len(files)} files; "
+                f"pass `filename=` to disambiguate (candidates: {names})"
+            )
+        chosen = files[0]
+    else:
+        chosen = next((f for f in files if f.get("name") == filename), None)
+        if chosen is None:
+            names = ", ".join(f["name"] for f in files)
+            raise FileNotFoundError(
+                f"file {filename!r} not in figshare article {article_id} (have: {names})"
+            )
+
+    dest_dir = Path(dest_dir).expanduser().resolve()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / chosen["name"]
+    return stream_download(chosen["download_url"], dest, **kwargs)
 
 
 def github_raw_download(
