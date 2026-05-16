@@ -412,10 +412,86 @@ class NeuralDataset(Dataset, ABC):
                     continue
                 self.responses[s][n] = hanning_smooth(r, window_ms=window_ms, dt_ms=self.dt)
 
-    def normalize_responses(self):
-        """Normalize each neuron's activity so that its maximum PSTH across stimuli is 1."""
-        # TODO
-        raise NotImplementedError
+    def normalize_responses(self, method: str = "max",
+                            stim_indices: Optional[Sequence[int]] = None,
+                            eps: float = 1e-8) -> dict:
+        """Normalize ``self.responses`` in place, per neuron.
+
+        Statistics are computed on a chosen stim subset (typically train
+        +val) and applied to **all** stims, mirroring ``standardize_stims``.
+        ``(1, 1)`` NaN sentinels for structurally missing
+        ``(stim, neuron)`` pairs are preserved unchanged.
+
+        Parameters
+        ----------
+        method : {'max', 'zscore'}, default 'max'
+            'max' — divide each neuron's responses by their max across all
+            ``(s, r, t)`` in ``stim_indices``. Preserves non-negativity;
+            range becomes ``[0, max] -> [0, 1]``. Natural for rate-coded /
+            spike-count targets where 0 is meaningful.
+
+            'zscore' — subtract per-neuron mean, divide by per-neuron std,
+            both computed NaN-aware over the same flat ``(s, r, t)``
+            samples. Maps signed continuous targets (EEG, LFP) to ``N(0, 1)``.
+        stim_indices : sequence of int, optional
+            Stims used to compute statistics. If None, all stims are used.
+        eps : float, default 1e-8
+            Floor on the divisor.
+
+        Returns
+        -------
+        dict
+            ``{'method': str, 'scale': Tensor[N], 'offset': Tensor[N],
+            'stim_indices': list | None}`` — also stored on
+            ``self.response_normalization``. ``scale`` is the divisor
+            (max or std); ``offset`` is the subtracted location (0 for
+            'max', mean for 'zscore').
+
+        Notes
+        -----
+        Not idempotent — calling twice double-normalizes.
+        """
+        if method not in ("max", "zscore"):
+            raise ValueError(f"method must be 'max' or 'zscore', got {method!r}")
+        sub_idx = (list(range(len(self.responses)))
+                   if stim_indices is None else list(stim_indices))
+
+        offset = torch.zeros(self.N_neurons)
+        scale = torch.ones(self.N_neurons)
+        for n in range(self.N_neurons):
+            chunks = []
+            for s in sub_idx:
+                r = self.responses[s][n]
+                if r.shape == (1, 1) and torch.isnan(r).all():
+                    continue
+                chunks.append(r.flatten())
+            if not chunks:
+                continue
+            cat = torch.cat(chunks)
+            valid = cat[~torch.isnan(cat)]
+            if valid.numel() < 2:
+                continue
+            if method == "max":
+                scale[n] = float(valid.abs().max().clamp(min=eps))
+            else:  # zscore
+                offset[n] = float(valid.mean())
+                scale[n] = float(valid.std().clamp(min=eps))
+
+        for s in range(len(self.responses)):
+            for n in range(self.N_neurons):
+                r = self.responses[s][n]
+                if r.shape == (1, 1) and torch.isnan(r).all():
+                    continue
+                self.responses[s][n] = (r - offset[n]) / scale[n]
+
+        self.response_normalization = {
+            "method": method,
+            "scale": scale.detach().clone(),
+            "offset": offset.detach().clone(),
+            "stim_indices": (list(stim_indices)
+                             if stim_indices is not None else None),
+        }
+        return self.response_normalization
 
     def __add__(self, other):
         """Concatenate two datasets on BOTH the stim and neuron axes (sugar for :func:`deepSTRF.utils.data.concat_neural_datasets`).

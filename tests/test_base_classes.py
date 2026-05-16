@@ -269,3 +269,90 @@ def test_standardize_stims_empty_subset_raises():
     fx = _stim_dataset_fixture()
     with pytest.raises(ValueError, match="no stims"):
         fx.standardize_stims(stim_indices=[])
+
+
+# ---------------------------------------------------------------------------
+# normalize_responses
+# ---------------------------------------------------------------------------
+
+
+def _response_dataset_fixture():
+    """Tiny dataset with 3 stims × 2 neurons; per-neuron scales differ."""
+    from deepSTRF.datasets.neural_dataset import NeuralDataset
+
+    class _Fixture(NeuralDataset):
+        def __init__(self):
+            super().__init__("/tmp/nowhere", dt_ms=1.0)
+            self.N_neurons = 2
+            self.stim_meta = [("s0",), ("s1",), ("s2",)]
+            self.stims = [torch.zeros(1, 1, 10) for _ in range(3)]
+            torch.manual_seed(0)
+            # neuron 0: positive, scale ~5 ; neuron 1: signed, scale ~2
+            self.responses = [
+                [(torch.rand(1, 10) * 5.0),
+                 (torch.randn(1, 10) * 2.0)] for _ in range(3)
+            ]
+            self.neuron_metadata = [{"uid": "n0"}, {"uid": "n1"}]
+            self.validate()
+
+    return _Fixture()
+
+
+def test_normalize_responses_max_default():
+    fx = _response_dataset_fixture()
+    fx.normalize_responses(method="max")
+    # all valid (s, r, t) lie in [-1, 1]; for non-neg neuron 0 also [0, 1]
+    for s in range(3):
+        for n in range(2):
+            r = fx.responses[s][n]
+            assert r.abs().max().item() <= 1.0 + 1e-6
+
+
+def test_normalize_responses_zscore_unit_variance():
+    fx = _response_dataset_fixture()
+    fx.normalize_responses(method="zscore")
+    for n in range(2):
+        cat = torch.cat([fx.responses[s][n].flatten() for s in range(3)])
+        assert abs(cat.mean().item()) < 1e-5
+        assert abs(cat.std().item() - 1.0) < 1e-5
+
+
+def test_normalize_responses_subset_applies_to_all():
+    fx = _response_dataset_fixture()
+    fx.normalize_responses(method="zscore", stim_indices=[0, 1])
+    # train subset: zero-mean / unit-std per neuron
+    for n in range(2):
+        cat = torch.cat([fx.responses[s][n].flatten() for s in [0, 1]])
+        assert abs(cat.mean().item()) < 1e-5
+        assert abs(cat.std().item() - 1.0) < 1e-5
+    # held-out stim 2 was transformed with the same stats — generally != 1 std
+    for n in range(2):
+        held = fx.responses[2][n].flatten()
+        assert abs(held.std().item() - 1.0) > 1e-3
+
+
+def test_normalize_responses_stores_dict():
+    fx = _response_dataset_fixture()
+    out = fx.normalize_responses(method="zscore", stim_indices=[0, 1])
+    assert out is fx.response_normalization
+    assert set(out) == {"method", "scale", "offset", "stim_indices"}
+    assert out["method"] == "zscore"
+    assert out["scale"].shape == (2,)
+    assert out["offset"].shape == (2,)
+    assert out["stim_indices"] == [0, 1]
+
+
+def test_normalize_responses_preserves_nan_sentinel():
+    """The structural (1, 1) NaN-sentinel must survive normalization untouched."""
+    fx = _response_dataset_fixture()
+    fx.responses[1][0] = torch.full((1, 1), float("nan"))   # uncorded combo
+    fx.normalize_responses(method="zscore")
+    survivor = fx.responses[1][0]
+    assert survivor.shape == (1, 1)
+    assert torch.isnan(survivor).all().item()
+
+
+def test_normalize_responses_invalid_method():
+    fx = _response_dataset_fixture()
+    with pytest.raises(ValueError, match="method"):
+        fx.normalize_responses(method="bogus")
