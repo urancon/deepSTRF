@@ -169,3 +169,53 @@ ds = Alice_EEG_Dataset(download=True, treat_subjects_as="repeats")
 # post-construction: select a frontal cluster of channels
 ds.select_pop_by_nrn_attr("channel_id", "1")    # one channel by id
 ```
+
+## Status and gap to Brodbeck
+
+The shipped `Alice_EEG_Dataset` + canonical preprocessing (0.5–20 Hz
+bandpass, base-class `standardize_stims` + `normalize_responses`)
+correctly loads the data and feeds the deepSTRF model API.
+
+On a single subject, single held-out segment, with `StateNet GRU C=14`
+(~6.8k params), one obtains test cc ≈ 0.05 mean (~0.12 best channel),
+test fve ≈ 0.003. Brodbeck reports test fve ≈ 0.14–0.20 averaged across
+33 subjects with 12-fold CV. The **~8× gap** is regularization-bound,
+not pipeline-bound:
+
+- Brodbeck fits TRFs with **boosting** — coordinate descent + strict L1
+  sparsity + 50 ms Hamming-basis smoothing on the temporal axis. The
+  effective parameter count is far below deepSTRF's dense STRF kernel.
+- Adam + weight decay alone cannot replicate that prior. Training on
+  the full 12 segments shows train cc rising to 0.29 while held-out
+  val cc stalls at 0.07 — pure overfitting, not capacity-limited.
+
+### Concrete improvements to close the gap
+
+Listed in increasing order of implementation effort. Each is a
+standalone follow-up branch from this one.
+
+1. **Hamming-basis STRF kernel.** Add a `BasisKernel` to
+   `deepSTRF.models.layers` that constrains the temporal axis of the
+   STRF to a sparse basis of overlapping Hamming windows. Direct port
+   of eelbrain's `basis_window=50ms`. Plug into `Linear`/`NRF` via the
+   existing `kernel` kwarg. Highest expected impact.
+2. **Subject embeddings + shared StateNet backbone.** A learned
+   per-subject context vector concatenated to the GRU input. Different
+   from naive pooling (which already has per-subject readouts via the
+   `N` axis but doesn't condition the shared backbone). Enables true
+   multi-subject pretraining.
+3. **`eelbrain.boosting` wrapper as an alternative `Fitter`.** Direct
+   apples-to-apples comparison with the reference paper. Useful as a
+   regression test for any future deepSTRF method on EEG/MEG data.
+4. **Word-onset / surprisal predictors** from
+   `stimuli/AliceChapterOne-EEG.csv`. Reproduces Brodbeck Fig 5+
+   (TRF-of-discrete-events comparisons).
+5. **Topomap helper** using `mne.viz.plot_topomap` from
+   `neuron_metadata['xyz']` — for the eLife figure.
+6. **Per-subject `download=True`** instead of all 2.5 GiB at once.
+
+The accompanying [tutorial notebook](../../examples/alice_eeg_tutorial.ipynb)
+exercises the dataset end-to-end and documents the gap explicitly. It
+is a **library-on-EEG demonstration**, not a numerical reproduction of
+the eelbrain paper; closing the gap is the work of the follow-ups
+above.
