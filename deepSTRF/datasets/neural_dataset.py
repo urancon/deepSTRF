@@ -69,6 +69,12 @@ class NeuralDataset(Dataset, ABC):
         self.neuron_metadata = []
         self.N_neurons = 0
 
+        # Lazy cache for ``nrn_masks`` — see the @property. Computed on
+        # first access and reused thereafter. Subclasses (or callers
+        # that structurally mutate ``self.responses``) should call
+        # ``self._invalidate_nrn_masks()`` to force recomputation.
+        self._nrn_masks_cache = None
+
         # selected-neuron indices (defaults to empty; filled by select_* or on first __getitem__)
         self.I = []
         # selected-stim indices: None == no restriction, [] == explicit empty.
@@ -93,22 +99,60 @@ class NeuralDataset(Dataset, ABC):
     def nrn_masks(self) -> torch.Tensor:
         """Derived ``(S, N)`` bool tensor: True iff neuron n has real data for stim s.
 
-        Computed on the fly from the NaN sentinels in ``self.responses`` —
-        single source of truth, cannot go out of sync. Cheap at deepSTRF
-        scales (S, N in the hundreds). For a bare dataset (no populated
-        responses), returns an empty ``(0, N_neurons)`` tensor.
+        Derived from the NaN sentinels in ``self.responses`` — single
+        source of truth, cannot go out of sync. Lazy-cached on first
+        access: subsequent reads are O(1). Callers that *structurally*
+        mutate the response list (replace a real tensor with a
+        ``(1, 1)`` NaN sentinel, or vice versa) should call
+        ``self._invalidate_nrn_masks()`` afterwards. Shape-preserving
+        mutations (``smooth_responses``, normalization, etc.) leave
+        the mask unchanged and do not require invalidation.
+
+        For a bare dataset (no populated responses), returns an empty
+        ``(0, N_neurons)`` tensor.
+        """
+        if self._nrn_masks_cache is None:
+            self._nrn_masks_cache = self._compute_nrn_masks()
+        return self._nrn_masks_cache
+
+    def _compute_nrn_masks(self) -> torch.Tensor:
+        """Build the ``(S, N)`` mask from ``self.responses``.
+
+        Fast path: the deepSTRF data paradigm guarantees the ``(1, 1)``
+        shape *is* the canonical missing-sentinel marker, and that
+        non-missing responses do not contain NaN. So the per-cell check
+        collapses to a Python shape comparison — no tensor ops, no
+        ``.item()`` syncs.
+
+        Defensive fallback: if a non-``(1, 1)`` tensor does contain NaN
+        (legacy data, user-injected NaN), we still treat that cell as
+        missing for that stim, matching the original semantics.
         """
         S = len(self.responses)
         if S == 0:
             return torch.zeros((0, self.N_neurons), dtype=torch.bool)
-        rows = [
-            torch.tensor(
-                [not self.responses[s][n].isnan().any().item() for n in range(self.N_neurons)],
-                dtype=torch.bool,
-            )
-            for s in range(S)
-        ]
-        return torch.stack(rows)
+        mask = torch.zeros((S, self.N_neurons), dtype=torch.bool)
+        for s in range(S):
+            for n in range(self.N_neurons):
+                r = self.responses[s][n]
+                if tuple(r.shape) == (1, 1):
+                    mask[s, n] = False
+                elif r.isnan().any():
+                    mask[s, n] = False
+                else:
+                    mask[s, n] = True
+        return mask
+
+    def _invalidate_nrn_masks(self) -> None:
+        """Drop the cached ``nrn_masks``; next access recomputes.
+
+        Call after structurally mutating ``self.responses`` (e.g.
+        swapping a real tensor for a ``(1, 1)`` NaN sentinel, or vice
+        versa). The shape-preserving response transforms shipped with
+        the library (``smooth_responses``, ``standardize_stims``)
+        cannot change ``nrn_masks`` and do not invalidate the cache.
+        """
+        self._nrn_masks_cache = None
 
     def _selected_stims(self) -> list:
         """Effective stim selection. Falls back to all stims when ``self.S_sel`` is None."""
