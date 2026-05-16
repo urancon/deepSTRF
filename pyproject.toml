@@ -112,6 +112,12 @@ eeg = [
     "mne>=1.5",
 ]
 
+# Meliza 2025 (zebra finch occluded-song restoration). Uses the paper's
+# gammatone filter bank (Methods p. 10) for stimulus spectrograms.
+meliza = [
+    "gammatone>=1.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/urancon/deepSTRF"
 Documentation = "https://deepstrf.readthedocs.io/"
