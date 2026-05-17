@@ -96,7 +96,7 @@ def download_nat4(area: str, dest: Optional[str] = None) -> str:
     return dest_path
 
 
-class NAT4_Dataset(AudioNeuralDataset):
+class NAT4Dataset(AudioNeuralDataset):
     """A PyTorch dataset for NAT4 (Pennington & David, 2022 / 2023).
 
 
@@ -110,7 +110,7 @@ class NAT4_Dataset(AudioNeuralDataset):
        Pennington & David, PLOS Computational Biology (2023).
 
     Data freely available at https://doi.org/10.5281/zenodo.8044773 (no
-    account required) — auto-fetched by ``NAT4_Dataset(download=True)``.
+    account required) — auto-fetched by ``NAT4Dataset(download=True)``.
 
 
     =============== DETAILS ================

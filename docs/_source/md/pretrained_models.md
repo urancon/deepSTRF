@@ -88,7 +88,7 @@ and a one-liner about the training recipe.
   )
   ```
 - **Trainable params:** ~39k.
-- **Dataset:** NS1 (`deepSTRF.datasets.audio.NS1_DRC_Dataset.NS1_Dataset`),
+- **Dataset:** NS1 (`deepSTRF.datasets.audio.ns1_drc.NS1Dataset`),
   `dt_ms=5.0`, `smooth=True`, auto-downloaded from OSF + the DNet
   companion repo on first instantiation.
 - **Split (by stim index, 0-indexed, 20 stims total):**

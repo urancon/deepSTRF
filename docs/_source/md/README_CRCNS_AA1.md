@@ -63,9 +63,9 @@ host requires login).
 Easiest path — auto-download via the CRCNS NERSC mirror:
 
 ```python
-from deepSTRF.datasets.audio import CRCNS_AA1_Dataset
+from deepSTRF.datasets.audio import CRCNSAA1Dataset
 
-ds = CRCNS_AA1_Dataset(
+ds = CRCNSAA1Dataset(
     download=True, dt_ms=5,
     crcns_username="your_username",
     crcns_password="your_password",
@@ -81,7 +81,7 @@ If you already have the data laid out manually:
 1. Download `crcns-aa1.zip` at [the original dataset repository](https://crcns.org/data-sets/aa/aa-1/about).
 2. Extract `all_stims/`, `Field_L_cells/`, `MLd_cells/` into a `data/`
    folder.
-3. `ds = CRCNS_AA1_Dataset('/path/to/data', dt_ms=5)`.
+3. `ds = CRCNSAA1Dataset('/path/to/data', dt_ms=5)`.
 
 ## Filtering
 

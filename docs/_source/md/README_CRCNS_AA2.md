@@ -80,9 +80,9 @@ TODO
 Easiest path — auto-download via the CRCNS NERSC mirror:
 
 ```python
-from deepSTRF.datasets.audio import CRCNS_AA2_Dataset
+from deepSTRF.datasets.audio import CRCNSAA2Dataset
 
-ds = CRCNS_AA2_Dataset(
+ds = CRCNSAA2Dataset(
     download=True, dt_ms=5,
     crcns_username="your_username",
     crcns_password="your_password",
@@ -96,7 +96,7 @@ overridable via `$DEEPSTRF_DATA_DIR`. `download=True` is idempotent.
 If you already have the data laid out manually:
 1. Download from [the dataset page](https://crcns.org/data-sets/aa/aa-2/about).
 2. Extract `all_stims/` and `all_cells/` into a `data/` folder.
-3. `ds = CRCNS_AA2_Dataset('/path/to/data', dt_ms=5)`.
+3. `ds = CRCNSAA2Dataset('/path/to/data', dt_ms=5)`.
 
 ## Filtering
 

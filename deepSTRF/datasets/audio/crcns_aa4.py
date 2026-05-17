@@ -95,7 +95,7 @@ def download_aa4(dest: Optional[str] = None,
     return dest_path
 
 
-class CRCNS_AA4_Dataset(AudioNeuralDataset):
+class CRCNSAA4Dataset(AudioNeuralDataset):
     """
     A PyTorch dataset for handling neural data from the CRCNS-AA4 dataset.
 

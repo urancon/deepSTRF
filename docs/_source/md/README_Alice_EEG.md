@@ -58,7 +58,7 @@ Evaluation (LREC), 120–125.
 ## Two modes: subjects-as-neurons vs subjects-as-repeats
 
 Alice EEG sits at the intersection of two natural ways to organise the
-data. `Alice_EEG_Dataset` exposes both via the `treat_subjects_as` kwarg.
+data. `AliceEEGDataset` exposes both via the `treat_subjects_as` kwarg.
 
 ### `treat_subjects_as="neurons"` (default)
 
@@ -123,9 +123,9 @@ Easiest path — auto-download from the UMd DRUM mirror (~2.5 GiB total,
 anonymous HTTPS, idempotent):
 
 ```python
-from deepSTRF.datasets.audio import Alice_EEG_Dataset
+from deepSTRF.datasets.audio import AliceEEGDataset
 
-ds = Alice_EEG_Dataset(download=True, dt_ms=10, n_frequency_bands=8)
+ds = AliceEEGDataset(download=True, dt_ms=10, n_frequency_bands=8)
 ```
 
 Default cache dir is
@@ -135,7 +135,7 @@ Default cache dir is
 If the data is already laid out manually:
 
 ```python
-ds = Alice_EEG_Dataset(path="/path/to/brodbeck_eelbrain_elife", dt_ms=10)
+ds = AliceEEGDataset(path="/path/to/brodbeck_eelbrain_elife", dt_ms=10)
 ```
 
 Expected layout under `path`:
@@ -158,13 +158,13 @@ or `None` if not in the montage). Combined with the
 
 ```python
 # default — all subjects, both modes
-ds = Alice_EEG_Dataset(download=True)
+ds = AliceEEGDataset(download=True)
 
 # only one subject
-ds = Alice_EEG_Dataset(download=True, subjects=["S20"])
+ds = AliceEEGDataset(download=True, subjects=["S20"])
 
 # inter-subject reliability mode
-ds = Alice_EEG_Dataset(download=True, treat_subjects_as="repeats")
+ds = AliceEEGDataset(download=True, treat_subjects_as="repeats")
 
 # post-construction: select a frontal cluster of channels
 ds.select_pop_by_nrn_attr("channel_id", "1")    # one channel by id
@@ -172,7 +172,7 @@ ds.select_pop_by_nrn_attr("channel_id", "1")    # one channel by id
 
 ## Status and gap to Brodbeck
 
-The shipped `Alice_EEG_Dataset` + canonical preprocessing (0.5–20 Hz
+The shipped `AliceEEGDataset` + canonical preprocessing (0.5–20 Hz
 bandpass, base-class `standardize_stims` + `normalize_responses`)
 correctly loads the data and feeds the deepSTRF model API.
 

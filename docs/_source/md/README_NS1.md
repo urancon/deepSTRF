@@ -53,9 +53,9 @@ Easiest path — auto-download from OSF (no account required) plus the
 pre-computed spectrogram from the DNet GitHub repo:
 
 ```python
-from deepSTRF.datasets.audio import NS1_Dataset
+from deepSTRF.datasets.audio import NS1Dataset
 
-ds = NS1_Dataset(download=True, dt_ms=5)
+ds = NS1Dataset(download=True, dt_ms=5)
 ```
 
 Default cache dir is `platformdirs.user_cache_dir('deepSTRF')/NS1`,
@@ -69,7 +69,7 @@ If you already have the data laid out manually:
    [Rahman et al. (2019)](https://doi.org/10.1371/journal.pcbi.1006618).
 3. Place `MetadataSHEnCneurons.mat`, the extracted `spikesandwav/`
    folder, and `test_data_5ms.mat` inside a `data/` folder.
-4. `ds = NS1_Dataset('/path/to/data', dt_ms=5)`.
+4. `ds = NS1Dataset('/path/to/data', dt_ms=5)`.
 
 ## Filtering
 

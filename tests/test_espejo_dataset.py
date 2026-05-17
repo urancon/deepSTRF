@@ -1,4 +1,4 @@
-"""Tests for ``deepSTRF.datasets.audio.Espejo_Dataset``.
+"""Tests for ``deepSTRF.datasets.audio.espejo``.
 
 The structural / data-paradigm checks need actual recording archives —
 they're skipped automatically when the local data dir is missing
@@ -29,7 +29,7 @@ HAS_NAT = os.path.isdir(os.path.join(ESPEJO_LOCAL, "A1_natural_sounds", "NAT"))
 # ============================================================
 
 def test_parse_nat_cell_id():
-    from deepSTRF.datasets.audio.Espejo_Dataset import _parse_espejo_cell_id
+    from deepSTRF.datasets.audio.espejo import _parse_espejo_cell_id
 
     out = _parse_espejo_cell_id("AMT003c-11-1")
     assert out == {
@@ -39,7 +39,7 @@ def test_parse_nat_cell_id():
 
 
 def test_parse_vmn_cell_id():
-    from deepSTRF.datasets.audio.Espejo_Dataset import _parse_espejo_cell_id
+    from deepSTRF.datasets.audio.espejo import _parse_espejo_cell_id
 
     # 2-segment id (VMN's <site>-<chan_letter><unit_num>); unit ends up None
     # because the parser only splits a trailing -<digits> unit.
@@ -51,7 +51,7 @@ def test_parse_vmn_cell_id():
 
 
 def test_parse_unparseable_cell_id_returns_nones():
-    from deepSTRF.datasets.audio.Espejo_Dataset import _parse_espejo_cell_id
+    from deepSTRF.datasets.audio.espejo import _parse_espejo_cell_id
 
     out = _parse_espejo_cell_id("totally-malformed-id-here")
     # site falls back to first dash-segment even when full parse fails
@@ -66,8 +66,8 @@ def test_parse_unparseable_cell_id_returns_nones():
 def vmn_dataset():
     if not HAS_VMN:
         pytest.skip("VMN data dir missing — skip integration test")
-    from deepSTRF.datasets.audio.Espejo_Dataset import Espejo_Dataset
-    return Espejo_Dataset(path=ESPEJO_LOCAL, stimuli="vmn")
+    from deepSTRF.datasets.audio.espejo import EspejoDataset
+    return EspejoDataset(path=ESPEJO_LOCAL, stimuli="vmn")
 
 
 def test_vmn_shape_invariants(vmn_dataset):
@@ -109,16 +109,16 @@ def test_vmn_split_meta_fields(vmn_dataset):
 def test_vmn_subset_filter():
     if not HAS_VMN:
         pytest.skip("VMN data dir missing")
-    from deepSTRF.datasets.audio.Espejo_Dataset import Espejo_Dataset
+    from deepSTRF.datasets.audio.espejo import EspejoDataset
 
-    ds_test = Espejo_Dataset(path=ESPEJO_LOCAL, stimuli="vmn", subset="test")
+    ds_test = EspejoDataset(path=ESPEJO_LOCAL, stimuli="vmn", subset="test")
     assert all(m["split"] == "test" for m in ds_test.stim_meta)
 
-    ds_est = Espejo_Dataset(path=ESPEJO_LOCAL, stimuli="vmn", subset="estimation")
+    ds_est = EspejoDataset(path=ESPEJO_LOCAL, stimuli="vmn", subset="estimation")
     assert all(m["split"] == "estimation" for m in ds_est.stim_meta)
 
     # subsets sum to the 'all' total (or the 'all' total is at least their sum)
-    ds_all = Espejo_Dataset(path=ESPEJO_LOCAL, stimuli="vmn", subset="all")
+    ds_all = EspejoDataset(path=ESPEJO_LOCAL, stimuli="vmn", subset="all")
     assert len(ds_test.stim_meta) + len(ds_est.stim_meta) == len(ds_all.stim_meta)
 
 
@@ -140,10 +140,10 @@ def test_vmn_nat_concat_rejected():
     """NAT (F=18) and VMN (F=2) cannot be concatenated."""
     if not (HAS_VMN and HAS_NAT):
         pytest.skip("Need both NAT and VMN data for this test")
-    from deepSTRF.datasets.audio.Espejo_Dataset import Espejo_Dataset
+    from deepSTRF.datasets.audio.espejo import EspejoDataset
 
-    vmn = Espejo_Dataset(path=ESPEJO_LOCAL, stimuli="vmn", subset="test")
-    nat = Espejo_Dataset(path=ESPEJO_LOCAL, stimuli="nat", subset="test")
+    vmn = EspejoDataset(path=ESPEJO_LOCAL, stimuli="vmn", subset="test")
+    nat = EspejoDataset(path=ESPEJO_LOCAL, stimuli="nat", subset="test")
     with pytest.raises(AssertionError, match="F mismatch"):
         _ = vmn + nat
 

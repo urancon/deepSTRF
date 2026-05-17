@@ -35,16 +35,16 @@ Both releases sample at **fs = 100 Hz** → `dt = 10 ms` native.
 Easiest path — auto-download from Zenodo into the platformdirs cache:
 
 ```python
-from deepSTRF.datasets.audio import Espejo_Dataset
+from deepSTRF.datasets.audio import EspejoDataset
 
-ds_nat = Espejo_Dataset(stimuli='nat', download=True)   # ~638 MB
-ds_vmn = Espejo_Dataset(stimuli='vmn', download=True)   #  ~25 MB
+ds_nat = EspejoDataset(stimuli='nat', download=True)   # ~638 MB
+ds_vmn = EspejoDataset(stimuli='vmn', download=True)   #  ~25 MB
 ```
 
 Default cache dir is `platformdirs.user_cache_dir('deepSTRF')/Espejo`, overridable via `$DEEPSTRF_DATA_DIR`. To use a custom path explicitly:
 
 ```python
-ds = Espejo_Dataset('/path/to/your/data/', stimuli='nat', download=True)
+ds = EspejoDataset('/path/to/your/data/', stimuli='nat', download=True)
 ```
 
 `download=True` is idempotent — skips both the .tgz download and the untar step if either is already in place.
@@ -59,7 +59,7 @@ If you have the data laid out manually:
 just pass the path:
 
 ```python
-ds = Espejo_Dataset('/path/to/your/data/', stimuli='nat')
+ds = EspejoDataset('/path/to/your/data/', stimuli='nat')
 ```
 
 The per-site `.tgz` archives are loaded lazily (untarred to a tempdir per site at construction time); loading VMN takes ~10 s, NAT takes ~2 min on a typical laptop.
@@ -81,11 +81,11 @@ Following the paper's `split_by_occurrence_counts` convention, each stim is clas
 Filter at load time or iteration time:
 
 ```python
-ds_test = Espejo_Dataset(stimuli='vmn', subset='test')          # 35 stims
-ds_est  = Espejo_Dataset(stimuli='vmn', subset='estimation')    # 40 stims
+ds_test = EspejoDataset(stimuli='vmn', subset='test')          # 35 stims
+ds_est  = EspejoDataset(stimuli='vmn', subset='estimation')    # 40 stims
 
 # or load everything and filter later
-ds = Espejo_Dataset(stimuli='vmn')                              # 75 stims
+ds = EspejoDataset(stimuli='vmn')                              # 75 stims
 ds.select_stims_by_attr('split', 'test')                        # 35
 ds.reset_stim_selection()
 ```
