@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
-from typing import List, Union, Sequence
+from typing import List, Optional, Union, Sequence
 
 from deepSTRF.datasets import NeuralDataset
 
@@ -166,7 +166,9 @@ def neural_collate(batch):
     return stims, responses, valid_mask, list(metas_list)
 
 
-def concat_neural_datasets(datasets: Sequence[NeuralDataset]) -> NeuralDataset:
+def concat_neural_datasets(datasets: Sequence[NeuralDataset],
+                           names: Optional[Sequence[str]] = None,
+                           ) -> NeuralDataset:
     """Concatenate neural datasets along BOTH the stim and neuron axes.
 
     Given ``k`` datasets with ``(S_i, N_i)`` stimuli and neurons each, returns
@@ -190,6 +192,21 @@ def concat_neural_datasets(datasets: Sequence[NeuralDataset]) -> NeuralDataset:
         class's ``_concat_check_compat`` hook; mismatches raise
         ``AssertionError``. Resampling to align ``dt`` or ``F`` is the
         caller's responsibility and must be done before concatenation.
+    names : sequence of str, optional
+        One label per input dataset, written into ``stim_meta["dataset"]``
+        and ``neuron_metadata["dataset"]`` on the output as a provenance
+        tag. Defaults to ``[type(d).__name__ for d in datasets]`` — i.e.
+        the class name (``"CRCNS_AA1_Dataset"`` etc.). Pass explicit names
+        to disambiguate two instances of the same class, or to use a
+        shorter human-readable label.
+
+        The tags enable post-hoc selection by source dataset via
+        :meth:`NeuralDataset.select_pop_by_nrn_attr` /
+        :meth:`select_stims_by_attr` (e.g.
+        ``c.select_pop_by_nrn_attr("dataset", "CRCNS_AA1_Dataset")``).
+        Existing ``"dataset"`` entries in the input metadata are
+        overwritten — nest-concat callers wanting to preserve inner
+        provenance should pass ``names=`` explicitly.
 
     Returns
     -------
@@ -208,10 +225,19 @@ def concat_neural_datasets(datasets: Sequence[NeuralDataset]) -> NeuralDataset:
     alternative exists but would complicate ``self.responses[s][n]``
     access for uncertain benefit at this scale.
 
+    Metadata dicts on the output are **shallow copies** of the inputs'
+    (the ``"dataset"`` tag is written into the copies, never into the
+    sources). Tensors and other shared values inside those dicts are not
+    deep-copied — mutate at your own risk.
+
     Neuron / stim UID uniqueness across inputs is *not* validated — deepSTRF
     trusts the caller to pass mutually exclusive sources, since that is
     the only semantically meaningful case (pooling a dataset's subset with
     its superset is degenerate — use constructor arguments instead).
+
+    The single-dataset case (``len(datasets) == 1``) returns the input
+    unchanged, with no ``"dataset"`` tagging applied — provenance only
+    becomes meaningful once there is more than one source.
     """
     assert len(datasets) >= 1, "concat_neural_datasets needs at least one dataset"
     if len(datasets) == 1:
@@ -222,6 +248,16 @@ def concat_neural_datasets(datasets: Sequence[NeuralDataset]) -> NeuralDataset:
         assert isinstance(other, NeuralDataset), \
             f"All entries must be NeuralDataset instances (got {type(other).__name__})"
         first._concat_check_compat(other)
+
+    # resolve provenance labels (one per source dataset).
+    if names is None:
+        names = [type(d).__name__ for d in datasets]
+    else:
+        names = list(names)
+        assert len(names) == len(datasets), (
+            f"names must have one entry per dataset "
+            f"(got {len(names)} for {len(datasets)} datasets)"
+        )
 
     # determine concrete output type: most-specific common ancestor.
     types = [type(d) for d in datasets]
@@ -249,10 +285,16 @@ def concat_neural_datasets(datasets: Sequence[NeuralDataset]) -> NeuralDataset:
     NeuralDataset.__init__(out, path="+".join(d.path for d in datasets), dt_ms=first.dt)
     out._concat_copy_attrs(first)
 
-    # merge the core list-of-X attributes.
+    # merge the core list-of-X attributes. stim_meta / neuron_metadata are
+    # shallow-copied per entry so the provenance tag goes onto the output
+    # only — input datasets keep their original metadata dicts untouched.
     out.stims = [s for d in datasets for s in d.stims]
-    out.stim_meta = [m for d in datasets for m in d.stim_meta]
-    out.neuron_metadata = [m for d in datasets for m in d.neuron_metadata]
+    out.stim_meta = [{**m, "dataset": name}
+                     for d, name in zip(datasets, names)
+                     for m in d.stim_meta]
+    out.neuron_metadata = [{**m, "dataset": name}
+                           for d, name in zip(datasets, names)
+                           for m in d.neuron_metadata]
     out.N_neurons = total_N
 
     # build block-diagonal response grid.

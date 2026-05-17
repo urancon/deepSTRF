@@ -179,6 +179,123 @@ def test_dataloader_over_concat_skips_cross_block_stims():
             "DataLoader yielded a batch item with no valid (s,n,r,t) data anywhere"
 
 
+def test_concat_tags_metadata_with_default_class_name():
+    """Default provenance: every output meta dict gets ``dataset = type(source).__name__``.
+
+    Tag is written into both ``stim_meta`` and ``neuron_metadata`` so
+    post-hoc filtering works on either axis.
+    """
+    from deepSTRF.utils.data import concat_neural_datasets
+    from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
+
+    # build two subclasses with distinct class names so the default tag distinguishes them
+    class _A(AudioNeuralDataset):
+        pass
+
+    class _B(AudioNeuralDataset):
+        pass
+
+    def make(cls, N, S, F=4, T=8, dt=1.0):
+        ds = cls(path="/tmp/nowhere", dt_ms=dt)
+        ds.F = F
+        ds.N_neurons = N
+        ds.stim_meta = [{"name": f"s{i}", "type": "synthetic"} for i in range(S)]
+        ds.stims = [torch.zeros(1, F, T) for _ in range(S)]
+        ds.responses = [[torch.ones(3, T) * (s + 1) for _ in range(N)] for s in range(S)]
+        ds.neuron_metadata = [{"uid": f"n{i}", "area": "X"} for i in range(N)]
+        ds.validate()
+        return ds
+
+    a = make(_A, N=2, S=3)
+    b = make(_B, N=3, S=2)
+    c = concat_neural_datasets([a, b])
+
+    # every output stim_meta tagged with its source class name
+    assert [m["dataset"] for m in c.stim_meta] == ["_A"] * 3 + ["_B"] * 2
+    # every output neuron_metadata tagged the same way
+    assert [m["dataset"] for m in c.neuron_metadata] == ["_A"] * 2 + ["_B"] * 3
+
+
+def test_concat_tags_metadata_with_explicit_names():
+    """Explicit names override the default class-name tag."""
+    from deepSTRF.utils.data import concat_neural_datasets
+
+    a = _fake_audio_dataset(N=2, S=3)
+    b = _fake_audio_dataset(N=3, S=2)
+    c = concat_neural_datasets([a, b], names=["src_a", "src_b"])
+
+    assert [m["dataset"] for m in c.stim_meta] == ["src_a"] * 3 + ["src_b"] * 2
+    assert [m["dataset"] for m in c.neuron_metadata] == ["src_a"] * 2 + ["src_b"] * 3
+
+
+def test_concat_does_not_mutate_input_metadata():
+    """Tagging the output must not write the ``dataset`` key into the source dicts."""
+    from deepSTRF.utils.data import concat_neural_datasets
+
+    a = _fake_audio_dataset(N=2, S=3)
+    b = _fake_audio_dataset(N=3, S=2)
+    # snapshot input dicts (by identity) before concat
+    a_stim_dicts = list(a.stim_meta)
+    a_nrn_dicts = list(a.neuron_metadata)
+    b_stim_dicts = list(b.stim_meta)
+    b_nrn_dicts = list(b.neuron_metadata)
+
+    _ = concat_neural_datasets([a, b], names=["A", "B"])
+
+    for m in a_stim_dicts + a_nrn_dicts + b_stim_dicts + b_nrn_dicts:
+        assert "dataset" not in m, \
+            f"concat mutated an input metadata dict in place: {m!r}"
+
+
+def test_concat_names_length_must_match():
+    """names= must have one entry per source dataset."""
+    from deepSTRF.utils.data import concat_neural_datasets
+
+    a = _fake_audio_dataset(N=2, S=3)
+    b = _fake_audio_dataset(N=3, S=2)
+    with pytest.raises(AssertionError, match="names must have one entry per dataset"):
+        concat_neural_datasets([a, b], names=["only_one"])
+
+
+def test_concat_dataset_tag_enables_source_filtering():
+    """The ``dataset`` tag must be selectable via the existing per-attr filters."""
+    from deepSTRF.utils.data import concat_neural_datasets
+
+    a = _fake_audio_dataset(N=2, S=3)
+    b = _fake_audio_dataset(N=3, S=2)
+    c = concat_neural_datasets([a, b], names=["src_a", "src_b"])
+
+    # neuron-axis: pick only src_b neurons
+    sel = c.select_pop_by_nrn_attr("dataset", "src_b")
+    assert sel == [2, 3, 4], f"expected b's neurons (indices 2..4), got {sel}"
+
+    # stim-axis: pick only src_a stims
+    c.reset_pop_selection()
+    s_sel = c.select_stims_by_attr("dataset", "src_a")
+    assert s_sel == [0, 1, 2], f"expected a's stims (indices 0..2), got {s_sel}"
+
+
+def test_concat_dataset_tag_overrides_existing_key():
+    """If a source already has a ``dataset`` key, concat overwrites it."""
+    from deepSTRF.utils.data import concat_neural_datasets
+
+    a = _fake_audio_dataset(N=2, S=2)
+    b = _fake_audio_dataset(N=2, S=2)
+    # pre-tag a's metadata as if it had been concat'd before
+    for m in a.stim_meta:
+        m["dataset"] = "inner_a"
+    for m in a.neuron_metadata:
+        m["dataset"] = "inner_a"
+
+    c = concat_neural_datasets([a, b], names=["outer_a", "outer_b"])
+    # outer tag wins on the output
+    assert [m["dataset"] for m in c.stim_meta] == ["outer_a"] * 2 + ["outer_b"] * 2
+    assert [m["dataset"] for m in c.neuron_metadata] == ["outer_a"] * 2 + ["outer_b"] * 2
+    # source dicts still carry the inner tag, untouched
+    assert all(m["dataset"] == "inner_a" for m in a.stim_meta)
+    assert all(m["dataset"] == "inner_a" for m in a.neuron_metadata)
+
+
 def test_select_pop_by_nrn_attr_tolerates_mixed_schemas():
     """Concatenating sources with different ``neuron_metadata`` keys must not break filtering.
 
