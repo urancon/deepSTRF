@@ -12,14 +12,6 @@ deepSTRF.models.video.video\_model module
    :show-inheritance:
    :undoc-members:
 
-deepSTRF.models.video.video\_zoo module
----------------------------------------
-
-.. automodule:: deepSTRF.models.video.video_zoo
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
 Module contents
 ---------------
 

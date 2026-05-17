@@ -28,16 +28,9 @@ templates_path = ['_templates']
 exclude_patterns = [
     '_build', 'Thumbs.db', '.DS_Store',
     '**/.ipynb_checkpoints',
-    # Legacy notebooks pending migration to ``examples/``. They use the
-    # pre-2026 prefiltering/dict API and don't run on the current codebase;
-    # leaving them here as build inputs would produce broken example pages.
-    '_source/ipynb/benchmark_model_throughput.ipynb',
+    # Legacy audio notebook pending migration to ``examples/`` — uses the
+    # pre-2026 prefiltering/dict API and won't run on the current codebase.
     '_source/ipynb/fit_audio_singleunit_aa1.ipynb',
-    '_source/ipynb/fit_PVC11.ipynb',
-    '_source/ipynb/test_MT2.ipynb',
-    '_source/ipynb/test_Ophys.ipynb',
-    '_source/ipynb/test_PVC1.ipynb',
-    '_source/ipynb/test_PVC11.ipynb',
 ]
 
 
