@@ -11,6 +11,11 @@
 /TODO.md
 .claude/
 
+# --- Local-only WIP / scratch (NEVER push) ---
+# Free-form parking lot for in-progress experiments, scratch scripts,
+# downloaded references, etc. Keeps the working tree from being noisy.
+/untracked/
+
 # --- Local notebook builders (one-off scripts that emit committed .ipynb) ---
 _build_*.py
 
