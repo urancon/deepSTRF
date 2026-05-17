@@ -46,13 +46,17 @@ Welcome to the official documentation of the deepSTRF repository !
    :maxdepth: 2
    :caption: Examples
 
-   _source/ipynb/fit_audio_singleunit_aa1.ipynb
-   _source/ipynb/fit_audio_population_ns1.ipynb
-   _source/ipynb/fit_PVC11.ipynb
-   _source/ipynb/test_MT2.ipynb
-   _source/ipynb/test_Ophys.ipynb
-   _source/ipynb/test_PVC1.ipynb
-   _source/ipynb/test_PVC11.ipynb
+   _source/ipynb/crcns_aa_tutorial.ipynb
+   _source/ipynb/explore_nat4.ipynb
+   _source/ipynb/dataset_concatenation.ipynb
+   _source/ipynb/fit_ns1_statenet.ipynb
+   _source/ipynb/load_pretrained_statenet_ns1.ipynb
+   _source/ipynb/alice_eeg_tutorial.ipynb
+   _source/ipynb/meliza_2025_baseline.ipynb
+   _source/ipynb/strf_parameterizations_ns1.ipynb
+   _source/ipynb/strf_gradmap_aa2.ipynb
+   _source/ipynb/adaptrans_transformer_aa1.ipynb
+   _source/ipynb/espejo_nat_nrf.ipynb
 
 .. toctree::
    :maxdepth: 3
