@@ -17,7 +17,7 @@ from deepSTRF.utils.data_download import (
 
 # CRCNS-AA2 ships as 3 tar.gz archives on the NERSC mirror, all wrapping
 # their content in ``crcns/aa2/`` (strip 2 components on extract). After
-# extraction the layout is the flat one CRCNS_AA2_Dataset expects:
+# extraction the layout is the flat one CRCNSAA2Dataset expects:
 #   <dest>/all_cells/<cell>/<stim_type>/{spike*, stim*}
 #   <dest>/all_stims/*.wav
 #   <dest>/{cell_regions.csv, cell_stim_classes.csv, stim_data.csv,
@@ -210,7 +210,7 @@ def get_stim_ids_from_folders(cells_path, verbose=False):
     return stim_dict
 
 
-class CRCNS_AA2_Dataset(AudioNeuralDataset):
+class CRCNSAA2Dataset(AudioNeuralDataset):
     """
     A PyTorch dataset for handling neural data from the CRCNS-AA2 dataset and its many recording sites (OV, Mld, Field L, CM)
 

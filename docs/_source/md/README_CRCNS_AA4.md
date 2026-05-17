@@ -91,9 +91,9 @@ TODO
 Easiest path — auto-download via the CRCNS NERSC mirror:
 
 ```python
-from deepSTRF.datasets.audio import CRCNS_AA4_Dataset, AA4_ANIMAL_IDS
+from deepSTRF.datasets.audio import CRCNSAA4Dataset, AA4_ANIMAL_IDS
 
-ds = CRCNS_AA4_Dataset(
+ds = CRCNSAA4Dataset(
     download=True, dt_ms=5,
     crcns_username="your_username",
     crcns_password="your_password",
@@ -118,7 +118,7 @@ data/
 ```
 
 ```python
-ds = CRCNS_AA4_Dataset('/path/to/data', stimuli=('song', 'call'),
+ds = CRCNSAA4Dataset('/path/to/data', stimuli=('song', 'call'),
                        animals=(AA4_ANIMAL_IDS[0],))
 ```
 

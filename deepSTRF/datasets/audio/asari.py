@@ -7,7 +7,7 @@ import torch
 from torch.utils.data.dataset import Dataset
 
 
-class Asari_Dataset(Dataset):
+class AsariDataset(Dataset):
     """
     Pytorch class to manipulate the subset of the CRCNS-ac1 dataset known as "Asari"
 

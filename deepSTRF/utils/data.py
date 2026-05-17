@@ -196,14 +196,14 @@ def concat_neural_datasets(datasets: Sequence[NeuralDataset],
         One label per input dataset, written into ``stim_meta["dataset"]``
         and ``neuron_metadata["dataset"]`` on the output as a provenance
         tag. Defaults to ``[type(d).__name__ for d in datasets]`` — i.e.
-        the class name (``"CRCNS_AA1_Dataset"`` etc.). Pass explicit names
+        the class name (``"CRCNSAA1Dataset"`` etc.). Pass explicit names
         to disambiguate two instances of the same class, or to use a
         shorter human-readable label.
 
         The tags enable post-hoc selection by source dataset via
         :meth:`NeuralDataset.select_pop_by_nrn_attr` /
         :meth:`select_stims_by_attr` (e.g.
-        ``c.select_pop_by_nrn_attr("dataset", "CRCNS_AA1_Dataset")``).
+        ``c.select_pop_by_nrn_attr("dataset", "CRCNSAA1Dataset")``).
         Existing ``"dataset"`` entries in the input metadata are
         overwritten — nest-concat callers wanting to preserve inner
         provenance should pass ``names=`` explicitly.
@@ -407,8 +407,8 @@ def fill_missing_data(stims: Sequence[torch.Tensor],
 
 
 if __name__ == "__main__":
-    from deepSTRF.datasets import CRCNS_AA1_Dataset
-    from deepSTRF.datasets import CRCNS_AA2_Dataset
-    aa1 = CRCNS_AA1_Dataset('../deepSTRF/datasets/audio/CRCNS_AA1/data/', areas=('MLd', 'Field_L'), stimuli=('conspecific, flatrip'))
-    aa2 = CRCNS_AA2_Dataset('../deepSTRF/datasets/audio/CRCNS_AA2/data/', areas=('MLd', 'OV', 'CM'), stimuli=('conspecific', 'songrip'))
+    from deepSTRF.datasets import CRCNSAA1Dataset
+    from deepSTRF.datasets import CRCNSAA2Dataset
+    aa1 = CRCNSAA1Dataset('../deepSTRF/datasets/audio/CRCNS_AA1/data/', areas=('MLd', 'Field_L'), stimuli=('conspecific, flatrip'))
+    aa2 = CRCNSAA2Dataset('../deepSTRF/datasets/audio/CRCNS_AA2/data/', areas=('MLd', 'OV', 'CM'), stimuli=('conspecific', 'songrip'))
     aa12 = concatenate_datasets(aa1, aa2)

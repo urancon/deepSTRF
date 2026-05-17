@@ -10,7 +10,7 @@ Our library provide preprocessed and ready to use electrophysiology datasets ! H
 
 ```python
 import deepSTRF
-from deepSTRF.datasets.Wehr_Dataset import WehrDataset, WEHR_NEURONS_SPLIT_NATURAL, WEHR_VALID_NEURONS
+from deepSTRF.datasets.wehr import WehrDataset, WEHR_NEURONS_SPLIT_NATURAL, WEHR_VALID_NEURONS
 
 # instanciate dataset with all neurons, or all valid ones...
 timestep = 5  # ms

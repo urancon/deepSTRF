@@ -162,7 +162,7 @@ def _gammatone_spectrogram(wav: torch.Tensor, sr: int,
 # -----------------------------------------------------------------------------
 
 
-class Alice_EEG_Dataset(AudioNeuralDataset):
+class AliceEEGDataset(AudioNeuralDataset):
     """
     A PyTorch dataset for handling EEG data from the Alice audiobook listening
     paradigm, adapted to the deepSTRF data paradigm.
@@ -284,7 +284,7 @@ class Alice_EEG_Dataset(AudioNeuralDataset):
             import mne  # noqa: F401
         except ImportError as exc:
             raise ImportError(
-                "Alice_EEG_Dataset requires the optional `mne` dependency. "
+                "AliceEEGDataset requires the optional `mne` dependency. "
                 "Install with `pip install mne` or `pip install deepSTRF[eeg]`."
             ) from exc
 
@@ -591,7 +591,7 @@ if __name__ == "__main__":
     )
     if not os.path.isdir(DATA):
         sys.exit(f"local data dir missing: {DATA}")
-    ds = Alice_EEG_Dataset(path=DATA, subjects=["S01"], dt_ms=10.0,
+    ds = AliceEEGDataset(path=DATA, subjects=["S01"], dt_ms=10.0,
                            n_frequency_bands=8, treat_subjects_as="neurons")
     print(f"N_neurons: {ds.N_neurons}")
     print(f"S: {len(ds.stims)}, F: {ds.F}, dt: {ds.dt} ms")

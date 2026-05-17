@@ -416,7 +416,7 @@ def coherence(
 
 
 # -----------------------------------------------------------------------------
-# Internal helpers (importable for callers like Wehr_Dataset)
+# Internal helpers (importable for callers like WehrDataset)
 # -----------------------------------------------------------------------------
 
 
@@ -427,7 +427,7 @@ def compute_CCmax(
 ) -> torch.Tensor:
     """CCmax (Hsu / Spearman-Brown) per ``(B,)`` cell.
 
-    Internal helper kept for backward compatibility with ``Wehr_Dataset``.
+    Internal helper kept for backward compatibility with ``WehrDataset``.
     Input ``(B, R, T)``; returns ``(B,)``. NaN-aware: drops invalid repeats
     and time bins per ``(b,)``. Returns 1.0 for cells with R = 1, NaN for
     cells with ``ρ_half ≤ 0``.
@@ -475,7 +475,7 @@ def compute_CCmax(
 def compute_TTRC(responses: torch.Tensor) -> torch.Tensor:
     """Trial-to-trial response correlation per ``(B,)`` cell.
 
-    Internal helper kept for backward compatibility with ``Wehr_Dataset``.
+    Internal helper kept for backward compatibility with ``WehrDataset``.
     Input ``(B, R, T)``; returns ``(B,)``. NaN-aware. Returns 1.0 for
     R = 1, NaN for cells with no valid trial pair.
     """

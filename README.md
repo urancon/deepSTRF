@@ -48,13 +48,13 @@ Load a published checkpoint, score it on the canonical NS1 ferret-A1 dataset:
 
 ```python
 from torch.utils.data import DataLoader
-from deepSTRF.datasets.audio.NS1_DRC_Dataset import NS1_Dataset
+from deepSTRF.datasets.audio.ns1_drc import NS1Dataset
 from deepSTRF.models.audio import StateNet
 from deepSTRF.metrics import corrcoef, normalized_corrcoef
 from deepSTRF.utils.data import neural_collate
 
 # 1) Load a dataset (auto-downloads to a local cache the first time).
-ds = NS1_Dataset(download=True, dt_ms=5)
+ds = NS1Dataset(download=True, dt_ms=5)
 loader = DataLoader(ds, batch_size=8, collate_fn=neural_collate)
 
 # 2) Load a pretrained model from the Hugging Face Hub.

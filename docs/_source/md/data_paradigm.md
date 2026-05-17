@@ -272,7 +272,7 @@ ds.select_pop_by_nrn_attr("area", "MLd")     # MLd neurons across A and B
 len(ds)                                      # however many stims any MLd neuron heard
 
 # stim filter + bidirectional rule
-nat4 = NAT4_Dataset(area="A1")               # 593 stims, 849 cells
+nat4 = NAT4Dataset(area="A1")               # 593 stims, 849 cells
 nat4.select_stims_by_attr("subset", "val")   # 18 val stims, 816 val-having cells
 len(nat4)                                    # 18; the 33 val-less cells are gone
 ```

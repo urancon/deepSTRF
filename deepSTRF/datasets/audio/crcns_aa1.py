@@ -100,7 +100,7 @@ def get_stim_ids(data_path):
     return stim_dict
 
 
-class CRCNS_AA1_Dataset(AudioNeuralDataset):
+class CRCNSAA1Dataset(AudioNeuralDataset):
     """
     A PyTorch dataset for handling neural data from the CRCNS-AA1 dataset.
 

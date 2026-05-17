@@ -223,7 +223,7 @@ class WehrDataset(AudioNeuralDataset):
         return self.N_neurons
 
 
-class WehrDataset_pop(AudioNeuralDataset):
+class WehrDatasetPop(AudioNeuralDataset):
     """
     Pytorch class to manipulate the subset of the CRCNS-ac1 dataset known as "Wehr"
 

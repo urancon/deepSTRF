@@ -55,7 +55,7 @@ import pandas as pd
 
 @dataclass
 class _Recording:
-    """Minimal subset of NEMS' Recording surface used by NAT4_Dataset."""
+    """Minimal subset of NEMS' Recording surface used by NAT4Dataset."""
     resp: np.ndarray            # (T_total, N) rasterized response (pop) or
                                 # (T_total, N) integer spike counts (per-site
                                 # rasterized from .h5)

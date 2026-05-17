@@ -1,4 +1,4 @@
-"""Tests for ``deepSTRF.datasets.audio.Alice_EEG_Dataset``.
+"""Tests for ``deepSTRF.datasets.audio.alice_eeg``.
 
 End-to-end tests depend on the Brodbeck 2023 restructure being unpacked
 under ``deepSTRF/datasets/audio/Alice_EEG/data/brodbeck_eelbrain_elife/``.
@@ -26,7 +26,7 @@ def _has_local_alice() -> bool:
     if not os.path.exists(os.path.join(ALICE_DATA, "stimuli", "1.wav")):
         return False
     try:
-        from deepSTRF.datasets.audio.Alice_EEG_Dataset import _discover_subjects
+        from deepSTRF.datasets.audio.alice_eeg import _discover_subjects
     except ImportError:
         return False
     return bool(_discover_subjects(ALICE_DATA))
@@ -45,7 +45,7 @@ mne = pytest.importorskip("mne")
 # ============================================================
 
 def test_erb_filterbank_shape_and_positive():
-    from deepSTRF.datasets.audio.Alice_EEG_Dataset import _erb_filterbank
+    from deepSTRF.datasets.audio.alice_eeg import _erb_filterbank
     fb = _erb_filterbank(n_bands=8, sr=44100, n_fft=1024)
     assert fb.shape == (8, 513)
     # Gaussians peak at their center freq; each band must have positive mass
@@ -55,7 +55,7 @@ def test_erb_filterbank_shape_and_positive():
 def test_erb_filterbank_monotone_centers():
     """Successive ERB bands have monotonically increasing center frequencies."""
     import torch
-    from deepSTRF.datasets.audio.Alice_EEG_Dataset import _erb_filterbank
+    from deepSTRF.datasets.audio.alice_eeg import _erb_filterbank
     fb = _erb_filterbank(n_bands=8, sr=44100, n_fft=1024)
     peaks = torch.argmax(fb, dim=-1)  # (n_bands,)
     assert (peaks[1:] >= peaks[:-1]).all().item()
@@ -69,8 +69,8 @@ def test_erb_filterbank_monotone_centers():
 def alice_s01():
     if not HAS_LOCAL:
         pytest.skip("Alice EEG local data missing — skip integration test")
-    from deepSTRF.datasets.audio.Alice_EEG_Dataset import Alice_EEG_Dataset
-    return Alice_EEG_Dataset(path=ALICE_DATA, subjects=["S01"])
+    from deepSTRF.datasets.audio.alice_eeg import AliceEEGDataset
+    return AliceEEGDataset(path=ALICE_DATA, subjects=["S01"])
 
 
 def test_alice_shape_invariants(alice_s01):
@@ -147,14 +147,14 @@ def test_alice_repeats_mode():
     """Multi-subject 'repeats' mode: N = montage channels, R = n_subjects."""
     if not HAS_LOCAL:
         pytest.skip("Alice EEG local data missing — skip integration test")
-    from deepSTRF.datasets.audio.Alice_EEG_Dataset import Alice_EEG_Dataset, _discover_subjects
+    from deepSTRF.datasets.audio.alice_eeg import AliceEEGDataset, _discover_subjects
 
     available = sorted(_discover_subjects(ALICE_DATA))
     if len(available) < 2:
         pytest.skip("Need ≥2 subjects unpacked for repeats-mode test")
     subjects = available[:2]
 
-    ds = Alice_EEG_Dataset(path=ALICE_DATA, subjects=subjects,
+    ds = AliceEEGDataset(path=ALICE_DATA, subjects=subjects,
                            treat_subjects_as="repeats")
     assert ds.N_neurons == 61
     # at least one channel should be valid for both subjects -> R=2 slab
@@ -169,15 +169,15 @@ def test_alice_subjects_filter_error():
     """Requesting a nonexistent subject raises FileNotFoundError."""
     if not HAS_LOCAL:
         pytest.skip("Alice EEG local data missing — skip integration test")
-    from deepSTRF.datasets.audio.Alice_EEG_Dataset import Alice_EEG_Dataset
+    from deepSTRF.datasets.audio.alice_eeg import AliceEEGDataset
     with pytest.raises(FileNotFoundError):
-        Alice_EEG_Dataset(path=ALICE_DATA, subjects=["S999"])
+        AliceEEGDataset(path=ALICE_DATA, subjects=["S999"])
 
 
 def test_alice_invalid_treat_mode():
     if not HAS_LOCAL:
         pytest.skip("Alice EEG local data missing — skip integration test")
-    from deepSTRF.datasets.audio.Alice_EEG_Dataset import Alice_EEG_Dataset
+    from deepSTRF.datasets.audio.alice_eeg import AliceEEGDataset
     with pytest.raises(ValueError):
-        Alice_EEG_Dataset(path=ALICE_DATA, subjects=["S01"],
+        AliceEEGDataset(path=ALICE_DATA, subjects=["S01"],
                           treat_subjects_as="bogus")

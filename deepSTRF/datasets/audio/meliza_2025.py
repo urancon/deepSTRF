@@ -1,6 +1,4 @@
 """
-deepSTRF/datasets/audio/Meliza_2025_Dataset.py
-
 Le, Bjoring & Meliza (2025) Nat Commun:
 "The zebra finch auditory cortex reconstructs occluded syllables in conspecific song"
 DOI: 10.1038/s41467-025-63182-y
@@ -52,7 +50,7 @@ from deepSTRF.utils.data_download import default_cache_dir, figshare_download, u
 
 # Soft dep — the `gammatone` PyPI package provides the same filter bank used
 # in Le, Bjoring & Meliza (2025) Methods p. 10. Imported lazily inside the
-# spectrogram method so `from deepSTRF.datasets.audio import Meliza2025_Dataset`
+# spectrogram method so `from deepSTRF.datasets.audio import Meliza2025Dataset`
 # still works in environments that don't have it.
 try:
     from gammatone.gtgram import gtgram as _gtgram
@@ -193,7 +191,7 @@ def _parse_age_to_days(age: str) -> Optional[int]:
 # ---------------------------------------------------------------------------
 
 
-class Meliza2025_Dataset(AudioNeuralDataset):
+class Meliza2025Dataset(AudioNeuralDataset):
     """deepSTRF wrapper for one sub-experiment of Le, Bjoring & Meliza (2025).
 
     Instantiate one per experiment (``"nat8a"`` | ``"nat8b"`` | ``"synth8b"``)
@@ -302,7 +300,7 @@ class Meliza2025_Dataset(AudioNeuralDataset):
             raise ValueError(f"experiment must be one of {EXPERIMENTS}, got {experiment!r}")
         if _gtgram is None:
             raise ImportError(
-                "Meliza2025_Dataset requires the `gammatone` package to compute "
+                "Meliza2025Dataset requires the `gammatone` package to compute "
                 "the paper's spectrogram representation. `pip install gammatone`."
             )
 

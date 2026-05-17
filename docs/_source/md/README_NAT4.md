@@ -48,17 +48,17 @@
 Easiest path — auto-download from Zenodo into the platformdirs cache:
 
 ```python
-from deepSTRF.datasets.audio import NAT4_Dataset
+from deepSTRF.datasets.audio import NAT4Dataset
 
-ds_a1  = NAT4_Dataset(area='A1',  download=True)   # ~108 MB
-ds_peg = NAT4_Dataset(area='PEG', download=True)   #  ~50 MB
+ds_a1  = NAT4Dataset(area='A1',  download=True)   # ~108 MB
+ds_peg = NAT4Dataset(area='PEG', download=True)   #  ~50 MB
 ```
 
 Default cache dir is `platformdirs.user_cache_dir('deepSTRF')/NAT4`,
 overridable via `$DEEPSTRF_DATA_DIR`. To use a custom path explicitly:
 
 ```python
-ds = NAT4_Dataset('/path/to/your/data/', area='A1', download=True)
+ds = NAT4Dataset('/path/to/your/data/', area='A1', download=True)
 ```
 
 `download=True` is idempotent — it skips files / dirs that already
@@ -67,7 +67,7 @@ exist, so re-instantiating the dataset is cheap.
 If you already have the data laid out manually, just pass the path:
 
 ```python
-ds = NAT4_Dataset('/path/to/your/data/', area='A1')
+ds = NAT4Dataset('/path/to/your/data/', area='A1')
 ```
 
 Expected files in the data dir:
@@ -85,11 +85,11 @@ R=20). Each `stim_meta` entry carries a `"subset"` field equal to
 
 ```python
 # load only one subset (skips the per-site spike-time pass under subset='est')
-ds_est = NAT4_Dataset(area='A1', subset='est')   # 575 stims
-ds_val = NAT4_Dataset(area='A1', subset='val')   # 18 stims
+ds_est = NAT4Dataset(area='A1', subset='est')   # 575 stims
+ds_val = NAT4Dataset(area='A1', subset='val')   # 18 stims
 
 # or load everything and filter later
-ds = NAT4_Dataset(area='A1')                     # 593 stims
+ds = NAT4Dataset(area='A1')                     # 593 stims
 ds.select_stims_by_attr('subset', 'val')         # __len__ -> 18
                                                  # 33 val-less A1 cells auto-hidden
                                                  # via the bidirectional rule

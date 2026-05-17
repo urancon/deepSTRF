@@ -98,7 +98,7 @@ the inputs:
 
 | Inputs                                       | Result type                  |
 |----------------------------------------------|------------------------------|
-| `aa1, aa1` (or two of any single subclass)   | `CRCNS_AA1_Dataset` (preserved) |
+| `aa1, aa1` (or two of any single subclass)   | `CRCNSAA1Dataset` (preserved) |
 | `aa1, aa2` (different audio subclasses)      | `AudioNeuralDataset`         |
 | `aa1, video_ds`                              | `NeuralDataset`              |
 

@@ -99,9 +99,9 @@ The figshare archive (zipped 105 MB; unpacks to ~720 MB) is auto-downloaded
 by the dataset class:
 
 ```python
-from deepSTRF.datasets.audio import Meliza2025_Dataset
+from deepSTRF.datasets.audio import Meliza2025Dataset
 
-ds = Meliza2025_Dataset(experiment='nat8b', download=True)
+ds = Meliza2025Dataset(experiment='nat8b', download=True)
 ```
 
 Default cache dir is
@@ -114,7 +114,7 @@ Manual install:
    [figshare 29203457](https://doi.org/10.6084/m9.figshare.29203457).
 2. Unzip — the archive expands to a `zebf-auditory-restoration-1/`
    directory containing `metadata/`, `*-responses/`, `*-stimuli/`.
-3. `ds = Meliza2025_Dataset(path='/path/to/zebf-auditory-restoration-1',
+3. `ds = Meliza2025Dataset(path='/path/to/zebf-auditory-restoration-1',
    experiment='nat8b')`.
 
 `gammatone>=1.0` is required for the paper-faithful spectrogram and is
@@ -185,7 +185,7 @@ Cross-experiment concatenation works via the standard
 [`concat_neural_datasets`](data_paradigm.md#concatenation):
 
 ```python
-nat = Meliza2025_Dataset('...', experiment='nat8a')
-syn = Meliza2025_Dataset('...', experiment='synth8b')
+nat = Meliza2025Dataset('...', experiment='nat8a')
+syn = Meliza2025Dataset('...', experiment='synth8b')
 both = nat + syn   # block-diagonal coverage matrix; bidirectional rule applies
 ```

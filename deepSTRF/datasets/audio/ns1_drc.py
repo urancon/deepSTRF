@@ -114,7 +114,7 @@ def download_ns1(dest: Optional[str] = None) -> str:
     return dest_path
 
 
-class NS1_Dataset(AudioNeuralDataset):
+class NS1Dataset(AudioNeuralDataset):
     """A PyTorch dataset for the NS1 (Harper et al. 2016, Rahman et al. 2020) data.
 
 
@@ -130,7 +130,7 @@ class NS1_Dataset(AudioNeuralDataset):
     Data freely available — no account required:
      - https://osf.io/ayw2p/                (metadata, raw spike + wav data)
      - https://github.com/monzilur/DNet     (precomputed 5 ms mel spectrogram)
-    Both are auto-fetched by ``NS1_Dataset(download=True)``.
+    Both are auto-fetched by ``NS1Dataset(download=True)``.
 
 
     =============== DETAILS ================

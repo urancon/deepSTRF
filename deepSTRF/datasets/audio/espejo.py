@@ -128,7 +128,7 @@ def _parse_espejo_cell_id(cell_id: str) -> dict:
     return out
 
 
-class Espejo_Dataset(AudioNeuralDataset):
+class EspejoDataset(AudioNeuralDataset):
     """A PyTorch dataset for Lopez-Espejo et al. (2019) ferret A1 recordings.
 
 
