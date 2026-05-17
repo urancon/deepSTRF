@@ -56,7 +56,7 @@ def test_neural_dataset_public_methods_exist():
         "select_pop_by_nrn_attr",
         "get_N",
         "get_S",
-        "get_neuron_metadata",
+        "get_nrn_meta",
         "nrn_masks",   # @property, reachable via hasattr
         "validate",
     ]:
@@ -73,7 +73,7 @@ def test_neural_dataset_base_attributes_after_init():
     assert ds.responses == []
     assert ds.stims == []
     assert ds.stim_meta == []
-    assert ds.neuron_metadata == []
+    assert ds.nrn_meta == []
     assert ds.N_neurons == 0
     assert ds.I == []
     # nrn_masks is a derived @property: empty-responses state yields a (0, 0) bool tensor
@@ -104,7 +104,7 @@ def test_neural_dataset_validate_succeeds_on_populated_fixture():
                 [torch.zeros(1, 10), torch.zeros(1, 10)],
                 [torch.zeros(1, 10), torch.zeros(1, 10)],
             ]
-            self.neuron_metadata = [{"uid": "n0"}, {"uid": "n1"}]
+            self.nrn_meta = [{"uid": "n0"}, {"uid": "n1"}]
             self.validate()
 
     fx = _Fixture()  # must not raise
@@ -213,7 +213,7 @@ def _stim_dataset_fixture():
                 torch.randn(1, 4, 10) * scales + offsets for _ in range(3)
             ]
             self.responses = [[torch.zeros(1, 10)] for _ in range(3)]
-            self.neuron_metadata = [{"uid": "n0"}]
+            self.nrn_meta = [{"uid": "n0"}]
             self.validate()
 
     return _Fixture()
@@ -292,7 +292,7 @@ def _response_dataset_fixture():
                 [(torch.rand(1, 10) * 5.0),
                  (torch.randn(1, 10) * 2.0)] for _ in range(3)
             ]
-            self.neuron_metadata = [{"uid": "n0"}, {"uid": "n1"}]
+            self.nrn_meta = [{"uid": "n0"}, {"uid": "n1"}]
             self.validate()
 
     return _Fixture()

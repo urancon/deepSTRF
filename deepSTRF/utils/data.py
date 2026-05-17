@@ -194,7 +194,7 @@ def concat_neural_datasets(datasets: Sequence[NeuralDataset],
         caller's responsibility and must be done before concatenation.
     names : sequence of str, optional
         One label per input dataset, written into ``stim_meta["dataset"]``
-        and ``neuron_metadata["dataset"]`` on the output as a provenance
+        and ``nrn_meta["dataset"]`` on the output as a provenance
         tag. Defaults to ``[type(d).__name__ for d in datasets]`` — i.e.
         the class name (``"CRCNSAA1Dataset"`` etc.). Pass explicit names
         to disambiguate two instances of the same class, or to use a
@@ -285,16 +285,16 @@ def concat_neural_datasets(datasets: Sequence[NeuralDataset],
     NeuralDataset.__init__(out, path="+".join(d.path for d in datasets), dt_ms=first.dt)
     out._concat_copy_attrs(first)
 
-    # merge the core list-of-X attributes. stim_meta / neuron_metadata are
+    # merge the core list-of-X attributes. stim_meta / nrn_meta are
     # shallow-copied per entry so the provenance tag goes onto the output
     # only — input datasets keep their original metadata dicts untouched.
     out.stims = [s for d in datasets for s in d.stims]
     out.stim_meta = [{**m, "dataset": name}
                      for d, name in zip(datasets, names)
                      for m in d.stim_meta]
-    out.neuron_metadata = [{**m, "dataset": name}
+    out.nrn_meta = [{**m, "dataset": name}
                            for d, name in zip(datasets, names)
-                           for m in d.neuron_metadata]
+                           for m in d.nrn_meta]
     out.N_neurons = total_N
 
     # build block-diagonal response grid.

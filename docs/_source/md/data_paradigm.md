@@ -31,8 +31,8 @@ A concrete `NeuralDataset` subclass populates six attributes:
 | `self.stims`          | `list` of length `S`               | Each element is a stimulus tensor of modality-specific shape. Audio: `(1, F, T_s)`. Video: `(1, H, W, T_s)`. `T_s` varies. |
 | `self.responses`      | `list[list]` of length `S × N`     | `responses[s][n]` is a float tensor of shape `(R_{s,n}, T_s)` (spike counts per repeat × time). |
 | `self.stim_meta`      | `list` of length `S`               | Per-stim metadata **dict**: e.g. `{"name": "...", "type": "...", ...}`. Fields vary per dataset.  |
-| `self.neuron_metadata`| `list` of length `N`               | Per-neuron metadata **dict**: e.g. `{"cell_id": "...", "animal_id": "...", "area": "..."}`.       |
-| `self.N_neurons`      | `int`                              | Total neurons; equals `len(self.neuron_metadata)`.                                                |
+| `self.nrn_meta`| `list` of length `N`               | Per-neuron metadata **dict**: e.g. `{"cell_id": "...", "animal_id": "...", "area": "..."}`.       |
+| `self.N_neurons`      | `int`                              | Total neurons; equals `len(self.nrn_meta)`.                                                |
 | `self.nrn_masks`      | `(S, N)` bool `torch.Tensor`       | **Derived `@property`.** Computed on the fly from the NaN sentinels in `self.responses` — single source of truth, cannot go out of sync. |
 
 `self.dt` (time-bin width in ms) and `self.path` (data location) are set by
@@ -292,7 +292,7 @@ The two are intentionally distinct:
 ### Raw access vs iteration
 
 The stored attributes (`self.stims`, `self.responses`, `self.stim_meta`,
-`self.neuron_metadata`, `self.nrn_masks`) are *not* filtered. They keep
+`self.nrn_meta`, `self.nrn_masks`) are *not* filtered. They keep
 the dataset's full structure regardless of `self.I` or `self.S_sel`. To
 address a raw stim by its absolute index, read those attributes directly:
 

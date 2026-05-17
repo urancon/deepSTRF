@@ -26,7 +26,7 @@ def _fake_audio_dataset(N: int, S: int, T: int = 8, F: int = 4):
     ds.stim_meta = [{"name": f"s{i}", "type": "synthetic"} for i in range(S)]
     ds.stims = [torch.zeros(1, F, T) for _ in range(S)]
     ds.responses = [[torch.ones(3, T) * (s + 1) for _ in range(N)] for s in range(S)]
-    ds.neuron_metadata = [{"uid": f"n{i}"} for i in range(N)]
+    ds.nrn_meta = [{"uid": f"n{i}"} for i in range(N)]
     ds.validate()
     return ds
 

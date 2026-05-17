@@ -67,7 +67,7 @@ def _audio_with_subset_meta(N: int, S_est: int, S_val: int, dt: float = 1.0,
         responses.append(row)
     ds.responses = responses
 
-    ds.neuron_metadata = [{"uid": f"n{i}"} for i in range(N)]
+    ds.nrn_meta = [{"uid": f"n{i}"} for i in range(N)]
     ds.validate()
     return ds
 

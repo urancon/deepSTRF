@@ -99,7 +99,7 @@ ds = CRCNSAA4Dataset('/path/to/data', stimuli=('song', 'call'),
 Each `stim_meta` dict carries `name` (the stimulus md5 — the canonical
 identifier; the wav filename is per-animal and not unique across the
 corpus), `type` (e.g. `"song"`, `"call"`), `class` (broader category), and
-`duration_s`. Each `neuron_metadata` dict carries `cell_id` (the basename
+`duration_s`. Each `nrn_meta` dict carries `cell_id` (the basename
 of the source h5 file), `animal_id` (one of `AA4_ANIMAL_IDS`), `sex`
 (`"M"` or `"F"` — last char of `animal_id`), `site` (recording site
 label, e.g. `"Site1"`), `electrode` (int 1-32 across both hemisphere

@@ -114,9 +114,9 @@ def test_alice_total_duration(alice_s01):
     assert 700.0 < total_s < 800.0
 
 
-def test_alice_neuron_metadata(alice_s01):
+def test_alice_nrn_meta(alice_s01):
     """Per-(subject, channel) entries with xyz from the standard montage."""
-    md = alice_s01.neuron_metadata
+    md = alice_s01.nrn_meta
     assert len(md) == 61
     sample = md[0]
     assert sample["subject"] == "S01"

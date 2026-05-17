@@ -193,7 +193,7 @@ class EspejoDataset(AudioNeuralDataset):
     - ``self.stim_meta``       list of S dicts ``{"name", "type"='nat'|'vmn',
                                "n_repeats", "split"='test'|'estimation',
                                "duration_s", "n_samples"}``.
-    - ``self.neuron_metadata`` list of N dicts ``{"cell_id", "site",
+    - ``self.nrn_meta`` list of N dicts ``{"cell_id", "site",
                                "animal_id", "channel", "unit",
                                "experiment_set"='nat'|'vmn'}``. ``unit``
                                can be ``None`` for VMN cells (2-segment
@@ -334,7 +334,7 @@ class EspejoDataset(AudioNeuralDataset):
                 f"No cells matched the whitelist (cells={cells!r})."
             )
 
-        self.neuron_metadata = [
+        self.nrn_meta = [
             {
                 "cell_id": c,
                 "experiment_set": stimuli,
@@ -342,7 +342,7 @@ class EspejoDataset(AudioNeuralDataset):
             }
             for c in cells_ordered
         ]
-        self.N_neurons = len(self.neuron_metadata)
+        self.N_neurons = len(self.nrn_meta)
 
         ##############################
         # 3. global stim list — first-seen wins for the spectrogram, occurrence

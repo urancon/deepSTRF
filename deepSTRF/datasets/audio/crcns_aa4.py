@@ -136,7 +136,7 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
                                         is per-animal and not unique across the
                                         corpus); "duration_s" is the stim_duration
                                         attr from the h5 (seconds)
-     - self.neuron_metadata             list of N dicts with the following keys:
+     - self.nrn_meta             list of N dicts with the following keys:
                                           - "cell_id"      basename of the h5 file (no extension)
                                           - "animal_id"    one of AA4_ANIMAL_IDS
                                           - "sex"          'M' or 'F' (last char of animal_id)
@@ -367,7 +367,7 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
         self.N_neurons = len(units_data)
         self.stims = [stim_spec_map[uid] for uid in stim_uids]
         self.stim_meta = [stim_meta_map[uid] for uid in stim_uids]
-        self.neuron_metadata = [u['meta'] for u in units_data]
+        self.nrn_meta = [u['meta'] for u in units_data]
 
         # responses[s][n] = (R, T) tensor or (1, 1) NaN sentinel
         self.responses = []

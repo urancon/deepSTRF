@@ -104,7 +104,7 @@ the inputs:
 
 Subclass-specific methods that don't make sense on the merged object
 (e.g. `aa1.areas`) are simply not present on the result. The core API —
-`stims`, `responses`, `stim_meta`, `neuron_metadata`, `nrn_masks`,
+`stims`, `responses`, `stim_meta`, `nrn_meta`, `nrn_masks`,
 `select_*`, `__len__`, `__getitem__` — works identically.
 
 ## Iterating only one source's data
@@ -127,7 +127,7 @@ combined[0]              # an AA1 stim, with valid responses for the selection
 combined[30]             # IndexError, not a fully-NaN AA2 stim
 
 # select MLd neurons across both sources (AA1 has 'MLd', AA2 has 'mld')
-mld = [n for n, m in enumerate(combined.neuron_metadata)
+mld = [n for n, m in enumerate(combined.nrn_meta)
        if m["area"].lower() == "mld"]
 combined.select_population(mld)
 len(combined)            # all stims that any MLd neuron heard, in either source

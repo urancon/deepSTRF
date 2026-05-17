@@ -87,7 +87,7 @@ If you already have the data laid out manually:
 
 Each `stim_meta` dict carries `name`, `type` (`"conspecific"` or
 `"flatrip"`), `sample_rate`, `n_samples`, `duration_s`. Each
-`neuron_metadata` dict carries `cell_id`, `area` (`"Field_L"` or
+`nrn_meta` dict carries `cell_id`, `area` (`"Field_L"` or
 `"MLd"`), `animal_id`, `cell_seq`, `rig`. Combined with the
 [base-class selection API](data_paradigm.md#8-iteration-honours-the-current-selection-bidirectional):
 

@@ -75,7 +75,7 @@ If you already have the data laid out manually:
 
 `stim_meta` carries a `"type"` field with values
 `{"water_sounds", "ferret_vocalization", "insects_buzzing", "human_speech", "unknown"}`.
-`neuron_metadata` carries `cell_id`, `area` (`"A1"`), `depth_um`,
+`nrn_meta` carries `cell_id`, `area` (`"A1"`), `depth_um`,
 `noise_ratio`, `single_n` / `single_t` (single-unit flags), `n_electrodes`
 (total electrodes on the rig at recording time), and `electrode_number`
 (1-indexed electrode this cell was recorded on). Combined with the

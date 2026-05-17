@@ -157,7 +157,7 @@ class NS1Dataset(AudioNeuralDataset):
      - self.stims                       list of S=20 tensors (1, F=34, T=999)
      - self.responses                   list of S lists of N tensors (R=20, T=999)
      - self.stim_meta                   list of S dicts {"name", "type"}
-     - self.neuron_metadata             list of N dicts {"cell_id", "area",
+     - self.nrn_meta             list of N dicts {"cell_id", "area",
                                         "depth_um", "noise_ratio", "single_n",
                                         "single_t", "n_electrodes",
                                         "electrode_number"}
@@ -240,7 +240,7 @@ class NS1Dataset(AudioNeuralDataset):
         neurons = meta["neuron"][0]
 
         self.responses = [[] for _ in range(S)]
-        self.neuron_metadata = []
+        self.nrn_meta = []
         spikes_root = os.path.join(path, "spikesandwav")
 
         for neuron in neurons:
@@ -259,7 +259,7 @@ class NS1Dataset(AudioNeuralDataset):
                     print(f"NS1: skipping neuron {uid!r} (spike file not found at {spike_path} or {fallback})")
                     continue
 
-            self.neuron_metadata.append({
+            self.nrn_meta.append({
                 "cell_id": uid,
                 "area": "A1",
                 "depth_um": int(neuron["depth"].item()),
@@ -285,7 +285,7 @@ class NS1Dataset(AudioNeuralDataset):
                     spike_matrix[r] = one_hot.reshape(-1, bin_size).sum(axis=1)
                 self.responses[s].append(torch.from_numpy(spike_matrix))
 
-        self.N_neurons = len(self.neuron_metadata)
+        self.N_neurons = len(self.nrn_meta)
 
         # smooth PSTHs with a 21 ms Hanning window (Hsu / Borst / Theunissen 2004)
         if smooth:
