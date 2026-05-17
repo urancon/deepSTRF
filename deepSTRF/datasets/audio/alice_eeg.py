@@ -209,7 +209,7 @@ class AliceEEGDataset(AudioNeuralDataset):
      - self.stim_meta                   list of S dicts ``{"name", "type",
                                         "sample_rate", "n_samples",
                                         "duration_s"}``.
-     - self.neuron_metadata             list of N dicts. In ``"neurons"``
+     - self.nrn_meta             list of N dicts. In ``"neurons"``
                                         mode each entry is a
                                         ``(subject, channel)`` pair with
                                         ``{"channel_id", "subject", "area",
@@ -337,15 +337,15 @@ class AliceEEGDataset(AudioNeuralDataset):
             available, wav_durations_s, T_per_stim
         )
 
-        # 4. assemble responses + neuron_metadata in the chosen mode ----------
+        # 4. assemble responses + nrn_meta in the chosen mode ----------
         if treat_subjects_as == "neurons":
-            self.neuron_metadata, self.responses = \
+            self.nrn_meta, self.responses = \
                 self._assemble_neurons_mode(per_subject, S, T_per_stim)
         else:
-            self.neuron_metadata, self.responses = \
+            self.nrn_meta, self.responses = \
                 self._assemble_repeats_mode(per_subject, S, T_per_stim)
 
-        self.N_neurons = len(self.neuron_metadata)
+        self.N_neurons = len(self.nrn_meta)
 
         self.validate()
 
@@ -494,12 +494,12 @@ class AliceEEGDataset(AudioNeuralDataset):
 
     def _assemble_neurons_mode(self, per_subject, S, T_per_stim):
         """Each (subject, channel) pair is one 'neuron'. R = 1 everywhere."""
-        neuron_metadata = []
+        nrn_meta = []
         for sub in self.subjects:
             ch_names = per_subject[sub]["ch_names"]
             xyz_map = per_subject[sub]["xyz"]
             for ch in ch_names:
-                neuron_metadata.append({
+                nrn_meta.append({
                     "channel_id": ch,
                     "subject": sub,
                     "area": "EEG",
@@ -528,7 +528,7 @@ class AliceEEGDataset(AudioNeuralDataset):
                     else:
                         pop_resps[start + ch_local] = trace_t
             responses.append(pop_resps)
-        return neuron_metadata, responses
+        return nrn_meta, responses
 
     def _assemble_repeats_mode(self, per_subject, S, T_per_stim):
         """Channels-as-neurons; subjects-as-repeats. N = montage channels,
@@ -549,14 +549,14 @@ class AliceEEGDataset(AudioNeuralDataset):
         N = len(canonical)
         R = len(self.subjects)
 
-        # neuron_metadata: one entry per canonical channel. xyz from the
+        # nrn_meta: one entry per canonical channel. xyz from the
         # first subject who has it (montages are subject-aligned in Brodbeck's
         # restructure, so this is well-defined).
         xyz_first = {}
         for sub in self.subjects:
             for ch, pos in per_subject[sub]["xyz"].items():
                 xyz_first.setdefault(ch, pos)
-        neuron_metadata = [{
+        nrn_meta = [{
             "channel_id": ch,
             "subject": None,             # repeats mode: not per-neuron
             "area": "EEG",
@@ -580,7 +580,7 @@ class AliceEEGDataset(AudioNeuralDataset):
                 else:
                     pop_resps.append(torch.from_numpy(slab))
             responses.append(pop_resps)
-        return neuron_metadata, responses
+        return nrn_meta, responses
 
 
 if __name__ == "__main__":
@@ -597,5 +597,5 @@ if __name__ == "__main__":
     print(f"S: {len(ds.stims)}, F: {ds.F}, dt: {ds.dt} ms")
     print(f"stim 0 shape: {ds.stims[0].shape}")
     print(f"response[0][0] shape: {ds.responses[0][0].shape}")
-    print(f"sample neuron_metadata[0]: {ds.neuron_metadata[0]}")
+    print(f"sample nrn_meta[0]: {ds.nrn_meta[0]}")
     print(f"sample stim_meta[0]: {ds.stim_meta[0]}")

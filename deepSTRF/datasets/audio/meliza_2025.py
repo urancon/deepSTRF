@@ -250,7 +250,7 @@ class Meliza2025Dataset(AudioNeuralDataset):
     compute_reliability
         If True (default), pre-compute per-neuron Sahani–Linden signal
         power, noise power, and SNR (length-weighted across stims) and
-        attach them to ``neuron_metadata``. Set to ``False`` for fast
+        attach them to ``nrn_meta``. Set to ``False`` for fast
         iteration when reliability filtering is not needed.
     download
         If ``True`` and ``path=None``, fetches the ~105 MB figshare archive
@@ -386,7 +386,7 @@ class Meliza2025Dataset(AudioNeuralDataset):
 
         # --- 3. Units: walk every pprox file across the response dirs -------
         per_unit_rows: List[List[torch.Tensor]] = []
-        neuron_metadata: List[Dict[str, Any]] = []
+        nrn_meta: List[Dict[str, Any]] = []
         for resp_dir_name in _EXP_RESPONSE_DIRS[experiment]:
             resp_dir = root / resp_dir_name
             if not resp_dir.is_dir():
@@ -406,14 +406,14 @@ class Meliza2025Dataset(AudioNeuralDataset):
                 if keep_areas is not None and nrn["area"] not in keep_areas:
                     continue
                 per_unit_rows.append(row)
-                neuron_metadata.append(nrn)
+                nrn_meta.append(nrn)
 
-        N = len(neuron_metadata)
+        N = len(nrn_meta)
         if N == 0:
             raise RuntimeError(
                 f"no usable units found for experiment={experiment!r} under {root}"
             )
-        self.neuron_metadata = neuron_metadata
+        self.nrn_meta = nrn_meta
         self.N_neurons = N
 
         # Transpose to (S, N) storage layout.
@@ -465,7 +465,7 @@ class Meliza2025Dataset(AudioNeuralDataset):
 
     def _attach_reliability_metrics(self) -> None:
         """Compute per-neuron Sahani-Linden signal_power / noise_power / snr
-        and attach them to ``self.neuron_metadata``.
+        and attach them to ``self.nrn_meta``.
 
         For each neuron, gather its ``(R_s, T_s)`` responses across stims,
         pad into a ``(S_eff, 1, R_max, T_max)`` NaN tensor, and call the
@@ -495,7 +495,7 @@ class Meliza2025Dataset(AudioNeuralDataset):
                     continue
                 per_stim.append(r)
             if not per_stim:
-                self.neuron_metadata[n].update(
+                self.nrn_meta[n].update(
                     signal_power=float("nan"),
                     noise_power=float("nan"),
                     snr=float("nan"),
@@ -510,7 +510,7 @@ class Meliza2025Dataset(AudioNeuralDataset):
             sp_n = signal_power(big, reduction="none").squeeze().item()
             np_n = noise_power(big, reduction="none").squeeze().item()
             snr_n = snr(big, reduction="none").squeeze().item()
-            self.neuron_metadata[n].update(
+            self.nrn_meta[n].update(
                 signal_power=sp_n,
                 noise_power=np_n,
                 snr=snr_n,

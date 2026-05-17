@@ -131,7 +131,7 @@ Each `stim_meta` dict carries `name`, `motif`, `critical_interval`,
 `variant`, `syntax` (`"natural"` / `"scrambled"`), `experiment`,
 `sample_rate_hz`, `duration_s`, `ci_onset_s`, `ci_offset_s`.
 
-Each `neuron_metadata` dict carries `cell_id`, `animal_id`, `animal_uuid`,
+Each `nrn_meta` dict carries `cell_id`, `animal_id`, `animal_uuid`,
 `cohort`, `experiment`, `area`, `hemisphere`, `familiar_motifs`, `sex`,
 `age_days`, `pprox_file`, plus `signal_power` / `noise_power` / `snr` when
 `compute_reliability=True` (default).
@@ -154,7 +154,7 @@ ds.select_restoration_quartet('nat8mk0', 1)
 Filter on the precomputed reliability stats to drop weakly responsive cells:
 
 ```python
-good = [n for n, meta in enumerate(ds.neuron_metadata)
+good = [n for n, meta in enumerate(ds.nrn_meta)
         if meta.get('snr', 0) > 0.1]
 ds.select_population(good)
 ```

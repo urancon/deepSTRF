@@ -95,7 +95,7 @@ Because different sites present different stim subsets, the per-stim coverage (t
 
 ## Per-cell metadata
 
-`neuron_metadata[n]` carries the raw NEMS `cell_id` plus parsed components:
+`nrn_meta[n]` carries the raw NEMS `cell_id` plus parsed components:
 
 | Field            | Example          | Notes                                                          |
 |------------------|------------------|----------------------------------------------------------------|

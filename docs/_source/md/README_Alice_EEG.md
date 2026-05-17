@@ -150,7 +150,7 @@ brodbeck_eelbrain_elife/
 ## Filtering
 
 Each `stim_meta` dict carries `name`, `type` (`"alice_chapter1"`),
-`sample_rate`, `n_samples`, `duration_s`. Each `neuron_metadata` dict
+`sample_rate`, `n_samples`, `duration_s`. Each `nrn_meta` dict
 carries `channel_id`, `subject` (or `None` in repeats mode), `area`
 (`"EEG"`), and `xyz` (channel position from the standard 10–20 montage,
 or `None` if not in the montage). Combined with the
@@ -211,7 +211,7 @@ standalone follow-up branch from this one.
    `stimuli/AliceChapterOne-EEG.csv`. Reproduces Brodbeck Fig 5+
    (TRF-of-discrete-events comparisons).
 5. **Topomap helper** using `mne.viz.plot_topomap` from
-   `neuron_metadata['xyz']` — for the eLife figure.
+   `nrn_meta['xyz']` — for the eLife figure.
 6. **Per-subject `download=True`** instead of all 2.5 GiB at once.
 
 The accompanying [tutorial notebook](../../examples/alice_eeg_tutorial.ipynb)

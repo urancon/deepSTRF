@@ -22,7 +22,7 @@ def _fake_audio_dataset(N: int, S: int, dt: float = 1.0, F: int = 4, T: int = 8)
     ds.stim_meta = [{"name": f"s{i}", "type": "synthetic"} for i in range(S)]
     ds.stims = [torch.zeros(1, F, T) for _ in range(S)]
     ds.responses = [[torch.ones(3, T) * (s + 1) for _ in range(N)] for s in range(S)]
-    ds.neuron_metadata = [{"uid": f"n{i}", "area": "X"} for i in range(N)]
+    ds.nrn_meta = [{"uid": f"n{i}", "area": "X"} for i in range(N)]
     ds.validate()
     return ds
 
@@ -39,7 +39,7 @@ def test_concat_two_audio_datasets():
     assert c.get_S() == 5
     assert len(c.stims) == 5
     assert len(c.stim_meta) == 5
-    assert len(c.neuron_metadata) == 5
+    assert len(c.nrn_meta) == 5
 
     # block-diagonal: first 3 stims x first 2 neurons = real; rest NaN
     for s in range(3):
@@ -182,7 +182,7 @@ def test_dataloader_over_concat_skips_cross_block_stims():
 def test_concat_tags_metadata_with_default_class_name():
     """Default provenance: every output meta dict gets ``dataset = type(source).__name__``.
 
-    Tag is written into both ``stim_meta`` and ``neuron_metadata`` so
+    Tag is written into both ``stim_meta`` and ``nrn_meta`` so
     post-hoc filtering works on either axis.
     """
     from deepSTRF.utils.data import concat_neural_datasets
@@ -202,7 +202,7 @@ def test_concat_tags_metadata_with_default_class_name():
         ds.stim_meta = [{"name": f"s{i}", "type": "synthetic"} for i in range(S)]
         ds.stims = [torch.zeros(1, F, T) for _ in range(S)]
         ds.responses = [[torch.ones(3, T) * (s + 1) for _ in range(N)] for s in range(S)]
-        ds.neuron_metadata = [{"uid": f"n{i}", "area": "X"} for i in range(N)]
+        ds.nrn_meta = [{"uid": f"n{i}", "area": "X"} for i in range(N)]
         ds.validate()
         return ds
 
@@ -212,8 +212,8 @@ def test_concat_tags_metadata_with_default_class_name():
 
     # every output stim_meta tagged with its source class name
     assert [m["dataset"] for m in c.stim_meta] == ["_A"] * 3 + ["_B"] * 2
-    # every output neuron_metadata tagged the same way
-    assert [m["dataset"] for m in c.neuron_metadata] == ["_A"] * 2 + ["_B"] * 3
+    # every output nrn_meta tagged the same way
+    assert [m["dataset"] for m in c.nrn_meta] == ["_A"] * 2 + ["_B"] * 3
 
 
 def test_concat_tags_metadata_with_explicit_names():
@@ -225,7 +225,7 @@ def test_concat_tags_metadata_with_explicit_names():
     c = concat_neural_datasets([a, b], names=["src_a", "src_b"])
 
     assert [m["dataset"] for m in c.stim_meta] == ["src_a"] * 3 + ["src_b"] * 2
-    assert [m["dataset"] for m in c.neuron_metadata] == ["src_a"] * 2 + ["src_b"] * 3
+    assert [m["dataset"] for m in c.nrn_meta] == ["src_a"] * 2 + ["src_b"] * 3
 
 
 def test_concat_does_not_mutate_input_metadata():
@@ -236,9 +236,9 @@ def test_concat_does_not_mutate_input_metadata():
     b = _fake_audio_dataset(N=3, S=2)
     # snapshot input dicts (by identity) before concat
     a_stim_dicts = list(a.stim_meta)
-    a_nrn_dicts = list(a.neuron_metadata)
+    a_nrn_dicts = list(a.nrn_meta)
     b_stim_dicts = list(b.stim_meta)
-    b_nrn_dicts = list(b.neuron_metadata)
+    b_nrn_dicts = list(b.nrn_meta)
 
     _ = concat_neural_datasets([a, b], names=["A", "B"])
 
@@ -284,20 +284,20 @@ def test_concat_dataset_tag_overrides_existing_key():
     # pre-tag a's metadata as if it had been concat'd before
     for m in a.stim_meta:
         m["dataset"] = "inner_a"
-    for m in a.neuron_metadata:
+    for m in a.nrn_meta:
         m["dataset"] = "inner_a"
 
     c = concat_neural_datasets([a, b], names=["outer_a", "outer_b"])
     # outer tag wins on the output
     assert [m["dataset"] for m in c.stim_meta] == ["outer_a"] * 2 + ["outer_b"] * 2
-    assert [m["dataset"] for m in c.neuron_metadata] == ["outer_a"] * 2 + ["outer_b"] * 2
+    assert [m["dataset"] for m in c.nrn_meta] == ["outer_a"] * 2 + ["outer_b"] * 2
     # source dicts still carry the inner tag, untouched
     assert all(m["dataset"] == "inner_a" for m in a.stim_meta)
-    assert all(m["dataset"] == "inner_a" for m in a.neuron_metadata)
+    assert all(m["dataset"] == "inner_a" for m in a.nrn_meta)
 
 
 def test_select_pop_by_nrn_attr_tolerates_mixed_schemas():
-    """Concatenating sources with different ``neuron_metadata`` keys must not break filtering.
+    """Concatenating sources with different ``nrn_meta`` keys must not break filtering.
 
     Real-world case: AA1 has ``area`` but AA4 doesn't. ``select_pop_by_nrn_attr("area",
     "Field_L")`` on the concatenation should pick only AA1's matching neurons and
@@ -308,7 +308,7 @@ def test_select_pop_by_nrn_attr_tolerates_mixed_schemas():
     a = _fake_audio_dataset(N=4, S=2)
     b = _fake_audio_dataset(N=3, S=2)
     # tag a's neurons with an extra attribute that b doesn't have
-    for n, md in enumerate(a.neuron_metadata):
+    for n, md in enumerate(a.nrn_meta):
         md["region"] = "Field_L" if n < 2 else "MLd"
     # b has no 'region' key
 

@@ -149,7 +149,7 @@ class NAT4Dataset(AudioNeuralDataset):
                                         where subset is 'est' or 'val'. The
                                         ``subset='all'|'est'|'val'`` constructor
                                         arg filters this list at load time.
-     - self.neuron_metadata             list of N dicts with the per-cell info
+     - self.nrn_meta             list of N dicts with the per-cell info
                                         deepSTRF can recover from the archive:
                                         ``cell_id`` (raw NEMS id, e.g.
                                         ``'ARM029a-01-1'``), ``area``,
@@ -273,17 +273,17 @@ class NAT4Dataset(AudioNeuralDataset):
 
         # =========  NEURON METADATA (auditory flag + parsed cell_id)  ===========
 
-        self.neuron_metadata = []
+        self.nrn_meta = []
         list_neurons = pd.read_csv(os.path.join(path, f'{area}_pred_correlation.csv'))
         cell_to_aud = dict(zip(list_neurons['cellid'], list_neurons['sig_auditory']))
         for cell in cells:
-            self.neuron_metadata.append({
+            self.nrn_meta.append({
                 'cell_id': cell,
                 'area': area,
                 'auditory': bool(cell_to_aud.get(cell, False)),
                 **_parse_nat4_cell_id(cell),
             })
-        self.N_neurons = len(self.neuron_metadata)
+        self.N_neurons = len(self.nrn_meta)
 
         # =========  EST RESPONSES (1 trial per stim, full population)  ===========
         # Cells that didn't see a given est stim get a (1, 1) NaN sentinel

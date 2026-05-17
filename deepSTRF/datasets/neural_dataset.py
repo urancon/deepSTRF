@@ -35,8 +35,8 @@ class NeuralDataset(Dataset, ABC):
                                   ``(1, 1)`` NaN tensor if neuron ``n`` did
                                   not hear stim ``s``.
     - ``self.stim_meta``       — list of length ``S``, per-stim metadata dicts.
-    - ``self.neuron_metadata`` — list of length ``N``, per-neuron metadata dicts.
-    - ``self.N_neurons``       — int, must equal ``len(self.neuron_metadata)``.
+    - ``self.nrn_meta`` — list of length ``N``, per-neuron metadata dicts.
+    - ``self.N_neurons``       — int, must equal ``len(self.nrn_meta)``.
 
     Derived attributes (no explicit population needed):
 
@@ -66,7 +66,7 @@ class NeuralDataset(Dataset, ABC):
         self.responses = []
         self.stims = []
         self.stim_meta = []
-        self.neuron_metadata = []
+        self.nrn_meta = []
         self.N_neurons = 0
 
         # Lazy cache for ``nrn_masks`` — see the @property. Computed on
@@ -91,9 +91,9 @@ class NeuralDataset(Dataset, ABC):
         """Return the total number of stimuli presented to the whole neural population."""
         return len(self.stim_meta)
 
-    def get_neuron_metadata(self):
+    def get_nrn_meta(self):
         """Retrieve metadata for each currently selected neuron."""
-        return [self.neuron_metadata[i] for i in self.I]
+        return [self.nrn_meta[i] for i in self.I]
 
     @property
     def nrn_masks(self) -> torch.Tensor:
@@ -278,7 +278,7 @@ class NeuralDataset(Dataset, ABC):
 
     # neural population selection API (advanced)
     def select_pop_by_nrn_attr(self, attribute_name: str, value):
-        """Select neurons whose ``neuron_metadata[attribute_name] == value``.
+        """Select neurons whose ``nrn_meta[attribute_name] == value``.
 
         Neurons whose metadata dict does not contain ``attribute_name`` are
         silently skipped — this lets a single filter call work against a
@@ -293,7 +293,7 @@ class NeuralDataset(Dataset, ABC):
         """
         _MISSING = object()
         selected_nrn_indices = []
-        for n, nrn_metadata in enumerate(self.neuron_metadata):
+        for n, nrn_metadata in enumerate(self.nrn_meta):
             if nrn_metadata.get(attribute_name, _MISSING) == value:
                 selected_nrn_indices.append(n)
         self.I = selected_nrn_indices
@@ -569,7 +569,7 @@ class NeuralDataset(Dataset, ABC):
 
         Called by ``concat_neural_datasets`` on the bare result instance after
         the merged core attributes (``stims``, ``responses``, ``stim_meta``,
-        ``neuron_metadata``, ``N_neurons``, ``dt``, ``I``, ``path``) are set.
+        ``nrn_meta``, ``N_neurons``, ``dt``, ``I``, ``path``) are set.
         Subclasses override to propagate things like ``self.F`` (audio) or
         ``self.H, self.W`` (video). Base implementation is a no-op.
         """
@@ -594,8 +594,8 @@ class NeuralDataset(Dataset, ABC):
             f"len(self.stims) ({len(self.stims)}) must equal len(self.stim_meta) ({S})"
         assert len(self.responses) == S, \
             f"len(self.responses) ({len(self.responses)}) must equal len(self.stim_meta) ({S})"
-        assert len(self.neuron_metadata) == self.N_neurons, (
-            f"len(self.neuron_metadata) ({len(self.neuron_metadata)}) "
+        assert len(self.nrn_meta) == self.N_neurons, (
+            f"len(self.nrn_meta) ({len(self.nrn_meta)}) "
             f"must equal self.N_neurons ({self.N_neurons})"
         )
 

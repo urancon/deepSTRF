@@ -76,7 +76,7 @@ def test_vmn_shape_invariants(vmn_dataset):
     assert ds.species == "ferret"
     assert ds.behavioral_state == "awake-passive"
     assert ds.N_neurons > 0
-    assert ds.N_neurons == len(ds.neuron_metadata)
+    assert ds.N_neurons == len(ds.nrn_meta)
     S = len(ds.stim_meta)
     assert S > 0
     assert len(ds.stims) == S

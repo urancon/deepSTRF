@@ -133,7 +133,7 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
      - self.responses                   list of S lists of N tensors (R_{s,n}, T_s)
      - self.stim_meta                   list of S dicts {"name", "type",
                                         "sample_rate", "n_samples", "duration_s"}
-     - self.neuron_metadata             list of N dicts {"cell_id", "animal_id",
+     - self.nrn_meta             list of N dicts {"cell_id", "animal_id",
                                         "area", "cell_seq", "rig"} — cell_seq is
                                         the sequential cell index parsed from the
                                         cell folder name (per AA1 readme PDF: the
@@ -285,10 +285,10 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
         stim_meta = list(zip(stims, stim_types))
         # list of N dicts; cell_seq + rig parsed from the documented
         # AA1 cell-name format (<animal>_<cell_seq>[_<rig>], cf. AA1 readme PDF)
-        self.neuron_metadata = []
+        self.nrn_meta = []
         for c, a, r in zip(cells, cell_animals, cell_areas):
             _, cell_seq, rig = parse_cell_name(c)
-            self.neuron_metadata.append({
+            self.nrn_meta.append({
                 "cell_id": c,
                 "animal_id": a,
                 "area": r,
@@ -319,7 +319,7 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
             pop_resps = []
             no_data_nrn_idces = []
 
-            for n, nrn in enumerate(self.neuron_metadata):
+            for n, nrn in enumerate(self.nrn_meta):
                 cell_name = nrn["cell_id"]
                 area = nrn["area"]
 

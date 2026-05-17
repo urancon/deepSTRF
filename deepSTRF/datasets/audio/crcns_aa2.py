@@ -246,7 +246,7 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
      - self.stim_meta                   list of S dicts {"name", "type",
                                         "sample_rate", "n_samples", "duration_s"}
                                         (last three from data/stim_data.csv)
-     - self.neuron_metadata             list of N dicts {"cell_id", "animal_id",
+     - self.nrn_meta             list of N dicts {"cell_id", "animal_id",
                                         "area", "cell_seq", "rig"} — see AA1's
                                         docstring for the cell-name format
                                         documentation; rig is often None in AA2
@@ -388,10 +388,10 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
         # list of N dicts; cell_seq + rig parsed from the documented AA1/AA2
         # cell-name format (<animal>_<cell_seq>[_<rig>], cf. AA1 readme PDF —
         # AA2 inherits the convention).
-        self.neuron_metadata = []
+        self.nrn_meta = []
         for c, a, r in zip(cells, cell_animals, cell_areas):
             _, cell_seq, rig = parse_cell_name(c)
-            self.neuron_metadata.append({
+            self.nrn_meta.append({
                 "cell_id": c,
                 "animal_id": a,
                 "area": r,
