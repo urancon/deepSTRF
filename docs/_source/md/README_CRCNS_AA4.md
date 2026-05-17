@@ -56,34 +56,6 @@ A total of 170 different clips of conspecific vocalizations (songs and calls) an
   - Pad/cut to the right (present/future time steps) so that trials have the same duration
 
 
-## Benchmark results
-
-Since we cannot segment neurons by area in this dataset, we propose to rather segment it by animal.
-
-TODO
-
-|   **Animal**    | **Model backbone** | **Rank** | **Remarks** | **Params / nrn** | **Perfs <br/>(CCraw / CCnorm) [%]** | **Paper (backbone)** | 
-|:---------------:|:------------------:|:--------:|:-----------:|:----------------:|:-----------------------------------:|:--------------------:|
-|     **All**     |                    |    🥇    |             |                  |                                     |                      |
-|                 |                    |    🥈    |             |                  |                                     |                      |
-|                 |                    |    🥉    |             |                  |                                     |                      |
-| **BlaBro09xxF** |                    |    🥇    |             |                  |                                     |                      |
-|                 |                    |    🥈    |             |                  |                                     |                      |
-|                 |                    |    🥉    |             |                  |                                     |                      |
-| **GreBlu9508M** |                    |    🥇    |             |                  |                                     |                      |
-|                 |                    |    🥈    |             |                  |                                     |                      |
-|                 |                    |    🥉    |             |                  |                                     |                      |
-| **LblBlu2028M** |                    |    🥇    |             |                  |                                     |                      |
-|                 |                    |    🥈    |             |                  |                                     |                      |
-|                 |                    |    🥉    |             |                  |                                     |                      |
-| **WhiBlu5396M** |                    |    🥇    |             |                  |                                     |                      |
-|                 |                    |    🥈    |             |                  |                                     |                      |
-|                 |                    |    🥉    |             |                  |                                     |                      |
-| **YelBlu6903F** |                    |    🥇    |             |                  |                                     |                      |
-|                 |                    |    🥈    |             |                  |                                     |                      |
-|                 |                    |    🥉    |             |                  |                                     |                      |
-
-
 ## Setup
 
 **Requirements**: a [CRCNS account](https://crcns.org/register).
@@ -124,8 +96,25 @@ ds = CRCNSAA4Dataset('/path/to/data', stimuli=('song', 'call'),
 
 ## Filtering
 
-The full selection API from [the data paradigm doc](data_paradigm.md#8-iteration-honours-the-current-selection-bidirectional)
-is available on AA4: select neurons by metadata
-(`select_pop_by_nrn_attr`), select stims by metadata
-(`select_stims_by_attr`), and the bidirectional rule auto-hides cells
-that have no responses to the current stim selection.
+Each `stim_meta` dict carries `name` (the stimulus md5 — the canonical
+identifier; the wav filename is per-animal and not unique across the
+corpus), `type` (e.g. `"song"`, `"call"`), `class` (broader category), and
+`duration_s`. Each `neuron_metadata` dict carries `cell_id` (the basename
+of the source h5 file), `animal_id` (one of `AA4_ANIMAL_IDS`), `sex`
+(`"M"` or `"F"` — last char of `animal_id`), `site` (recording site
+label, e.g. `"Site1"`), `electrode` (int 1-32 across both hemisphere
+arrays, 16 channels each in 5/6 birds; 1 array in the 6th),
+`ldepth` / `rdepth` (left- and right-array depth in µm at this site),
+`sort_type` (`"single"` or `"multi"`; `"noise"` / `"tdt"` are filtered out
+at load), `sort_id` (online-sort id, int), and `subsort_id` (offline
+spike-sorting id parsed from the trailing `_ss<N>` of the filename;
+`None` if absent).
+
+The dataset paper does **not** publish a per-cell brain-area assignment,
+so neurons cannot be filtered by area — the natural axis to slice by is
+`animal_id`. Otherwise the full selection API from
+[the data paradigm doc](data_paradigm.md#8-iteration-honours-the-current-selection-bidirectional)
+is available: select neurons by metadata (`select_pop_by_nrn_attr`),
+select stims by metadata (`select_stims_by_attr`), and the bidirectional
+rule auto-hides cells that have no responses to the current stim
+selection.

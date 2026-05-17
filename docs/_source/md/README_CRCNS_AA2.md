@@ -50,29 +50,6 @@ http://dx.doi.org/10.6080/10.6080/K0JW8BSC
   - Pad/cut to the right (present/future time steps) so that trials have the same duration
 
 
-## Benchmark results
-
-TODO
-
-|  **Area**   | **Model backbone** | **Rank** | **Remarks** | **Params / nrn** | **Perfs <br/>(CCraw / CCnorm) [%]** | **Paper (backbone)** | 
-|:-----------:|:------------------:|:--------:|:-----------:|:----------------:|:-----------------------------------:|:--------------------:|
-|   **mld**   |                    |    🥇    |             |                  |                                     |                      |
-|             |                    |    🥈    |             |                  |                                     |                      |
-|             |                    |    🥉    |             |                  |                                     |                      |
-|   **OV**    |                    |    🥇    |             |                  |                                     |                      |
-|             |                    |    🥈    |             |                  |                                     |                      |
-|             |                    |    🥉    |             |                  |                                     |                      |
-| **L (all)** |                    |    🥇    |             |                  |                                     |                      |
-|             |                    |    🥈    |             |                  |                                     |                      |
-|             |                    |    🥉    |             |                  |                                     |                      |
-|   **CM**    |                    |    🥇    |             |                  |                                     |                      |
-|             |                    |    🥈    |             |                  |                                     |                      |
-|             |                    |    🥉    |             |                  |                                     |                      |
-| **others**  |                    |    🥇    |             |                  |                                     |                      |
-|             |                    |    🥈    |             |                  |                                     |                      |
-|             |                    |    🥉    |             |                  |                                     |                      |
-
-
 ## Setup
 
 **Requirements**: a [CRCNS account](https://crcns.org/register).
@@ -99,6 +76,15 @@ If you already have the data laid out manually:
 3. `ds = CRCNSAA2Dataset('/path/to/data', dt_ms=5)`.
 
 ## Filtering
+
+Each `stim_meta` dict carries `name` (stimulus identifier), `type`
+(`"conspecific"` or `"songrip"` — the latter is reversed-song / pitch-shifted
+controls), `sample_rate`, `n_samples`, `duration_s` (last three from
+`data/stim_data.csv`). Each `neuron_metadata` dict carries `cell_id` (the
+raw cell name from the dataset), `animal_id`, `area` (`"MLd"`, `"OV"`,
+`"L"`, `"CM"`, or one of the smaller secondary areas — see AA1 for the
+parsing details), `cell_seq` (within-animal cell index), and `rig` (often
+`None` in AA2).
 
 The full selection API from [the data paradigm doc](data_paradigm.md#8-iteration-honours-the-current-selection-bidirectional)
 is available on AA2: filter neurons by metadata (`select_pop_by_nrn_attr`)

@@ -42,7 +42,7 @@ http://dx.doi.org/10.6080/K0F769GP
   - Pad/cut to the right (present/future time steps) so that trials hvae the same duration
 
 
-## Benchmar results
+## Benchmark results
 
 |   **Area**    | **Model backbone** | **Rank** | **Remarks** |     **Params / nrn**      | **Perfs <br/>(CCraw / CCnorm) [%]** |                                        **Paper (backbone)**                                         | 
 |:-------------:|:------------------:|:--------:|:-----------:|:-------------------------:|:-----------------------------------:|:---------------------------------------------------------------------------------------------------:|
