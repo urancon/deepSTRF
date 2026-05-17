@@ -1,6 +1,6 @@
 ## Auditory datasets
 
-Currently, 9 response datasets are available, each with a name for easier communication. Each are more described in their
+Currently, 10 response datasets are available, each with a name for easier communication. Each are more described in their
 respective README, which gives link to their orginal paper / public repository.
 * [NS1](README_NS1.md)
 * [NAT4](README_NAT4.md)
@@ -9,6 +9,7 @@ respective README, which gives link to their orginal paper / public repository.
 * [CRCNS AA1](README_CRCNS_AA1.md)
 * [CRCNS AA2](README_CRCNS_AA2.md)
 * [CRCNS AA4](README_CRCNS_AA4.md)
+* [Espejo 2019](README_Espejo.md)
 * [Alice EEG](README_Alice_EEG.md)
 * [Meliza 2025](README_Meliza_2025.md)
 
@@ -26,6 +27,8 @@ README_CRCNS_AC1_Wehr.md
 README_CRCNS_AC1_Asari.md
 README_CRCNS_AA1.md
 README_CRCNS_AA2.md
+README_CRCNS_AA4.md
+README_Espejo.md
 README_Alice_EEG.md
 README_Meliza_2025.md
 ```
