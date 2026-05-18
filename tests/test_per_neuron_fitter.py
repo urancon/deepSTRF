@@ -255,3 +255,100 @@ def test_per_cell_monitor_required():
     )
     with pytest.raises(ValueError, match="per-cell monitor"):
         fitter.fit()
+
+
+# -----------------------------------------------------------------------------
+# (g) Restoration lands cells at their BEST-on-monitor state, not their
+#     freeze-time state. This is the regression for the silent-snapshot bug:
+#     pre-fix, snapshots were captured ``patience`` epochs after the best
+#     was last seen, so restored weights were a drifted version of the best
+#     — and PerNeuronFitter ended up worse than the global Fitter on NS1.
+# -----------------------------------------------------------------------------
+
+
+def test_snapshot_is_taken_at_improvement_time_not_freeze_time():
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders(N=2)
+    model = _LinearReadout(F=4, N=2)
+    fitter = PerNeuronFitter(
+        model, train_loader, val_loader,
+        max_epochs=8, patience=3,
+        log_fn=lambda d: None,
+    )
+
+    # Drive cell 0's monitor: best at epoch 0 (0.9), then strictly worse
+    # for 3 epochs → freezes at epoch 3 with snapshot expected to be the
+    # state at epoch 0 (the best). Cell 1 keeps improving so it never freezes.
+    cell0_trajectory = [0.9, 0.7, 0.5, 0.3, 0.2, 0.1, 0.0, -0.1]
+    weights_at_epoch_0 = None
+    weights_at_epoch_3 = None
+
+    original_evaluate = fitter._evaluate
+
+    def _evaluate(loader):
+        out = original_evaluate(loader)
+        e = getattr(fitter, "_e", 0)
+        fitter._e = e + 1
+        nonlocal weights_at_epoch_0, weights_at_epoch_3
+        # snapshot the model's cell-0 weight slice at the chosen epochs
+        if e == 0:
+            weights_at_epoch_0 = model.fc.weight.data[0].detach().clone()
+        if e == 3:
+            weights_at_epoch_3 = model.fc.weight.data[0].detach().clone()
+        out["cc_norm"] = torch.tensor([cell0_trajectory[e], 0.1 + 1e-3 * e])
+        return out
+
+    fitter._evaluate = _evaluate
+    fitter.fit()
+
+    # Cell 0 must have frozen, and its restored weight slice must match
+    # the epoch-0 capture (the best-on-monitor state), NOT the epoch-3
+    # capture (the patience-expired drifted state).
+    assert int(fitter._frozen_cells[0].item()) == 1
+    final_w0 = model.fc.weight.data[0]
+    assert torch.allclose(final_w0, weights_at_epoch_0), (
+        "Cell-0 weight should be restored to the BEST-monitor state (epoch 0)"
+    )
+    assert not torch.allclose(final_w0, weights_at_epoch_3), (
+        "Cell-0 weight should NOT be the freeze-time state (epoch 3)"
+    )
+
+
+def test_snapshot_also_restores_unfrozen_cells_at_end():
+    """Cells that never frozen but improved during training must also be
+    restored to their best-on-monitor state at end-of-fit."""
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders(N=1)
+    model = _LinearReadout(F=4, N=1)
+    fitter = PerNeuronFitter(
+        model, train_loader, val_loader,
+        max_epochs=5, patience=10,  # cell never freezes within max_epochs
+        log_fn=lambda d: None,
+    )
+
+    # Best score at epoch 2; then drift but no freeze (patience > remaining)
+    trajectory = [0.1, 0.3, 0.9, 0.5, 0.4]
+    weights_at_epoch_2 = None
+
+    original_evaluate = fitter._evaluate
+
+    def _evaluate(loader):
+        out = original_evaluate(loader)
+        e = getattr(fitter, "_e", 0)
+        fitter._e = e + 1
+        nonlocal weights_at_epoch_2
+        if e == 2:
+            weights_at_epoch_2 = model.fc.weight.data[0].detach().clone()
+        out["cc_norm"] = torch.tensor([trajectory[e]])
+        return out
+
+    fitter._evaluate = _evaluate
+    fitter.fit()
+
+    # Cell 0 should NOT be frozen (patience=10, only 5 epochs ran)
+    assert int(fitter._frozen_cells[0].item()) == 0
+    # But its weight should still be restored to the best-on-monitor state
+    final_w0 = model.fc.weight.data[0]
+    assert torch.allclose(final_w0, weights_at_epoch_2), (
+        "Even non-frozen cells must be restored to their best-on-monitor state"
+    )

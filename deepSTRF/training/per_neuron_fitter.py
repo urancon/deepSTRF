@@ -43,9 +43,13 @@ class PerNeuronFitter(Fitter):
     3. Frozen cells contribute zero to the per-cell training loss.
        The Fitter's per-batch loss is the mean of the per-cell
        MSE/Poisson/etc. residuals over **active** (non-frozen) cells.
-    4. Frozen cells' readout parameter slices are snapshotted at
-       freeze time and restored at the end of ``fit()``, so any
-       optimizer-state-driven drift is undone.
+    4. **Every** cell's readout parameter slices are snapshotted at
+       its best-on-``monitor`` epoch (mirroring :class:`Fitter`'s
+       ``ckpt_path`` semantics, but per-cell). At the end of
+       ``fit()`` every cell is restored to its snapshot, so the
+       returned model is the population of per-cell best-on-val
+       states — *not* whatever the optimizer drifted to before the
+       patience window or after freezing.
 
     Training stops when all cells are frozen, or when ``max_epochs``
     is reached.
@@ -129,16 +133,28 @@ class PerNeuronFitter(Fitter):
             score = score.to(device)
             # Treat NaN as 'no improvement' (cell hasn't been measured)
             improved = better(score, best_score) & ~score.isnan()
+
+            # Snapshot every still-active cell that improved on this
+            # epoch. The snapshot is taken AFTER the train step that
+            # produced the new ``score``, so restoring it at the end
+            # of fit() lands the cell exactly where it was when it
+            # achieved its best ``monitor`` value — mirroring
+            # ``Fitter``'s ``ckpt_path`` semantics, but per-cell.
+            for n in torch.nonzero(
+                improved & ~self._frozen_cells, as_tuple=True
+            )[0].tolist():
+                snapshots[n] = self._snapshot_cell(n)
+
             best_score = torch.where(improved, score, best_score)
             no_improve = torch.where(
                 improved, torch.zeros_like(no_improve), no_improve + 1
             )
 
-            # Newly frozen cells: patience exhausted and not already frozen
+            # Newly frozen cells: patience exhausted and not already frozen.
+            # No snapshot taken here — the snapshot from the cell's
+            # best-improvement epoch is what we want to restore at end.
             newly_frozen = (no_improve >= self.patience) & ~self._frozen_cells
-            for n in torch.nonzero(newly_frozen, as_tuple=True)[0].tolist():
-                snapshots[n] = self._snapshot_cell(n)
-                self._frozen_cells[n] = True
+            self._frozen_cells |= newly_frozen
 
             # Now record the post-update frozen-cell count and append.
             epoch_dict["frozen_cells"] = int(self._frozen_cells.sum().item())
@@ -148,7 +164,10 @@ class PerNeuronFitter(Fitter):
             if bool(self._frozen_cells.all().item()):
                 break
 
-        # Restore every frozen cell to its best snapshot
+        # Restore every cell that has a snapshot (frozen or still active
+        # at max_epochs / all-frozen termination) to its best-on-monitor
+        # state. Cells whose monitor was NaN throughout never improved
+        # past the -inf init and have no snapshot — leave them untouched.
         for n, snap in snapshots.items():
             self._restore_cell(n, snap)
 
