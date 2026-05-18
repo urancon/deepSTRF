@@ -8,8 +8,9 @@ Functions:
 - :func:`plot_stim_with_response` — spectrogram + optional spike raster
   + PSTH (with optional model prediction overlay), shared x-axis.
 - :func:`plot_psth_vs_pred` — single-panel target-vs-prediction overlay.
+- :func:`plot_strf_grid` — grid of STRF / gradmap kernels.
 
-Both return matplotlib objects (``Figure`` and/or ``Axes``); callers
+All return matplotlib objects (``Figure`` and/or ``Axes``); callers
 decide whether to ``plt.show()``, save, or compose further. No
 ``plt.show`` is invoked inside.
 """
@@ -260,3 +261,132 @@ def plot_psth_vs_pred(
     if legend:
         ax.legend(loc="upper right", fontsize=9)
     return ax
+
+
+def plot_strf_grid(
+    strfs: Union[ArrayLike, Sequence[ArrayLike]],
+    titles: Optional[Sequence[str]] = None,
+    dt_ms: Optional[float] = None,
+    ncols: int = 4,
+    cmap: str = "RdBu_r",
+    shared_clim: bool = False,
+    suptitle: Optional[str] = None,
+    figsize: Optional[Tuple[float, float]] = None,
+) -> Tuple[Figure, Sequence[Axes]]:
+    """Plot a grid of STRF / gradmap kernels.
+
+    The classical STRF visualisation: each panel is an ``(F, T)`` weight
+    map, frequency on the y-axis (low→high), time on the x-axis
+    (history; ``[0, T·dt_ms]`` if ``dt_ms`` is given, else bin index).
+    Diverging colormap (``RdBu_r`` by default) with per-panel symmetric
+    vmax — i.e. each cell gets its own ``|max|`` so the spatial
+    structure is comparable across cells of very different gradient
+    magnitudes. Pass ``shared_clim=True`` for a global symmetric vmax
+    if the kernels are intended to be compared on the same scale (e.g.
+    same neuron under different model variants).
+
+    Parameters
+    ----------
+    strfs : array-like, shape ``(K, F, T)`` or sequence of ``(F, T)``
+        Stack of kernels to plot. Numpy ndarrays or torch tensors.
+    titles : sequence of str, optional
+        Length-``K`` list of per-panel titles. ``None`` → unlabeled.
+    dt_ms : float, optional
+        Bin width in milliseconds. If given, the x-axis is in ms
+        (history extent ``[0, T·dt_ms]``); otherwise it is the bin index.
+    ncols : int, default 4
+        Number of columns in the grid; rows = ceil(K / ncols).
+    cmap : str, default ``"RdBu_r"``
+    shared_clim : bool, default False
+        If True, use one global symmetric ``vmax = max_k |strf_k|``
+        across all panels. Otherwise per-panel.
+    suptitle : str, optional
+        Figure-level title.
+    figsize : (w, h), optional
+        Figure size. Default scales with the grid shape.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    axes : flat list of matplotlib.axes.Axes
+        Length ``K``; unused grid cells (when ``K < nrows·ncols``) are
+        hidden via ``ax.axis('off')`` and not included in the return.
+    """
+    if hasattr(strfs, "ndim") and getattr(strfs, "ndim", None) == 3:
+        # (K, F, T) stack — split into K panels.
+        K = strfs.shape[0]
+        panels = [_to_numpy(strfs[k]) for k in range(K)]
+    else:
+        panels = [_to_numpy(s) for s in strfs]
+        K = len(panels)
+    if K == 0:
+        raise ValueError("strfs is empty — nothing to plot.")
+
+    shapes = {p.shape for p in panels}
+    if len(shapes) != 1:
+        raise ValueError(
+            f"all kernels must share the same (F, T) shape; got {shapes}"
+        )
+    F, T = panels[0].shape
+
+    if titles is not None and len(titles) != K:
+        raise ValueError(
+            f"titles must have length {K}; got {len(titles)}"
+        )
+
+    if dt_ms is not None:
+        t_max = T * dt_ms
+        extent = [0.0, t_max, 0, F]
+        xlabel = "history (ms)"
+    else:
+        extent = [0, T, 0, F]
+        xlabel = "history (bins)"
+
+    if shared_clim:
+        global_vmax = max(float(np.abs(p).max()) for p in panels)
+        if global_vmax == 0:
+            global_vmax = 1e-12
+
+    nrows = (K + ncols - 1) // ncols
+    if figsize is None:
+        figsize = (ncols * 3.0, nrows * 2.4)
+
+    # constrained_layout: lets matplotlib handle the figure-level colorbar
+    # and off-axes spacing without the tight_layout incompatibility warning.
+    fig, axs = plt.subplots(nrows, ncols, figsize=figsize,
+                            squeeze=False, sharey=True,
+                            constrained_layout=True)
+    axes_flat = list(axs.flat)
+
+    last_im = None
+    for k, panel in enumerate(panels):
+        ax = axes_flat[k]
+        if shared_clim:
+            vmax = global_vmax
+        else:
+            vmax = float(np.abs(panel).max())
+            if vmax == 0:
+                vmax = 1e-12
+        last_im = ax.imshow(
+            panel, aspect="auto", origin="lower",
+            cmap=cmap, vmin=-vmax, vmax=vmax, extent=extent,
+        )
+        if titles is not None:
+            ax.set_title(titles[k], fontsize=9)
+        if k % ncols == 0:
+            ax.set_ylabel("freq band")
+        if k // ncols == nrows - 1:
+            ax.set_xlabel(xlabel)
+
+    # hide unused grid cells
+    for k in range(K, len(axes_flat)):
+        axes_flat[k].axis("off")
+
+    if shared_clim and last_im is not None:
+        fig.colorbar(last_im, ax=axs, fraction=0.025, pad=0.02,
+                     label="STRF weight")
+
+    if suptitle is not None:
+        fig.suptitle(suptitle)
+
+    return fig, axes_flat[:K]

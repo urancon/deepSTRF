@@ -16,6 +16,7 @@ from .data import (
 from .plotting import (
     plot_psth_vs_pred,
     plot_stim_with_response,
+    plot_strf_grid,
 )
 
 __all__ = [
@@ -25,4 +26,5 @@ __all__ = [
     "ResponseSmoothingTransform",
     "plot_psth_vs_pred",
     "plot_stim_with_response",
+    "plot_strf_grid",
 ]
