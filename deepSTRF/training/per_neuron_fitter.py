@@ -194,8 +194,8 @@ class PerNeuronFitter(Fitter):
         preds_list: List[torch.Tensor] = []
         responses_list: List[torch.Tensor] = []
 
+        N = self.model.O
         active_mask = (~self._frozen_cells).float()                # (N,)
-        n_active = max(int(active_mask.sum().item()), 1)
 
         for batch in self.train_loader:
             stims, responses, _vm, _meta = batch
@@ -206,8 +206,18 @@ class PerNeuronFitter(Fitter):
             pred = self.model(stims)
             # Per-cell loss vector (N,)
             per_cell = self.loss_fn(pred, responses, reduction="none")
-            # Mask frozen cells out of the gradient signal
-            loss = (per_cell * active_mask).sum() / n_active
+            # Mask frozen cells out of the gradient signal. Divide by the
+            # *original* N (not n_active) so that the gradient on each
+            # active cell is identical to the one ``Fitter`` would produce
+            # (``mse_loss`` and friends divide their per-cell mean by N as
+            # part of the default 'mean' reduction over neurons). Dividing
+            # by ``n_active`` instead would inflate each surviving cell's
+            # gradient by N/n_active as more cells freeze — a transient
+            # learning-rate amplification that destabilises late
+            # convergence on no-shared-params models (NS1 ablation,
+            # 2026-05-18: dividing by n_active cost ~0.006 cc_norm vs
+            # the global Fitter on Linear with per-neuron BN).
+            loss = (per_cell * active_mask).sum() / N
             loss.backward()
             self.optimizer.step()
             if hasattr(self.model, "detach"):

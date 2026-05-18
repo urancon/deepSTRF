@@ -380,6 +380,129 @@ def test_snapshot_includes_per_neuron_buffers():
     ), "BN running_var[0] should be restored to the best-epoch state"
 
 
+def test_active_cell_gradient_matches_fitter():
+    """On a no-shared-params model, when no cell is frozen, PerNeuronFitter
+    must produce **bit-identical** per-cell gradients to Fitter.
+
+    Both losses must collapse to the same scalar — Fitter via
+    ``mse_loss(reduction='mean')`` ⇒ (1/N) · Σ per_cell[n], and
+    PerNeuronFitter via ``(per_cell * mask).sum() / N`` when ``mask`` is
+    all-ones. Any other normalization (e.g. divide by ``n_active``)
+    would introduce a learning-rate inflation as cells freeze. This is
+    the regression for the n_active-vs-N normalization bug fixed
+    2026-05-18.
+    """
+    from deepSTRF.metrics import mse_loss
+    from deepSTRF.training import Fitter
+
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders(N=4)
+
+    # Identical models for the two fitters
+    set_random_seed(0)
+    model_f = _LinearReadout(F=4, N=4)
+    set_random_seed(0)
+    model_p = _LinearReadout(F=4, N=4)
+    # sanity: identical parameter init
+    for pf, pp in zip(model_f.parameters(), model_p.parameters()):
+        assert torch.allclose(pf, pp)
+
+    fitter_f = Fitter(model_f, train_loader, val_loader,
+                      max_epochs=1, patience=1,
+                      log_fn=lambda d: None, track_train_metrics=False)
+    fitter_p = PerNeuronFitter(model_p, train_loader, val_loader,
+                               max_epochs=1, patience=1,
+                               log_fn=lambda d: None,
+                               track_train_metrics=False)
+    # initialize PNF's frozen-cells state without running fit()
+    fitter_p._frozen_cells = torch.zeros(4, dtype=torch.bool,
+                                          device=fitter_p.device)
+
+    # Grab the first batch and run one step on each model
+    batch = next(iter(train_loader))
+    stims, responses, _vm, _meta = batch
+
+    # Fitter step
+    fitter_f.optimizer.zero_grad()
+    pred_f = model_f(stims)
+    loss_f = mse_loss(pred_f, responses)
+    loss_f.backward()
+    grads_f = [p.grad.detach().clone() for p in model_f.parameters()]
+
+    # PerNeuronFitter step (no cells frozen)
+    fitter_p.optimizer.zero_grad()
+    pred_p = model_p(stims)
+    per_cell = mse_loss(pred_p, responses, reduction="none")
+    active_mask = (~fitter_p._frozen_cells).float()
+    loss_p = (per_cell * active_mask).sum() / model_p.O
+    loss_p.backward()
+    grads_p = [p.grad.detach().clone() for p in model_p.parameters()]
+
+    # Predictions must be identical (same model, same init, same input)
+    assert torch.allclose(pred_f, pred_p)
+    # Scalar losses must match
+    assert torch.allclose(loss_f, loss_p)
+    # Per-parameter gradients must match bit-exactly
+    for gf, gp in zip(grads_f, grads_p):
+        assert torch.allclose(gf, gp), (
+            f"Gradients diverge: max abs diff = {(gf - gp).abs().max():.2e}"
+        )
+
+
+def test_active_gradient_constant_as_cells_freeze():
+    """As cells freeze, the per-cell gradient on the *surviving* cells must
+    stay constant (no learning-rate inflation). Pre-fix, dividing by
+    ``n_active`` instead of ``N`` inflated the active-cell gradient by
+    a factor of ``N / n_active`` as cells dropped out.
+    """
+    from deepSTRF.metrics import mse_loss
+
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders(N=4)
+
+    model = _LinearReadout(F=4, N=4)
+    init_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    fitter = PerNeuronFitter(model, train_loader, val_loader,
+                             max_epochs=1, patience=1,
+                             log_fn=lambda d: None,
+                             track_train_metrics=False)
+
+    batch = next(iter(train_loader))
+    stims, responses, _vm, _meta = batch
+
+    # Pass 1: no cells frozen
+    model.load_state_dict(init_state)
+    fitter._frozen_cells = torch.zeros(4, dtype=torch.bool, device=fitter.device)
+    fitter.optimizer.zero_grad()
+    pred = model(stims)
+    per_cell = mse_loss(pred, responses, reduction="none")
+    active_mask = (~fitter._frozen_cells).float()
+    loss = (per_cell * active_mask).sum() / model.O
+    loss.backward()
+    grads_all_active = [p.grad.detach().clone() for p in model.parameters()]
+
+    # Pass 2: cells 0..2 frozen, cell 3 still active
+    model.load_state_dict(init_state)
+    fitter._frozen_cells = torch.tensor([True, True, True, False], device=fitter.device)
+    fitter.optimizer.zero_grad()
+    pred = model(stims)
+    per_cell = mse_loss(pred, responses, reduction="none")
+    active_mask = (~fitter._frozen_cells).float()
+    loss = (per_cell * active_mask).sum() / model.O
+    loss.backward()
+    grads_one_active = [p.grad.detach().clone() for p in model.parameters()]
+
+    # Cell 3's slice of every per-N parameter must have the same gradient
+    # in both passes. Pre-fix (divide by n_active), it would be inflated by
+    # 4 / 1 = 4x in pass 2.
+    for ga, go in zip(grads_all_active, grads_one_active):
+        if ga.dim() >= 1 and ga.shape[0] == 4:
+            assert torch.allclose(ga[3], go[3]), (
+                f"Cell-3 gradient changed when other cells froze "
+                f"(max abs diff = {(ga[3] - go[3]).abs().max():.2e})"
+            )
+
+
 def test_snapshot_also_restores_unfrozen_cells_at_end():
     """Cells that never frozen but improved during training must also be
     restored to their best-on-monitor state at end-of-fit."""
