@@ -24,6 +24,14 @@ extensions = ['myst_parser',
               'sphinx.ext.viewcode' # Optional, shows code
               ]
 
+# Enable LaTeX-style math in MyST markdown: `$...$` (inline) and
+# `$$...$$` (displayed), plus AMS math environments via `amsmath`.
+# Pairs with `sphinx.ext.mathjax` above to render in RTD.
+myst_enable_extensions = [
+    "dollarmath",
+    "amsmath",
+]
+
 templates_path = ['_templates']
 exclude_patterns = [
     '_build', 'Thumbs.db', '.DS_Store',
