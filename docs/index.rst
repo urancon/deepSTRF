@@ -130,6 +130,7 @@ welcome to add yours.
 
    _source/md/README_models.md
    _source/md/README_AdapTrans.md
+   _source/md/README_gradmap_strf.md
    _source/md/pretrained_models.md
 
 
