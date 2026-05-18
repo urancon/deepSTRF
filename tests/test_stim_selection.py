@@ -210,3 +210,148 @@ def test_concat_select_stims_by_attr_propagates():
     # a has 1 val (idx 2), b has 1 val (idx 4 in the merged list)
     assert val_idxs == [2, 4]
     assert len(c) == 2
+
+
+# ---------------------------------------------------------------------------
+# Predicate variants of the filter API (threshold / range / compound queries)
+# ---------------------------------------------------------------------------
+
+
+def _audio_with_numeric_nrn_meta(snrs, depths=None, areas=None,
+                                 S_est: int = 2, S_val: int = 1,
+                                 dt: float = 1.0, F: int = 4, T: int = 8):
+    """Audio dataset whose ``nrn_meta`` carries numeric + categorical fields.
+
+    Lets tests exercise threshold / range / compound predicates. The N axis
+    is implied by ``len(snrs)``; per-neuron metadata is heterogeneous when
+    ``depths`` / ``areas`` are partially ``None`` (simulates concatenated
+    datasets with missing keys).
+    """
+    from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
+
+    class _FakeAudio(AudioNeuralDataset):
+        pass
+
+    N = len(snrs)
+    ds = _FakeAudio(path="/tmp/nowhere", dt_ms=dt)
+    ds.F = F
+    ds.N_neurons = N
+
+    stim_meta, stims = [], []
+    for i in range(S_est):
+        stim_meta.append({"name": f"est{i}", "subset": "est", "duration_s": 1.0 + i})
+        stims.append(torch.zeros(1, F, T))
+    for i in range(S_val):
+        stim_meta.append({"name": f"val{i}", "subset": "val", "duration_s": 2.5 + i})
+        stims.append(torch.zeros(1, F, T))
+    ds.stim_meta = stim_meta
+    ds.stims = stims
+
+    responses = [[torch.ones(2, T) for _ in range(N)] for _ in stim_meta]
+    ds.responses = responses
+
+    nrn_meta = []
+    for i, snr in enumerate(snrs):
+        m = {"uid": f"n{i}", "snr": snr}
+        if depths is not None:
+            m["depth_um"] = depths[i]
+        if areas is not None:
+            m["area"] = areas[i]
+        nrn_meta.append(m)
+    ds.nrn_meta = nrn_meta
+    ds.validate()
+    return ds
+
+
+def test_select_pop_by_nrn_predicate_threshold():
+    ds = _audio_with_numeric_nrn_meta(snrs=[0.1, 0.4, 0.6, 0.9])
+    sel = ds.select_pop_by_nrn_predicate(lambda n: n["snr"] > 0.5)
+    assert sel == [2, 3]
+    assert ds.I == [2, 3]
+
+
+def test_select_pop_by_nrn_predicate_range():
+    ds = _audio_with_numeric_nrn_meta(
+        snrs=[0.5, 0.5, 0.5, 0.5],
+        depths=[150, 250, 750, 900],
+    )
+    sel = ds.select_pop_by_nrn_predicate(
+        lambda n: 200 <= n["depth_um"] <= 800
+    )
+    assert sel == [1, 2]
+
+
+def test_select_pop_by_nrn_predicate_compound():
+    ds = _audio_with_numeric_nrn_meta(
+        snrs=[0.2, 0.7, 0.7, 0.9],
+        areas=["MLd", "Field_L", "CM", "MLd"],
+    )
+    sel = ds.select_pop_by_nrn_predicate(
+        lambda n: n["snr"] > 0.5 and n["area"] in {"Field_L", "MLd"}
+    )
+    assert sel == [1, 3]
+
+
+def test_select_pop_by_nrn_predicate_missing_key_is_skipped():
+    """Predicates that raise KeyError on a neuron must skip it, not crash."""
+    ds = _audio_with_numeric_nrn_meta(snrs=[0.6, 0.7, 0.8])
+    # only neuron 1 has 'area'
+    ds.nrn_meta[1]["area"] = "MLd"
+    sel = ds.select_pop_by_nrn_predicate(lambda n: n["area"] == "MLd")
+    assert sel == [1]
+
+
+def test_select_pop_by_nrn_predicate_typeerror_is_skipped():
+    """Comparison against missing-as-None must skip silently."""
+    ds = _audio_with_numeric_nrn_meta(snrs=[0.6, 0.7, 0.8])
+    # poison neuron 1's snr with a non-numeric value
+    ds.nrn_meta[1]["snr"] = None
+    sel = ds.select_pop_by_nrn_predicate(lambda n: n["snr"] > 0.5)
+    assert sel == [0, 2]
+
+
+def test_select_pop_by_nrn_predicate_empty_when_no_match():
+    ds = _audio_with_numeric_nrn_meta(snrs=[0.1, 0.2, 0.3])
+    sel = ds.select_pop_by_nrn_predicate(lambda n: n["snr"] > 1.0)
+    assert sel == []
+    assert ds.I == []
+
+
+def test_select_stims_by_predicate_threshold():
+    ds = _audio_with_numeric_nrn_meta(snrs=[0.5, 0.5], S_est=3, S_val=2)
+    # est durations: 1.0, 2.0, 3.0; val durations: 2.5, 3.5
+    sel = ds.select_stims_by_predicate(lambda s: s["duration_s"] >= 2.5)
+    assert sel == [2, 3, 4]
+    assert ds.S_sel == [2, 3, 4]
+
+
+def test_select_stims_by_predicate_compound():
+    ds = _audio_with_numeric_nrn_meta(snrs=[0.5, 0.5], S_est=2, S_val=2)
+    sel = ds.select_stims_by_predicate(
+        lambda s: s["subset"] == "val" and s["duration_s"] < 3.0
+    )
+    # val stims have durations 2.5, 3.5 -> only the first one (global idx 2)
+    assert sel == [2]
+
+
+def test_select_stims_by_predicate_missing_key_is_skipped():
+    ds = _audio_with_numeric_nrn_meta(snrs=[0.5, 0.5])
+    sel = ds.select_stims_by_predicate(lambda s: s["does_not_exist"] > 0)
+    assert sel == []
+    assert ds.S_sel == []
+
+
+def test_select_pop_by_stim_predicate_keeps_only_covering_neurons():
+    """Mirrors test_select_pop_by_stim_attr_now_works using a predicate."""
+    ds = _audio_with_subset_meta(N=5, S_est=4, S_val=2, val_only_neurons=2)
+    # est stims have duration not set on the subset helper, so use 'subset' attr
+    sel = ds.select_pop_by_stim_predicate(lambda s: s["subset"] == "est")
+    # neurons 3 and 4 are val-only -> excluded
+    assert sel == [0, 1, 2]
+    assert ds.I == [0, 1, 2]
+
+
+def test_select_pop_by_stim_predicate_empty_s_idxs_returns_empty():
+    ds = _audio_with_subset_meta(N=3, S_est=4, S_val=2)
+    assert ds.select_pop_by_stim_predicate(lambda s: s["subset"] == "nope") == []
+    assert ds.I == []

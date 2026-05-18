@@ -318,6 +318,89 @@ class NeuralDataset(Dataset, ABC):
         self.I = selected
         return selected
 
+    # neural population selection API (predicate variant)
+    def select_pop_by_nrn_predicate(self, predicate):
+        """Select neurons whose ``nrn_meta`` dict satisfies ``predicate``.
+
+        More flexible than :meth:`select_pop_by_nrn_attr`: takes any
+        callable that maps a single ``nrn_meta`` dict to a truthy / falsy
+        value, so threshold queries on continuous attributes ("``snr >
+        0.5``"), range queries ("``200 <= depth_um <= 800``") and compound
+        conditions ("``area in {'Field_L', 'MLd'} and auditory``") are
+        expressible. The ``*_attr`` siblings remain available for the
+        equality-only case.
+
+        Neurons whose predicate raises ``KeyError`` or ``TypeError`` are
+        silently skipped — same convention as :meth:`select_pop_by_nrn_attr`
+        so a single predicate works on a concatenated dataset whose
+        sources carry heterogeneous metadata schemas. Note: this means a
+        typo in the predicate (referencing a wrong key) will silently
+        select no neurons rather than raising; use ``nrn.get(key, default)``
+        in the predicate for explicit-default semantics.
+
+        Parameters
+        ----------
+        predicate : callable(dict) -> bool
+            Tested on each ``nrn_meta[i]`` dict.
+
+        Returns
+        -------
+        list[int]
+            Indices of selected neurons. Also stored in ``self.I``.
+
+        Examples
+        --------
+        >>> ds.select_pop_by_nrn_predicate(lambda n: n.get("snr", 0) > 0.5)
+        >>> ds.select_pop_by_nrn_predicate(lambda n: n["area"] in {"Field_L", "MLd"})
+        >>> ds.select_pop_by_nrn_predicate(
+        ...     lambda n: 200 <= n.get("depth_um", -1) <= 800
+        ... )
+        """
+        selected = []
+        for n, nrn_metadata in enumerate(self.nrn_meta):
+            try:
+                if predicate(nrn_metadata):
+                    selected.append(n)
+            except (KeyError, TypeError):
+                continue
+        self.I = selected
+        return selected
+
+    def select_pop_by_stim_predicate(self, predicate):
+        """Select neurons with >=1 non-null response to stimuli matching ``predicate``.
+
+        Predicate variant of :meth:`select_pop_by_stim_attr`. Looks up
+        stimuli whose ``stim_meta`` dict satisfies ``predicate`` and keeps
+        only neurons whose ``nrn_masks`` is True for at least one of them.
+        Stims whose predicate raises ``KeyError`` or ``TypeError`` are
+        silently skipped — same forgiving convention as
+        :meth:`select_pop_by_nrn_predicate`.
+
+        Parameters
+        ----------
+        predicate : callable(dict) -> bool
+            Tested on each ``stim_meta[s]`` dict.
+
+        Returns
+        -------
+        list[int]
+            Indices of selected neurons. Also stored in ``self.I``.
+        """
+        s_idxs = []
+        for s, sm in enumerate(self.stim_meta):
+            try:
+                if predicate(sm):
+                    s_idxs.append(s)
+            except (KeyError, TypeError):
+                continue
+        if not s_idxs:
+            self.I = []
+            return []
+        masks = self.nrn_masks
+        selected = [n for n in range(self.N_neurons) if masks[s_idxs, n].any().item()]
+        self.I = selected
+        return selected
+
     # stim selection API
     def select_stim(self, stim_index: int):
         """Restrict iteration to a single stimulus index.
@@ -350,6 +433,45 @@ class NeuralDataset(Dataset, ABC):
         _MISSING = object()
         selected = [s for s, sm in enumerate(self.stim_meta)
                     if sm.get(attribute_name, _MISSING) == value]
+        self.S_sel = selected
+        return selected
+
+    def select_stims_by_predicate(self, predicate):
+        """Restrict iteration to stimuli whose ``stim_meta`` satisfies ``predicate``.
+
+        Predicate variant of :meth:`select_stims_by_attr`. Takes any
+        callable mapping a single ``stim_meta`` dict to truthy / falsy,
+        so threshold and compound queries on continuous attributes
+        ("``duration_s > 2.0``", "``sample_rate >= 24000``") become
+        expressible.
+
+        Stims whose predicate raises ``KeyError`` or ``TypeError`` are
+        silently skipped — same forgiving convention as
+        :meth:`select_pop_by_nrn_predicate`. Use ``sm.get(key, default)``
+        in the predicate for explicit-default semantics.
+
+        Parameters
+        ----------
+        predicate : callable(dict) -> bool
+            Tested on each ``stim_meta[s]`` dict.
+
+        Returns
+        -------
+        list[int]
+            Indices of selected stims. Also stored in ``self.S_sel``.
+
+        Examples
+        --------
+        >>> ds.select_stims_by_predicate(lambda s: s.get("duration_s", 0) >= 2.0)
+        >>> ds.select_stims_by_predicate(lambda s: s["type"] in {"song", "call"})
+        """
+        selected = []
+        for s, sm in enumerate(self.stim_meta):
+            try:
+                if predicate(sm):
+                    selected.append(s)
+            except (KeyError, TypeError):
+                continue
         self.S_sel = selected
         return selected
 
