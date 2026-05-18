@@ -140,6 +140,7 @@ welcome to add yours.
    :hidden:
 
    _source/ipynb/crcns_aa_tutorial.ipynb
+   _source/ipynb/aa4_inspection.ipynb
    _source/ipynb/explore_nat4.ipynb
    _source/ipynb/dataset_concatenation.ipynb
    _source/ipynb/fit_ns1_statenet.ipynb
