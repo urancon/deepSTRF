@@ -425,8 +425,9 @@ forward/backward pass, using the batch dimension (`B = self.O`). This is
 worth preserving because it scales linearly with neurons-on-GPU and
 avoids per-neuron re-instantiation.
 
-A dedicated `gradmap.md` and tutorial notebook are planned (see
-`TODO.md`).
+For the full math, sign convention, and caveats see
+[`README_gradmap_strf.md`](README_gradmap_strf.md); the worked example
+lives in [`examples/strf_gradmap_aa2.ipynb`](../ipynb/strf_gradmap_aa2.ipynb).
 
 ## 10. The `validate()` contract
 
@@ -464,7 +465,7 @@ Subclasses extend `validate()` with modality-specific invariants —
    model. (Same rule as `data_paradigm.md` §7.5.)
 6. **Subclasses call `self.validate()` as the last line of `__init__`.**
 
-## 12. Future extensions noted in TODO.md
+## 12. Planned extensions
 
 - **Decoding models.** Parallel `*DecodingModel` hierarchy when the first
   concrete decoder lands.

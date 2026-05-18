@@ -86,7 +86,7 @@ class AudioEncodingModel(NeuralModel):
 
         Notes
         -----
-        Future work — see TODO.md:
+        Future work:
 
         - Handle multi-channel inputs (the gradient is currently shaped
           ``(N, 1, F, T)`` regardless of ``C_in``; an AdapTrans-prefiltered

@@ -184,8 +184,9 @@ class AliceEEGDataset(AudioNeuralDataset):
 
     =============== DETAILS ================
 
-    More details can be found in the dataset source, our dedicated readme file
-    (``docs/_source/md/README_Alice_EEG.md``), or in the original papers.
+    More details can be found in the dataset source, the dataset-specific
+    README in the deepSTRF docs (``docs/_source/md/README_Alice_EEG.md``),
+    or in the original papers.
     But in a nutshell:
      - 33 human participants listened to the first chapter of *Alice in
        Wonderland* (~12.4 min) split into 12 audio segments.

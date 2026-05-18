@@ -113,7 +113,7 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
 
     =============== DETAILS ================
 
-    More details can be found in the dataset source, our dedicated readme file, or in the original papers.
+    More details can be found in the dataset source, the dataset-specific README in the deepSTRF docs, or in the original papers.
     But in a nutshell:
     - 1401 extracellular, spike-sorted single and multi units of adult zebra finches (4 males, 2 females)
     - Field L, caudolateral and caudomedial mesopallium (CLM and CMM) and caudomedial nidopallium (NCM)

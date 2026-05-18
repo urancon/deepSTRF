@@ -226,7 +226,7 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
 
     =============== DETAILS ================
 
-    More details can be found in the dataset source, our dedicated readme file, or in the original papers.
+    More details can be found in the dataset source, the dataset-specific README in the deepSTRF docs, or in the original papers.
     But in a nutshell:
     - 494 extracellular, spike-sorted single units of male zebra finches
     - neurons identified in OV, MLd, Field L, L1, L2a, L2b, L3, OV. Also neurons with unindentified area (None)

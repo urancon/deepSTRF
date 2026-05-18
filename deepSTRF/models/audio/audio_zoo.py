@@ -554,9 +554,9 @@ class Transformer(AudioEncodingModel):
     -----
     Sinusoidal positional encoding (Vaswani 2017) is used by default; it
     generalizes to arbitrary sequence lengths at inference. RoPE
-    (Rotary Position Embedding, Su et al. 2021) is a planned alternative,
-    see ``TODO.md`` — it is omitted here because it requires a custom
-    TransformerEncoderLayer (PyTorch's stock module hides Q and K).
+    (Rotary Position Embedding, Su et al. 2021) is a planned alternative;
+    it is omitted here because it requires a custom TransformerEncoderLayer
+    (PyTorch's stock module hides Q and K).
     """
 
     def __init__(self, n_frequency_bands: int = 34,

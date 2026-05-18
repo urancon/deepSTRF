@@ -117,7 +117,7 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
 
     =============== DETAILS ================
 
-    More details can be found in the dataset source, our dedicated readme file, or in the original papers.
+    More details can be found in the dataset source, the dataset-specific README in the deepSTRF docs, or in the original papers.
     But in a nutshell:
      - extracellular, spike-sorted single units of anesthetized male zebra finches
      - 50 cells in field L, 50 in MLd
