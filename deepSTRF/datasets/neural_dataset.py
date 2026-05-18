@@ -46,6 +46,16 @@ class NeuralDataset(Dataset, ABC):
       as a ``@property`` so it is always consistent with the current
       ``self.responses`` — no risk of the mask going out of sync.
 
+    Opt-in per-neuron quality metrics
+    ---------------------------------
+    Call ``self.compute_neuron_quality()`` after construction to populate
+    each ``nrn_meta[i]`` with two scalars derived from the responses
+    themselves: Sahani-Linden ``'snr'`` and Hsu/Spearman-Brown ``'ccmax'``.
+    Useful as predicate-filter inputs (e.g.
+    ``ds.select_pop_by_nrn_predicate(lambda n: n['snr'] > 0.5)``). Opt-in
+    rather than auto because CCmax is :math:`O(S \\cdot N \\cdot R^2)`
+    and a few seconds on the big datasets.
+
     Key invariants
     --------------
     - **Stim tensors never contain NaN.** Batch-level collate zero-pads them
@@ -658,6 +668,116 @@ class NeuralDataset(Dataset, ABC):
                              if stim_indices is not None else None),
         }
         return self.response_normalization
+
+    @torch.no_grad()
+    def compute_neuron_quality(self, max_ccmax_iters: int = 126) -> dict:
+        """Write per-neuron SNR and CCmax scalars into ``self.nrn_meta``.
+
+        For each neuron, adds two keys to ``self.nrn_meta[i]``:
+
+        - ``'snr'`` (``float``) — Sahani-Linden signal-to-noise ratio
+          :math:`\\text{SP}_n / \\text{NP}_n`, with the two terms
+          length-weighted across stims (weight = number of valid time bins
+          per stim). NaN when the neuron has no stim with
+          :math:`R_{b,n} \\ge 2` and :math:`T_b \\ge 2`.
+        - ``'ccmax'`` (``float``) — Hsu/Spearman-Brown noise ceiling
+          (capped at ``max_ccmax_iters`` random half-splits per
+          ``(stim, neuron)``), length-weighted across stims with
+          :math:`R_{b,n} \\ge 2`. Falls back to ``1.0`` when the neuron
+          has zero such stims (R=1 everywhere — no normalization
+          possible, so ``cc_norm = cc_raw``). NaN if every contributing
+          stim has :math:`\\rho_{\\text{half}} \\le 0` (signal too weak
+          to estimate the ceiling).
+
+        Both scalars use the length-weighted aggregation convention from
+        ``metrics_paradigm.md`` §11, matching what ``corrcoef`` /
+        ``normalized_corrcoef`` would compute on the concatenated-over-stims
+        time axis.
+
+        Parameters
+        ----------
+        max_ccmax_iters : int, default 126
+            Maximum number of random half-splits per ``(stim, neuron)``
+            for the CCmax estimate. ``C(R, R/2)`` blows up for ``R > 10``;
+            126 matches the default of :func:`compute_CCmax`.
+
+        Returns
+        -------
+        dict
+            ``{'snr': Tensor[N], 'ccmax': Tensor[N]}`` for inspection.
+            The same values are written into ``self.nrn_meta`` as plain
+            Python floats.
+
+        Notes
+        -----
+        Opt-in (not auto-called in ``__init__``). CCmax is
+        :math:`O(S \\cdot N \\cdot R^2 \\cdot \\text{max\\_iters})` in
+        the worst case — on big datasets (AA4, NAT4, Espejo NAT) this
+        can take tens of seconds. Call once after dataset construction;
+        results live on ``nrn_meta`` for subsequent filter-API calls.
+
+        Examples
+        --------
+        >>> ds = CRCNSAA1Dataset(...)
+        >>> ds.compute_neuron_quality()
+        >>> ds.select_pop_by_nrn_predicate(lambda n: n['snr'] > 0.5)
+        """
+        # lazy imports to avoid pulling in metrics at base-class load time
+        from deepSTRF.metrics.performance import (
+            _ccmax_per_neuron,
+            _sahani_linden_per_neuron,
+        )
+
+        S = len(self.responses)
+        N = self.N_neurons
+        nan = float("nan")
+
+        if S == 0 or N == 0:
+            snr_n = torch.full((N,), nan)
+            ccmax_n = torch.full((N,), nan)
+        else:
+            # 1. Determine padding dimensions and the per-neuron "has R>=2
+            # stim" indicator (used for the CCmax R=1 fallback).
+            R_max = 1
+            T_max = 1
+            has_r2_stim = torch.zeros(N, dtype=torch.bool)
+            for s in range(S):
+                for n in range(N):
+                    r = self.responses[s][n]
+                    if tuple(r.shape) == (1, 1):
+                        continue
+                    R_max = max(R_max, int(r.shape[0]))
+                    T_max = max(T_max, int(r.shape[1]))
+                    if r.shape[0] >= 2:
+                        has_r2_stim[n] = True
+
+            # 2. Build a canonical NaN-padded (S, N, R_max, T_max) tensor.
+            stacked = torch.full((S, N, R_max, T_max), nan)
+            for s in range(S):
+                for n in range(N):
+                    r = self.responses[s][n]
+                    if tuple(r.shape) == (1, 1):
+                        continue
+                    R, T = int(r.shape[0]), int(r.shape[1])
+                    stacked[s, n, :R, :T] = r
+
+            valid = ~torch.isnan(stacked)
+
+            # 3. Per-neuron SP, NP, CCmax (all length-weighted across stims).
+            sp, np_ = _sahani_linden_per_neuron(stacked, valid)
+            snr_n = sp / np_.clamp(min=1e-12)
+            ccmax_n = _ccmax_per_neuron(stacked, valid, max_iters=max_ccmax_iters)
+
+            # 4. CCmax R=1 fallback: neurons with zero R>=2 stims get 1.0.
+            # NaN from any other cause (all rho_half <= 0) is left as NaN.
+            fallback = torch.isnan(ccmax_n) & ~has_r2_stim
+            ccmax_n = torch.where(fallback, torch.ones_like(ccmax_n), ccmax_n)
+
+        for i in range(N):
+            self.nrn_meta[i]["snr"] = float(snr_n[i].item())
+            self.nrn_meta[i]["ccmax"] = float(ccmax_n[i].item())
+
+        return {"snr": snr_n, "ccmax": ccmax_n}
 
     def __add__(self, other):
         """Concatenate two datasets on BOTH the stim and neuron axes (sugar for :func:`deepSTRF.utils.data.concat_neural_datasets`).

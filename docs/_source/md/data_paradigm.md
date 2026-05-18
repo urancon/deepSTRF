@@ -215,18 +215,54 @@ information-preserving choice.
 ### Selection API
 
 ```python
-# neuron-side (one of the following)
+# neuron-side — exact-match (one of the following)
 ds.select_neuron(i)                          # single
 ds.select_population([0, 1, 5])              # explicit list
 ds.select_pop_by_nrn_attr("area", "MLd")     # by neuron metadata
 ds.select_pop_by_stim_attr("subset", "val")  # neurons with >=1 valid resp on val stims
 
+# neuron-side — predicate (threshold, range, compound)
+ds.select_pop_by_nrn_predicate(lambda n: n.get("snr", 0) > 0.5)
+ds.select_pop_by_stim_predicate(lambda s: s["duration_s"] >= 2.0)
+
 # stim-side (one of the following)
 ds.select_stim(i)                            # single
 ds.select_stims([0, 5, 10])                  # explicit list
 ds.select_stims_by_attr("subset", "val")     # by stim metadata
+ds.select_stims_by_predicate(lambda s: s["type"] in {"song", "call"})
 ds.reset_stim_selection()                    # clear S_sel (back to None)
 ```
+
+The `*_predicate` variants take any `callable(dict) -> bool`, so threshold
+(`snr > 0.5`), range (`200 <= depth_um <= 800`), and compound conditions
+are expressible. Forgiving missing-key semantics match the `*_attr`
+siblings (`KeyError` / `TypeError` silently skip), so a single predicate
+works on a concatenated dataset whose sources carry heterogeneous metadata
+schemas.
+
+### Opt-in per-neuron quality metrics
+
+Call `ds.compute_neuron_quality()` once after construction to write two
+scalars into each `nrn_meta[i]`:
+
+```python
+ds.compute_neuron_quality()
+ds.nrn_meta[0]   # → {..., "snr": 0.52, "ccmax": 0.91}
+ds.select_pop_by_nrn_predicate(lambda n: n["snr"] > 0.5)
+```
+
+- `'snr'` — Sahani-Linden signal-to-noise ratio $\text{SP}_n / \text{NP}_n$,
+  length-weighted across stims (weight = number of valid time bins per
+  stim, matching the convention in `metrics_paradigm.md` §11). NaN
+  when the neuron has no stim with $R_{b,n} \ge 2$ and $T_b \ge 2$.
+- `'ccmax'` — Hsu/Spearman-Brown noise ceiling, length-weighted across
+  stims with $R_{b,n} \ge 2$. Falls back to `1.0` when the neuron has
+  zero such stims (R=1 everywhere — no normalization possible, so
+  `cc_norm = cc_raw`).
+
+Opt-in (not auto-called in `__init__`) because CCmax is
+$O(S \cdot N \cdot R^2 \cdot \text{max\_iters})$ in the worst case — on
+big datasets (AA4, NAT4, Espejo NAT) this runs in tens of seconds.
 
 Why two selectors are sometimes both needed:
 
