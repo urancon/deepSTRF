@@ -60,19 +60,29 @@ class PerNeuronFitter(Fitter):
     # ------------------------------------------------------------------
 
     def _per_cell_param_slices(self):
-        """Yield (param, slice_along_n_dim_0) for every readout parameter
-        whose leading axis is the neuron axis ``N = self.model.O``.
+        """Yield every readout *tensor* whose leading axis is the neuron
+        axis ``N = self.model.O`` — both ``Parameter``s and ``Buffer``s.
 
         Convention: deepSTRF readouts (``LinearReadout``, ``STRFReadout``)
         store per-neuron parameters with ``N`` as the leading axis. We
-        skip parameters that don't satisfy this — the only realistic
-        shapes affected are scalar buffers / regularization terms that
-        wouldn't need per-cell snapshotting anyway.
+        skip tensors that don't satisfy this — the only realistic
+        candidates filtered out are scalar buffers (e.g. BatchNorm's
+        ``num_batches_tracked``) and shared regularization terms.
+
+        Yielding buffers as well as parameters matters for readouts that
+        embed normalization layers with per-neuron running statistics
+        (e.g. ``BatchNorm1d(N)`` after the STRF kernel): without buffer
+        snapshotting, restored per-cell parameters would sit on top of
+        running statistics that kept drifting after the cell froze.
         """
         N = self.model.O
         for p in self.model.readout.parameters():
             if p.dim() >= 1 and p.shape[0] == N:
                 yield p
+        for b in self.model.readout.buffers():
+            # skip 0-d scalar buffers (e.g. BN's num_batches_tracked)
+            if b.dim() >= 1 and b.shape[0] == N:
+                yield b
 
     def _snapshot_cell(self, n: int) -> List[torch.Tensor]:
         return [p.data[n].detach().clone() for p in self._per_cell_param_slices()]

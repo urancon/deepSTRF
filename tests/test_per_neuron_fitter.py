@@ -314,6 +314,72 @@ def test_snapshot_is_taken_at_improvement_time_not_freeze_time():
     )
 
 
+def test_snapshot_includes_per_neuron_buffers():
+    """Readouts that embed normalization layers with per-neuron running
+    buffers (e.g. ``BatchNorm1d(N)`` after the STRF kernel) must have
+    those buffers snapshotted and restored alongside the parameters.
+
+    Without this, restored per-cell weights would sit on top of running
+    statistics that kept accumulating after the cell froze — same drift
+    failure mode as the snapshot-timing bug, one layer down.
+    """
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders(N=2)
+
+    class _LinearReadoutWithBN(torch.nn.Module):
+        def __init__(self, F=4, N=2):
+            super().__init__()
+            self.O = N
+            self.fc = torch.nn.Linear(F, N, bias=True)
+            self.bn = torch.nn.BatchNorm1d(N)
+            self.readout = torch.nn.ModuleDict({"fc": self.fc, "bn": self.bn})
+
+        def forward(self, stims):
+            x = stims.transpose(-1, -2)
+            y = self.fc(x).transpose(-1, -2)   # (B, N, T)
+            y = self.bn(y)
+            return y.unsqueeze(2)
+
+        def detach(self):
+            pass
+
+    model = _LinearReadoutWithBN(F=4, N=2)
+    fitter = PerNeuronFitter(
+        model, train_loader, val_loader,
+        max_epochs=8, patience=3,
+        log_fn=lambda d: None,
+    )
+
+    # Force cell 0 to freeze early; record its running buffers at best-epoch.
+    cell0_trajectory = [0.9, 0.7, 0.5, 0.3, 0.2, 0.1, 0.0, -0.1]
+    buffers_at_epoch_0 = {}
+
+    original_evaluate = fitter._evaluate
+
+    def _evaluate(loader):
+        out = original_evaluate(loader)
+        e = getattr(fitter, "_e", 0)
+        fitter._e = e + 1
+        if e == 0:
+            buffers_at_epoch_0["mean"] = model.bn.running_mean[0].detach().clone()
+            buffers_at_epoch_0["var"]  = model.bn.running_var[0].detach().clone()
+        out["cc_norm"] = torch.tensor([cell0_trajectory[e], 0.1 + 1e-3 * e])
+        return out
+
+    fitter._evaluate = _evaluate
+    fitter.fit()
+
+    assert int(fitter._frozen_cells[0].item()) == 1
+    # The BN's per-neuron running buffers for cell 0 should match its
+    # epoch-0 capture, NOT whatever drifted to over the post-freeze epochs.
+    assert torch.allclose(
+        model.bn.running_mean[0], buffers_at_epoch_0["mean"]
+    ), "BN running_mean[0] should be restored to the best-epoch state"
+    assert torch.allclose(
+        model.bn.running_var[0], buffers_at_epoch_0["var"]
+    ), "BN running_var[0] should be restored to the best-epoch state"
+
+
 def test_snapshot_also_restores_unfrozen_cells_at_end():
     """Cells that never frozen but improved during training must also be
     restored to their best-on-monitor state at end-of-fit."""
