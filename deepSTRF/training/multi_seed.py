@@ -13,8 +13,9 @@ TODOs that need a split-factory rather than a seed sweep.
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -37,6 +38,121 @@ def _nanstd(x: torch.Tensor, dim: int = 0) -> torch.Tensor:
     mean = torch.nanmean(x, dim=dim, keepdim=True)
     sq = (x - mean) ** 2
     return torch.sqrt(torch.nanmean(sq, dim=dim))
+
+
+def _summarise_tensor(t: torch.Tensor) -> Dict[str, float]:
+    """Return ``{mean, p10, p50, p90, n_valid}`` for a 1-d per-neuron tensor.
+
+    NaN entries are dropped before quantiles. The dict is JSON-serializable.
+    """
+    t = t.detach().cpu()
+    valid = t[~t.isnan()]
+    out: Dict[str, float] = {"mean": float(torch.nanmean(t).item()),
+                              "n_valid": int(valid.numel())}
+    if valid.numel():
+        out["p10"] = float(torch.quantile(valid, 0.10).item())
+        out["p50"] = float(torch.quantile(valid, 0.50).item())
+        out["p90"] = float(torch.quantile(valid, 0.90).item())
+    else:
+        out["p10"] = float("nan")
+        out["p50"] = float("nan")
+        out["p90"] = float("nan")
+    return out
+
+
+def _jsonify(value: Any) -> Any:
+    """Convert torch tensors in a value tree to JSON-friendly summaries.
+
+    Scalars (0-d / length-1) become Python floats. Per-neuron tensors become
+    ``_summarise_tensor`` dicts. Lists and dicts are walked recursively.
+    Everything else passes through.
+    """
+    if isinstance(value, torch.Tensor):
+        if value.dim() == 0 or value.numel() == 1:
+            return float(value.detach().item())
+        if value.dim() == 1:
+            return _summarise_tensor(value)
+        # higher-rank tensors: punt to mean — these are unexpected in the
+        # epoch dict but we don't want to crash on weird custom metrics.
+        return {"mean": float(torch.nanmean(value).item()),
+                "shape": list(value.shape)}
+    if isinstance(value, dict):
+        return {k: _jsonify(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonify(v) for v in value]
+    return value
+
+
+def _save_seed_outputs(
+    seed_dir: Path,
+    history: List[Dict[str, Any]],
+    val_post: Mapping[str, Any],
+    test_post: Mapping[str, Any],
+    state_dict: Mapping[str, torch.Tensor],
+) -> None:
+    """Write ``history.json``, ``final.json``, ``final_neurons.pt``,
+    ``best.pt`` under ``seed_dir``."""
+    seed_dir.mkdir(parents=True, exist_ok=True)
+
+    # history.json: per-epoch dicts with tensors summarised to JSON
+    with open(seed_dir / "history.json", "w") as f:
+        json.dump([_jsonify(epoch) for epoch in history], f, indent=2)
+
+    # final.json: population-level summaries for val + test
+    with open(seed_dir / "final.json", "w") as f:
+        json.dump({"val": _jsonify(dict(val_post)),
+                    "test": _jsonify(dict(test_post))}, f, indent=2)
+
+    # final_neurons.pt: full per-neuron tensors for downstream analysis
+    def _per_neuron_only(d: Mapping[str, Any]) -> Dict[str, torch.Tensor]:
+        out: Dict[str, torch.Tensor] = {}
+        for k, v in d.items():
+            if isinstance(v, torch.Tensor) and v.dim() >= 1 and v.numel() > 1:
+                out[k] = v.detach().cpu()
+        return out
+    torch.save(
+        {"val": _per_neuron_only(val_post), "test": _per_neuron_only(test_post)},
+        seed_dir / "final_neurons.pt",
+    )
+
+    # best.pt: state_dict (deep copy already happened upstream)
+    torch.save(state_dict, seed_dir / "best.pt")
+
+
+def _save_summary(
+    output_dir: Path,
+    results: Mapping[str, Any],
+    monitor: str,
+    mode: str,
+) -> None:
+    """Write ``summary.json`` (across-seed mean/std + best_seed) and
+    ``summary_neurons.pt`` (per-neuron mean/std tensors) under ``output_dir``."""
+    summary_scalars: Dict[str, Any] = {
+        "seeds": list(results["seeds"]),
+        "best_seed": int(results["best_seed"]),
+        "monitor": monitor,
+        "mode": mode,
+    }
+    neuron_tensors: Dict[str, torch.Tensor] = {}
+    for k, v in results.items():
+        if k.startswith(("mean_", "std_", "per_seed_val_", "per_seed_test_")):
+            if isinstance(v, torch.Tensor):
+                if v.dim() == 1 and v.numel() > 1:
+                    summary_scalars[k] = _summarise_tensor(v)
+                    neuron_tensors[k] = v.detach().cpu()
+                elif v.dim() <= 1:
+                    summary_scalars[k] = float(torch.nanmean(v).item()) \
+                        if v.numel() > 0 else float("nan")
+                else:
+                    # per_seed_*: (n_seeds, N)
+                    summary_scalars[k] = {
+                        "shape": list(v.shape),
+                        "mean": float(torch.nanmean(v).item()),
+                    }
+                    neuron_tensors[k] = v.detach().cpu()
+    with open(output_dir / "summary.json", "w") as f:
+        json.dump(summary_scalars, f, indent=2)
+    torch.save(neuron_tensors, output_dir / "summary_neurons.pt")
 
 
 def _stack_metric(values: Sequence[Any]) -> torch.Tensor:
@@ -76,6 +192,7 @@ def fit_multi_seed(
     seeds: Optional[Sequence[int]] = None,
     fitter_kwargs: Optional[Mapping[str, Any]] = None,
     logger_factory: Optional[Callable[[int], Any]] = None,
+    output_dir: Optional[Union[str, Path]] = None,
     set_seed_strict: bool = False,
 ) -> Dict[str, Any]:
     """Run the same Fitter configuration ``n_seeds`` times under different seeds.
@@ -116,6 +233,16 @@ def fit_multi_seed(
         :class:`deepSTRF.training.wandb_log.WandbSeedLogger` for the
         reference implementation. Default ``None`` (silent multi-seed sweep
         unless ``fitter_kwargs['log_fn']`` is set).
+    output_dir
+        If given, write per-seed ``history.json`` (JSON-summarised epoch
+        log), ``final.json`` (post-fit val + test population summaries),
+        ``final_neurons.pt`` (per-neuron tensors for downstream analysis),
+        and ``best.pt`` (state_dict) under
+        ``output_dir/seed{seed}/``. Also writes ``output_dir/summary.json``
+        (across-seed mean / std + best_seed) and
+        ``output_dir/summary_neurons.pt`` (per-neuron mean / std / per-seed
+        tensors). Logger-agnostic: this happens regardless of
+        ``logger_factory``. Default ``None`` (in-memory results only).
     set_seed_strict
         Forwarded to ``set_random_seed(strict=...)``. Default ``False``.
 
@@ -160,6 +287,10 @@ def fit_multi_seed(
     user_log_fn = fitter_kwargs.pop("log_fn", None)
     base_ckpt = fitter_kwargs.pop("ckpt_path", None)
 
+    output_path = Path(output_dir) if output_dir is not None else None
+    if output_path is not None:
+        output_path.mkdir(parents=True, exist_ok=True)
+
     monitor = fitter_kwargs.get("monitor", "val_cc_norm")
     mode = fitter_kwargs.get("mode", "max")
     monitor_key = monitor.removeprefix("val_") if monitor.startswith("val_") else monitor
@@ -203,7 +334,15 @@ def fit_multi_seed(
         histories.append(history)
         val_per_seed.append(val_post)
         test_per_seed.append(test_post)
-        state_dicts.append(copy.deepcopy(fitter.model.state_dict()))
+        sd = copy.deepcopy(fitter.model.state_dict())
+        state_dicts.append(sd)
+
+        if output_path is not None:
+            _save_seed_outputs(
+                output_path / f"seed{seed}",
+                history=history, val_post=val_post, test_post=test_post,
+                state_dict=sd,
+            )
 
     # Aggregation
     results: Dict[str, Any] = {
@@ -234,5 +373,8 @@ def fit_multi_seed(
     )
     results["best_seed"] = seeds[best_idx]
     results["best_state_dict"] = state_dicts[best_idx]
+
+    if output_path is not None:
+        _save_summary(output_path, results, monitor=monitor, mode=mode)
 
     return results

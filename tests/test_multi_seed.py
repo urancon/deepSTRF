@@ -8,6 +8,8 @@ problem with no real data on disk.
 
 from __future__ import annotations
 
+import json
+
 import torch
 from torch.utils.data import DataLoader
 
@@ -210,6 +212,107 @@ def test_ckpt_path_is_suffixed_per_seed(tmp_path):
     assert not base.exists(), "base ckpt path must not be written (would clobber)"
     assert (tmp_path / "best_seed0.pt").exists()
     assert (tmp_path / "best_seed1.pt").exists()
+
+
+# -----------------------------------------------------------------------------
+# output_dir auto-save (logger-agnostic)
+# -----------------------------------------------------------------------------
+
+
+def test_output_dir_creates_per_seed_tree(tmp_path):
+    """Every seed gets its own subdir with history.json, final.json,
+    final_neurons.pt, best.pt; the root has summary.json + summary_neurons.pt."""
+    out = tmp_path / "runs"
+    fit_multi_seed(
+        model_factory=_model_factory,
+        loader_factory=_loader_factory,
+        seeds=[0, 1],
+        fitter_kwargs={"max_epochs": 3, "patience": 3},
+        output_dir=out,
+    )
+    assert (out / "summary.json").exists()
+    assert (out / "summary_neurons.pt").exists()
+    for s in (0, 1):
+        sd = out / f"seed{s}"
+        assert (sd / "history.json").exists()
+        assert (sd / "final.json").exists()
+        assert (sd / "final_neurons.pt").exists()
+        assert (sd / "best.pt").exists()
+
+
+def test_output_dir_history_json_is_loadable_and_well_formed(tmp_path):
+    out = tmp_path / "runs"
+    fit_multi_seed(
+        model_factory=_model_factory,
+        loader_factory=_loader_factory,
+        seeds=[0],
+        fitter_kwargs={"max_epochs": 3, "patience": 3},
+        output_dir=out,
+    )
+    with open(out / "seed0" / "history.json") as f:
+        history = json.load(f)
+    assert len(history) == 3
+    assert history[0]["epoch"] == 0
+    # Per-neuron metrics summarised to {mean, p10, p50, p90, n_valid}
+    cc = history[0]["val_cc_norm"]
+    assert isinstance(cc, dict)
+    assert set(cc) >= {"mean", "p10", "p50", "p90", "n_valid"}
+    # Scalars stay scalars
+    assert isinstance(history[0]["val_loss"], float)
+
+
+def test_output_dir_final_neurons_round_trip_via_torch_load(tmp_path):
+    out = tmp_path / "runs"
+    fit_multi_seed(
+        model_factory=_model_factory,
+        loader_factory=_loader_factory,
+        seeds=[0],
+        fitter_kwargs={"max_epochs": 2, "patience": 2},
+        output_dir=out,
+    )
+    N = 2
+    saved = torch.load(out / "seed0" / "final_neurons.pt", weights_only=False)
+    assert set(saved) == {"val", "test"}
+    assert saved["val"]["cc_norm"].shape == (N,)
+    assert saved["test"]["cc_norm"].shape == (N,)
+    # 'loss' is scalar -> excluded from final_neurons.pt
+    assert "loss" not in saved["val"]
+
+
+def test_output_dir_best_pt_loads_into_fresh_model(tmp_path):
+    out = tmp_path / "runs"
+    results = fit_multi_seed(
+        model_factory=_model_factory,
+        loader_factory=_loader_factory,
+        seeds=[0, 1, 2],
+        fitter_kwargs={"max_epochs": 2, "patience": 2},
+        output_dir=out,
+    )
+    best = results["best_seed"]
+    sd = torch.load(out / f"seed{best}" / "best.pt", weights_only=False)
+    fresh = _model_factory(seed=999)
+    fresh.load_state_dict(sd, strict=True)
+
+
+def test_output_dir_summary_json_includes_best_seed_and_monitor(tmp_path):
+    out = tmp_path / "runs"
+    fit_multi_seed(
+        model_factory=_model_factory,
+        loader_factory=_loader_factory,
+        seeds=[0, 1, 2],
+        fitter_kwargs={"max_epochs": 2, "patience": 2,
+                        "monitor": "val_loss", "mode": "min"},
+        output_dir=out,
+    )
+    with open(out / "summary.json") as f:
+        summary = json.load(f)
+    assert summary["seeds"] == [0, 1, 2]
+    assert summary["best_seed"] in [0, 1, 2]
+    assert summary["monitor"] == "val_loss"
+    assert summary["mode"] == "min"
+    # mean_/std_ entries for per-neuron metrics are dict summaries
+    assert isinstance(summary["mean_test_cc_norm"], dict)
+    assert "p50" in summary["mean_test_cc_norm"]
 
 
 # -----------------------------------------------------------------------------
