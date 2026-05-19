@@ -115,6 +115,64 @@ The training step inside `_train_one_epoch` is the four-line canonical
 loop. The validation step inside `_evaluate` is the cross-batch
 concat-then-compute pattern documented in §6.
 
+### 4.1 Per-cell snapshot restoration (`track_per_cell_best=True`)
+
+Optional opt-in: track each cell's best-on-`monitor` epoch independently
+and overlay its individual-best parameter slice on top of the global
+checkpoint restore at end-of-fit. The training trajectory is identical
+to a vanilla Fitter run — no gradient masking, no per-cell stopping,
+same termination epoch. Only difference: which checkpoint is loaded at
+the end of `fit()`.
+
+```python
+fitter = Fitter(
+    model, train_loader, val_loader,
+    monitor='val_cc_norm', patience=50,
+    track_per_cell_best=True,
+)
+fitter.fit()
+```
+
+**How it works.** At every val evaluation, for each cell $n$ whose
+monitor score improved against its own running best, the Fitter snapshots
+`model.readout`'s per-$N$ parameter and buffer slices for that cell.
+Snapshots are continuously overwritten as long as the cell keeps
+improving, then preserved after the last improvement. At end-of-fit,
+after the existing `ckpt_path` restore (which resets every parameter to
+its global-best state), each cell's snapshot is overlaid on top.
+
+**Strict guarantee on no-shared-params models.** When every learnable
+scalar under `model.readout` has $N$ as leading axis (the post-2026-05-19
+audio convention — Linear / LinearNonlinear with the per-neuron BN
+inside `STRFReadout`), the post-hoc per-cell restored state is at least
+as good as the vanilla restored state **per cell on the validation set,
+by construction**. Each cell ends up at its individual val peak, which
+is ≥ its score at the population peak.
+
+**Empirical (Espejo NAT, animal=AMT, 168 cells, Linear, patience=50):**
+mean test cc_norm goes from +0.378 (vanilla) to +0.402 (post-hoc per-cell
+restore), +0.024 absolute. Val gain transfers cleanly when the val set
+is large enough (~85 stims here). On small val sets (≤5 stims) the
+per-cell val peaks are noise-dominated and the val→test transfer
+breaks; mean test movement was within ±0.005 on NS1 (3 val stims).
+
+**Caveat on shared-core models.** The bidirectional `ckpt_path` ↔
+per-cell restore order means non-readout parameters (e.g. a shared core
+or input normalization) end up at their global-best state while each
+cell's readout slice ends up at its individual-best epoch. If those
+epochs differ, the cell's readout was trained against a different core
+state than what it sees at eval — an inconsistency that empirically
+shows up as a small (~2/168) negative-Δ tail on val. The strict
+guarantee only holds when there is nothing to be inconsistent with.
+Models built before the 2026-05-19 BN refactor that still have a
+non-trivial `core` should treat `track_per_cell_best` as best-effort,
+not strict.
+
+**Requirements.** The `val_metrics[monitor.removeprefix('val_')]`
+callable must return a `(N,)` per-cell tensor; the default
+`_default_val_metrics` does this. With a scalar monitor, the flag
+raises `ValueError` at the first eval.
+
 ## 5. Hooks for customization
 
 Two equivalent ways to override defaults: pass a callable as a kwarg, or

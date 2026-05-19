@@ -145,6 +145,19 @@ class Fitter:
         when ``N × R × T`` is in the millions (e.g. AA2's 494-cell
         population). Set to ``False`` to skip; ``train_loss`` is always
         reported.
+    track_per_cell_best
+        If ``True``, maintain a per-cell best-on-``monitor`` snapshot of
+        the readout's per-N parameter and buffer slices throughout
+        training. At end-of-fit, after the global ``ckpt_path`` restore,
+        each cell's slice is overlaid with its individual-best snapshot.
+        On no-shared-params models this is **strictly** at least as good
+        as the vanilla restore on the validation set, cell-by-cell, by
+        construction — every cell ends up at its individual val peak.
+        The training trajectory itself is unchanged (no gradient masking,
+        no per-cell stopping); the only difference is which checkpoint
+        is restored at end. Requires ``val_metrics[monitor.removeprefix
+        ('val_')]`` to return a ``(N,)`` per-cell tensor (the default
+        :func:`_default_val_metrics` does this). Default ``False``.
     """
 
     def __init__(
@@ -164,6 +177,7 @@ class Fitter:
         ckpt_path: Optional[Union[str, Path]] = None,
         log_fn: Callable[[Mapping[str, Any]], None] = _format_epoch,
         track_train_metrics: bool = True,
+        track_per_cell_best: bool = False,
     ) -> None:
         if mode not in ("max", "min"):
             raise ValueError(f"mode must be 'max' or 'min', got {mode!r}")
@@ -192,6 +206,7 @@ class Fitter:
         self.ckpt_path = Path(ckpt_path) if ckpt_path is not None else None
         self.log_fn = log_fn
         self.track_train_metrics = track_train_metrics
+        self.track_per_cell_best = track_per_cell_best
 
     # ------------------------------------------------------------------
     # Hooks (subclass and override, or pass kwargs at construction time)
@@ -229,6 +244,15 @@ class Fitter:
         )
         epochs_no_improvement = 0
 
+        if self.track_per_cell_best:
+            N = self.model.O
+            self._per_cell_best_score = torch.full(
+                (N,),
+                -float("inf") if self.mode == "max" else float("inf"),
+                device=self.device,
+            )
+            self._per_cell_snapshots: Dict[int, List[torch.Tensor]] = {}
+
         for epoch in range(self.max_epochs):
             train = self._train_one_epoch()
             val = self._evaluate(self.val_loader)
@@ -243,6 +267,14 @@ class Fitter:
                     f"monitor key {self.monitor!r} not in epoch dict; "
                     f"available keys: {sorted(epoch_dict)}"
                 )
+
+            # Per-cell snapshot update happens BEFORE the global best/patience
+            # update so that snapshots track each cell's individual best
+            # regardless of population-level early-stop behaviour. Needs the
+            # per-cell monitor tensor; raises if it isn't one.
+            if self.track_per_cell_best:
+                self._update_per_cell_best(epoch_dict[self.monitor])
+
             score = _to_scalar(epoch_dict[self.monitor])
             if better(score, best_score):
                 best_score = score
@@ -261,6 +293,14 @@ class Fitter:
                 torch.load(self.ckpt_path, map_location=self.device)
             )
 
+        # Overlay per-cell snapshots on top of the global-ckpt restore.
+        # Order is intentional: the global restore resets every parameter
+        # (including non-readout ones like the model's core) to the
+        # population-best state; the per-cell overlay then replaces each
+        # cell's readout slice with its individual-best.
+        if self.track_per_cell_best:
+            self._restore_per_cell_snapshots()
+
         return history
 
     def evaluate(self, loader: DataLoader) -> Dict[str, Any]:
@@ -270,6 +310,59 @@ class Fitter:
         For test-set evaluation after training: ``fitter.evaluate(test_loader)``.
         """
         return self._evaluate(loader)
+
+    # ------------------------------------------------------------------
+    # Per-cell snapshot bookkeeping (only used when track_per_cell_best=True)
+    # ------------------------------------------------------------------
+
+    def _per_cell_readout_tensors(self):
+        """Yield every readout tensor whose leading axis is the neuron axis.
+
+        Iterates both ``parameters()`` and ``buffers()`` under
+        ``self.model.readout``, filtering for ``shape[0] == self.model.O``.
+        On a no-shared-params readout (STRF kernel + per-neuron BN +
+        per-neuron activation, the post-2026-05-19 audio convention)
+        this yields every learnable scalar in the readout.
+        """
+        N = self.model.O
+        for p in self.model.readout.parameters():
+            if p.dim() >= 1 and p.shape[0] == N:
+                yield p
+        for b in self.model.readout.buffers():
+            # skip 0-d scalar buffers (e.g. BN's num_batches_tracked)
+            if b.dim() >= 1 and b.shape[0] == N:
+                yield b
+
+    def _update_per_cell_best(self, score: Any) -> None:
+        N = self.model.O
+        if not isinstance(score, torch.Tensor) or score.shape != (N,):
+            raise ValueError(
+                f"track_per_cell_best=True requires the {self.monitor!r} "
+                f"val metric to return a per-cell tensor of shape ({N},); "
+                f"got {type(score).__name__} with shape "
+                f"{tuple(score.shape) if isinstance(score, torch.Tensor) else None!r}. "
+                f"Use val_metrics callables with reduction='none'."
+            )
+        score = score.to(self.device)
+        better = (
+            (lambda new, best: new > best)
+            if self.mode == "max"
+            else (lambda new, best: new < best)
+        )
+        improved = better(score, self._per_cell_best_score) & ~score.isnan()
+        for n in torch.nonzero(improved, as_tuple=True)[0].tolist():
+            self._per_cell_snapshots[n] = [
+                p.data[n].detach().clone()
+                for p in self._per_cell_readout_tensors()
+            ]
+        self._per_cell_best_score = torch.where(
+            improved, score, self._per_cell_best_score
+        )
+
+    def _restore_per_cell_snapshots(self) -> None:
+        for n, snap in self._per_cell_snapshots.items():
+            for p, s in zip(self._per_cell_readout_tensors(), snap):
+                p.data[n] = s
 
     # ------------------------------------------------------------------
     # Internals

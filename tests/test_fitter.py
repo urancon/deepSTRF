@@ -427,3 +427,148 @@ def test_pad_and_cat_pads_with_nan_and_cats_along_batch():
 def test_pad_and_cat_empty_raises():
     with pytest.raises(ValueError, match="empty"):
         _pad_and_cat([])
+
+
+# -----------------------------------------------------------------------------
+# (g) track_per_cell_best — per-cell best-on-monitor snapshot + end-of-fit
+#     restore overlaid on top of the global ckpt_path restore.
+# -----------------------------------------------------------------------------
+
+
+class _LinearReadoutWithReadoutAttr(torch.nn.Module):
+    """Variant of _LinearReadout that exposes ``self.readout`` so the
+    per-cell snapshot logic can find the per-N parameters and buffers."""
+
+    def __init__(self, F=4, N=2, with_bn: bool = False):
+        super().__init__()
+        self.O = N
+        self.fc = torch.nn.Linear(F, N, bias=True)
+        if with_bn:
+            self.bn = torch.nn.BatchNorm1d(N)
+            self.readout = torch.nn.ModuleDict({"fc": self.fc, "bn": self.bn})
+        else:
+            self.bn = None
+            self.readout = self.fc
+
+    def forward(self, stims):
+        x = stims.transpose(-1, -2)        # (B, T, F)
+        y = self.fc(x).transpose(-1, -2)   # (B, N, T)
+        if self.bn is not None:
+            y = self.bn(y)
+        return y.unsqueeze(2)              # (B, N, 1, T)
+
+    def detach(self):
+        pass
+
+
+def test_track_per_cell_best_requires_per_cell_monitor():
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders()
+    model = _LinearReadoutWithReadoutAttr(F=4, N=2)
+    # A val metric that returns a SCALAR breaks per-cell tracking.
+    fitter = Fitter(
+        model, train_loader, val_loader,
+        val_metrics={"cc_norm": lambda p, r: torch.tensor(0.5)},
+        max_epochs=2, patience=2,
+        log_fn=lambda d: None,
+        track_per_cell_best=True,
+    )
+    with pytest.raises(ValueError, match="per-cell"):
+        fitter.fit()
+
+
+def test_track_per_cell_best_snapshots_at_improvement_time():
+    """The snapshot for cell n must be the readout weight slice at cell n's
+    BEST-on-monitor epoch, regardless of how many epochs later training
+    continues or terminates."""
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders(N=2) if False else _make_loaders()
+    # _make_loaders gives N=2 by the default _ToyDataset; rebuild with our model.
+    model = _LinearReadoutWithReadoutAttr(F=4, N=2)
+    fitter = Fitter(
+        model, train_loader, val_loader,
+        max_epochs=8, patience=10,   # patience long enough that we run all 8 epochs
+        log_fn=lambda d: None,
+        track_per_cell_best=True,
+    )
+
+    # Drive cell 0's monitor: peak at epoch 2, then strictly worse.
+    # Cell 1: monotone improvement throughout.
+    cell0_traj = [0.1, 0.5, 0.9, 0.4, 0.3, 0.2, 0.1, 0.0]
+    weights_at_peak = {}
+
+    original_evaluate = fitter._evaluate
+
+    def _evaluate(loader):
+        out = original_evaluate(loader)
+        e = getattr(fitter, "_e", 0)
+        fitter._e = e + 1
+        if e == 2:
+            weights_at_peak["fc"] = model.fc.weight.data[0].detach().clone()
+            weights_at_peak["bias"] = model.fc.bias.data[0].detach().clone()
+        out["cc_norm"] = torch.tensor([cell0_traj[e], 0.1 + 1e-3 * e])
+        return out
+
+    fitter._evaluate = _evaluate
+    fitter.fit()
+
+    # Cell 0 must be restored to its epoch-2 snapshot (its peak), not to
+    # whatever it drifted to over the remaining 5 epochs.
+    assert torch.allclose(model.fc.weight.data[0], weights_at_peak["fc"]), \
+        "cell-0 readout weight should be restored to best-monitor state"
+    assert torch.allclose(model.fc.bias.data[0], weights_at_peak["bias"]), \
+        "cell-0 readout bias should be restored to best-monitor state"
+
+
+def test_track_per_cell_best_restores_buffers_too():
+    """Readouts with per-neuron buffers (e.g. BatchNorm1d(N)) — those
+    buffers must also be snapshotted and restored, otherwise the post-fit
+    eval-mode forward for cell n sits on top of running stats that kept
+    accumulating after cell n's monitor peaked."""
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders()
+    model = _LinearReadoutWithReadoutAttr(F=4, N=2, with_bn=True)
+    fitter = Fitter(
+        model, train_loader, val_loader,
+        max_epochs=8, patience=10,
+        log_fn=lambda d: None,
+        track_per_cell_best=True,
+    )
+    cell0_traj = [0.1, 0.5, 0.9, 0.4, 0.3, 0.2, 0.1, 0.0]
+    buffers_at_peak = {}
+
+    original_evaluate = fitter._evaluate
+
+    def _evaluate(loader):
+        out = original_evaluate(loader)
+        e = getattr(fitter, "_e", 0)
+        fitter._e = e + 1
+        if e == 2:
+            buffers_at_peak["mean"] = model.bn.running_mean[0].detach().clone()
+            buffers_at_peak["var"] = model.bn.running_var[0].detach().clone()
+        out["cc_norm"] = torch.tensor([cell0_traj[e], 0.1 + 1e-3 * e])
+        return out
+
+    fitter._evaluate = _evaluate
+    fitter.fit()
+
+    assert torch.allclose(model.bn.running_mean[0], buffers_at_peak["mean"]), \
+        "BN running_mean[0] should be restored to best-monitor state"
+    assert torch.allclose(model.bn.running_var[0], buffers_at_peak["var"]), \
+        "BN running_var[0] should be restored to best-monitor state"
+
+
+def test_track_per_cell_best_off_by_default_is_a_noop():
+    """Without the flag, Fitter must behave exactly as before — no
+    per-cell bookkeeping, no per-cell restore at end."""
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders()
+    model = _LinearReadoutWithReadoutAttr(F=4, N=2)
+    fitter = Fitter(
+        model, train_loader, val_loader,
+        max_epochs=3, patience=3,
+        log_fn=lambda d: None,
+    )
+    fitter.fit()
+    assert not hasattr(fitter, "_per_cell_snapshots"), \
+        "per-cell state should not exist when track_per_cell_best=False"
