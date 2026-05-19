@@ -118,58 +118,6 @@ class CausalLayerNorm(nn.Module):
         return self.ln(x.movedim(self.dim, -1)).movedim(-1, self.dim)
 
 
-class BatchNormFreq(nn.Module):
-    """Per-frequency BatchNorm for ``(B, C, F, T)`` audio spectrograms.
-
-    Treats ``F`` as the channel axis of the underlying
-    :class:`nn.BatchNorm2d`, so normalization runs over ``(B, C, T)``
-    independently per frequency band:
-
-        y[..., f, ...] = gamma[f] * (x[..., f, ...] - mu[f]) / sigma[f]
-                       + beta[f]
-
-    where ``mu[f]`` / ``sigma[f]`` are the running stats per band
-    (over batches and time) and ``gamma[f]`` / ``beta[f]`` are
-    learnable affine scalars.
-
-    Drop-in replacement for ``CausalLayerNorm(F, dim=-2)`` in models
-    where per-band normalization is preferred to per-(B, C, T)
-    F-axis normalization. The two differ in *what* they normalize:
-
-    - ``CausalLayerNorm(F, dim=-2)`` normalizes along the F axis at
-      every ``(B, C, T)`` position. This destroys per-timestep
-      absolute amplitude — bad for cells whose response depends on
-      loudness rather than relative spectral pattern.
-    - ``BatchNormFreq(F)`` normalizes ``(B, C, T)`` per band,
-      preserving per-timestep amplitudes and per-band relative scales.
-
-    Causality:
-
-    - Eval mode: ``running_mean[f]`` and ``running_var[f]`` are frozen
-      scalars; the output at time ``t`` is an affine function of ``x[t]``
-      alone. **Causal by construction** and absorbable into the next
-      linear layer's weights for clean STRF interpretation.
-    - Training mode: uses batch statistics over ``(B, T)``. Mildly
-      non-causal during training (each timestep's normalization sees
-      other timesteps from the same batch). Irrelevant for inference.
-
-    Empirically (NS1 + ``Linear``, 100 epochs): replacing
-    ``CausalLayerNorm`` with ``BatchNormFreq`` raises mean test
-    cc_norm from 0.17 to 0.61 — a 3.6x improvement that closes the
-    gap to the literature (Rancon et al. 2025, Comms. Biol.).
-    """
-    def __init__(self, F: int, eps: float = 1e-5, momentum: float = 0.1,
-                 affine: bool = True):
-        super().__init__()
-        # F as the channel axis: (B, C, F, T) → permute → (B, F, C, T)
-        # then BatchNorm2d normalizes over (B, C, T) per F.
-        self.bn = nn.BatchNorm2d(F, eps=eps, momentum=momentum, affine=affine)
-
-    def forward(self, x):
-        # x: (B, C, F, T) → (B, F, C, T) → BN → (B, C, F, T)
-        return self.bn(x.permute(0, 2, 1, 3)).permute(0, 2, 1, 3)
-
-
 #    #########################
 #       ACTIVATION FUNCTIONS
 #    #########################

@@ -27,12 +27,21 @@ from deepSTRF.models.layers import CausalSTRFConv
 class STRFReadout(nn.Module):
     """
     Per-neuron readout backed by a causal Spectro-Temporal Receptive
-    Field kernel.
+    Field kernel, with a per-neuron BatchNorm placed after the conv.
 
     Wraps a ``CausalSTRFConv`` of shape ``(N, C_in, F, T)`` and applies an
     output activation. The frequency axis is collapsed by the conv from
     ``F → 1``, so the readout naturally emits the canonical
     ``(B, N, R=1, T)`` rank.
+
+    The per-neuron ``nn.BatchNorm1d(N)`` between the conv and the activation
+    stabilises training and serves as the model's only normalisation layer
+    in the Linear / LinearNonlinear cases — every learnable scalar in this
+    readout (STRF kernel, conv bias, BN affine, BN running stats) has the
+    neuron axis as leading dim, so the readout is strictly
+    no-shared-params. Causality in eval mode is preserved: BN's running
+    statistics are per-channel scalars, applied element-wise on the time
+    axis at inference.
 
     Parameters
     ----------
@@ -58,16 +67,18 @@ class STRFReadout(nn.Module):
                  bias: bool = True):
         super().__init__()
         self.strf = CausalSTRFConv(F, T, C_in, out_neurons, kernel=kernel, bias=bias)
+        self.bn = nn.BatchNorm1d(out_neurons)
         self.activation = activation if activation is not None else nn.Identity()
 
     def forward(self, x):
         # x: (B, C_in, F, T)
         out = self.strf(x)                                  # (B, N, 1, T)
+        out = out.squeeze(-2)                                # (B, N, T)
+        out = self.bn(out)                                   # (B, N, T) — per-neuron BN
         # Apply activation on (B, T, N) so per-neuron parametric activations
         # (ParametricSoftplus / ParametricSigmoid / ParametricDoubleExponential)
         # broadcast correctly with N as the last axis. Shape-invariant
         # activations (Identity, nn.Sigmoid, nn.ReLU, ...) are unaffected.
-        out = out.squeeze(-2)                                # (B, N, T)
         out = out.transpose(-1, -2)                          # (B, T, N)
         out = self.activation(out)                           # (B, T, N)
         out = out.transpose(-1, -2).unsqueeze(-2)            # (B, N, 1, T)

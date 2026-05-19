@@ -21,10 +21,12 @@ class Linear(AudioEncodingModel):
     Field convolved with the (optionally prefiltered) input spectrogram.
 
     All learnable parameters live in the readout (``STRFReadout``), which
-    holds the kernel of shape ``(N, C_in, F, T)`` and applies it causally
-    via left-padding. The model's ``core`` is a single
-    ``CausalLayerNorm`` over the frequency axis — see notes below for the
-    rationale.
+    holds the kernel of shape ``(N, C_in, F, T)``, applies it causally via
+    left-padding, and follows it with a per-neuron ``nn.BatchNorm1d(N)``
+    before the output activation. The model's ``core`` is ``nn.Identity``
+    — every learnable scalar has the neuron axis as leading dim, so the
+    model is strictly no-shared-params (each neuron's parameters are
+    independent of every other neuron's).
 
     Parameters
     ----------
@@ -61,15 +63,11 @@ class Linear(AudioEncodingModel):
 
     Notes
     -----
-    A causal LayerNorm over the frequency axis is applied as the
-    model's core (per-timestep input normalization). Empirically, this
-    stabilizes training of small unparameterized STRF models
-    substantially. Unlike BatchNorm, LayerNorm cannot be absorbed into
-    the readout kernel at inference (it computes fresh statistics per
-    sample), so the model is technically nonlinear in the strict sense
-    — but the per-time-step normalization is mild and the learned
-    kernel still serves as a directly interpretable STRF up to a
-    per-sample input scaling.
+    The per-neuron BatchNorm inside the readout absorbs into the kernel
+    at inference (its running stats are frozen per-channel scalars), so
+    the model remains a strict linear-affine map of the input at eval
+    time and the learned STRF kernel is directly interpretable up to a
+    per-neuron affine rescaling.
     """
     def __init__(self, n_frequency_bands: int = 34, temporal_window_size: int = 9,
                  out_neurons: int = 1,
@@ -82,12 +80,11 @@ class Linear(AudioEncodingModel):
             out_neurons=out_neurons,
             prefiltering=prefiltering,
         )
-        # core: per-frequency BatchNorm — affine, absorbable into the readout
-        # kernel at eval time, and (unlike the previous CausalLayerNorm) it
-        # preserves per-timestep absolute amplitude. Causal in eval mode
-        # (running stats are scalars per band).
-        self.core = layers.BatchNormFreq(self.F)
-        # readout: pluggable STRF kernel + output activation
+        # core: identity. All learnable parameters live in the readout —
+        # the per-neuron BatchNorm1d inside STRFReadout handles normalisation
+        # at the model's output (one BN per cell, no params shared across N).
+        self.core = nn.Identity()
+        # readout: pluggable STRF kernel + per-neuron BN + output activation
         self.readout = STRFReadout(
             F=self.F, T=self.T, C_in=self.C_in, out_neurons=self.O,
             kernel=kernel,
@@ -225,11 +222,10 @@ class NetworkReceptiveField(AudioEncodingModel):
         )
         self.H = n_hidden
 
-        # core: per-band input norm → hidden STRF projection → channel norm → tanh
+        # core: hidden STRF projection → channel norm → tanh.
         # The hidden STRF projection emits (B, H, 1, T); LinearReadout downstream
         # squeezes the singleton spatial axis automatically.
         self.core = nn.Sequential(
-            layers.BatchNormFreq(self.F),
             layers.CausalSTRFConv(self.F, self.T, self.C_in, self.H, kernel=kernel),
             layers.CausalLayerNorm(self.H, dim=1),
             nn.Tanh(),
@@ -255,8 +251,8 @@ class NetworkReceptiveField(AudioEncodingModel):
             Only relevant when the prefilter has ``C_in == 2`` (e.g.
             AdapTrans). Selects the ON or OFF channel of the kernel.
         """
-        # core[1] is the CausalSTRFConv whose .STRF_weight() returns (H, C_in, F, T)
-        full = self.core[1].STRF_weight()
+        # core[0] is the CausalSTRFConv whose .STRF_weight() returns (H, C_in, F, T)
+        full = self.core[0].STRF_weight()
         if isinstance(self.prefiltering, AdapTrans):
             if polarity in ('ON', 'On', 'on', 0):
                 return full[hidden_idx, 0]
@@ -337,10 +333,9 @@ class DNet(AudioEncodingModel):
         self.H = n_hidden
         decay_kernel = round(init_tau * 7)
 
-        # core: per-band input norm → hidden STRF projection → channel norm
-        #       → sigmoid → per-hidden-unit causal exponential decay
+        # core: hidden STRF projection → channel norm → sigmoid
+        #       → per-hidden-unit causal exponential decay
         self.core = nn.Sequential(
-            layers.BatchNormFreq(self.F),
             layers.CausalSTRFConv(self.F, self.T, self.C_in, self.H, kernel=kernel),
             layers.CausalLayerNorm(self.H, dim=1),
             nn.Sigmoid(),
@@ -367,8 +362,8 @@ class DNet(AudioEncodingModel):
         polarity : {'ON', 'OFF'}, default 'ON'
             Only relevant for AdapTrans-prefiltered models (``C_in == 2``).
         """
-        # core[1] is the CausalSTRFConv whose .STRF_weight() returns (H, C_in, F, T)
-        full = self.core[1].STRF_weight()
+        # core[0] is the CausalSTRFConv whose .STRF_weight() returns (H, C_in, F, T)
+        full = self.core[0].STRF_weight()
         if isinstance(self.prefiltering, AdapTrans):
             if polarity in ('ON', 'On', 'on', 0):
                 return full[hidden_idx, 0]
@@ -450,13 +445,12 @@ class ConvNet2D(AudioEncodingModel):
         self.C = c_hidden
         self.H = n_hidden
 
-        # core: input freq norm → causal left-pad → 3× (Conv2d → LN → LeakyReLU)
+        # core: causal left-pad → 3× (Conv2d → LN → LeakyReLU)
         #       → flatten (C, F_down) into a single feature axis.
         # Three convs each shrink time by K_T-1 (and frequency by K_F-1); the
         # explicit left-pad of 3*(K_T-1) zeros restores the time length.
         F_down = self.F - 3 * (self.K[0] - 1)  # frequency dim after 3 convs
         self.core = nn.Sequential(
-            layers.BatchNormFreq(self.F),
             nn.ZeroPad2d((3 * (self.K[1] - 1), 0, 0, 0)),
             nn.Conv2d(self.C_in, self.C, kernel_size=self.K, stride=1),
             layers.CausalLayerNorm(self.C, dim=1),
