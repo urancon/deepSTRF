@@ -337,6 +337,80 @@ def test_wandb_disabled_creates_no_directory(tmp_path, monkeypatch):
     assert not (tmp_path / "wandb").exists()
 
 
+def _decode_offline_run(run_dir):
+    """Return ``(history_rows, summary)`` for a wandb offline-run-* dir.
+
+    Uses ``scan_data`` (not ``scan_record``) so records larger than one
+    leveldb chunk are correctly reassembled from FIRST/MIDDLE/LAST.
+    """
+    from wandb.proto.v6 import wandb_internal_pb2 as pb
+    from wandb.sdk.internal import datastore
+
+    wandb_file = next(run_dir.glob("run-*.wandb"))
+    ds = datastore.DataStore()
+    ds.open_for_scan(str(wandb_file))
+    history, summary = [], {}
+    while True:
+        data = ds.scan_data()
+        if data is None:
+            break
+        rec = pb.Record()
+        rec.ParseFromString(data)
+        kind = rec.WhichOneof("record_type")
+        if kind == "history":
+            row = {}
+            for item in rec.history.item:
+                name = item.nested_key[0] if item.nested_key else item.key
+                try:
+                    row[name] = json.loads(item.value_json)
+                except Exception:
+                    row[name] = item.value_json
+            history.append(row)
+        elif kind == "summary":
+            for item in rec.summary.update:
+                name = item.nested_key[0] if item.nested_key else item.key
+                try:
+                    summary[name] = json.loads(item.value_json)
+                except Exception:
+                    summary[name] = item.value_json
+    return history, summary
+
+
+def test_wandb_logs_per_neuron_percentiles_and_test_summary(tmp_path):
+    """The WandbSeedLogger should produce per-neuron percentile scalars
+    (`val_cc_norm/p10`, `/p50`, `/p90`) in the per-epoch history AND
+    push test metrics (`test_cc_norm` + percentiles) into the run
+    summary at end-of-seed."""
+    fit_multi_seed(
+        model_factory=_model_factory,
+        loader_factory=_loader_factory,
+        seeds=[0],
+        fitter_kwargs={"max_epochs": 2, "patience": 2,
+                        "track_train_metrics": True},
+        logger_factory=make_wandb_logger_factory(
+            mode="offline", project="deepstrf-test",
+            group="content-check", dir=str(tmp_path),
+        ),
+    )
+    runs = sorted((tmp_path / "wandb").glob("offline-run-*"))
+    assert len(runs) == 1
+    history, summary = _decode_offline_run(runs[0])
+
+    assert len(history) >= 1
+    h0 = history[0]
+    for k in ("val_cc_norm", "val_cc_norm/p10", "val_cc_norm/p50",
+              "val_cc_norm/p90", "train_cc_norm", "train_cc_norm/p10"):
+        assert k in h0, f"per-epoch key {k!r} missing from wandb history"
+
+    for k in ("test_cc_norm", "test_cc_norm/p10", "test_cc_norm/p50",
+              "test_cc_norm/p90", "test_cc", "test_loss",
+              "val_cc_norm", "val_cc_norm/p50"):
+        assert k in summary, f"summary key {k!r} missing"
+    # test scalars are real floats, not the empty default
+    assert isinstance(summary["test_cc_norm"], float)
+    assert isinstance(summary["test_loss"], float)
+
+
 def test_wandb_offline_writes_run_files(tmp_path):
     """``mode='offline'`` writes one ``offline-run-*`` directory per seed
     under ``dir=``."""
