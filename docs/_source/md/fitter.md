@@ -192,7 +192,8 @@ results = fit_multi_seed(
     n_seeds        = 5,
     fitter_kwargs  = {"patience": 50, "monitor": "val_cc_norm", "mode": "max",
                        "track_per_cell_best": True},
-    wandb_kwargs   = None,   # or {"project": "deepstrf", "group": "ns1-linear"}
+    logger_factory = None,                    # see §4.3 for the optional logger hook
+    output_dir     = "runs/ns1-linear",       # auto-save JSON + best.pt per seed (§4.4)
 )
 ```
 
@@ -216,7 +217,7 @@ roadmap items.
   present. `ckpt_path` is auto-suffixed with `_seed{seed}` so seeds
   don't overwrite each other's checkpoints.
 
-**Returns.** `results` is a flat dict:
+**Returns.** `results` is a flat dict (regardless of `output_dir`):
 
 | Key                            | Shape / type                  | Notes                                            |
 |---                             |---                             |---                                              |
@@ -232,25 +233,86 @@ roadmap items.
 | `best_seed`                     | `int`                         | argmax (or argmin if `mode='min'`) of mean val monitor |
 | `best_state_dict`               | `OrderedDict[str, Tensor]`    | deep copy of the best seed's post-fit state      |
 
-**WandB integration.** Pass `wandb_kwargs={...}` to spawn one wandb run
-per seed; keys are forwarded to `wandb.init`. The function sets
-`WANDB_MODE=offline` if the env var is unset, so a fresh user with no
-wandb account / network can still get local file logging under
-`./wandb/offline-run-*/` (or wherever `wandb_kwargs['dir']` points). Use
-`wandb_kwargs={'mode': 'disabled'}` for tests and smoke checks — that
-mode writes nothing.
+### 4.3 Logger hook (`logger_factory`)
+
+`fit_multi_seed` does not import any dashboard. The optional
+`logger_factory` arg takes a `Callable[[int], SeedLogger]` — anything
+duck-typed to the following protocol:
+
+```python
+class SeedLogger:
+    def __call__(self, epoch_dict: Mapping[str, Any]) -> None: ...
+    def finalize(self, final_metrics: Mapping[str, Any]) -> None: ...   # optional
+    def close(self) -> None: ...                                          # optional
+```
+
+`__call__` is invoked once per epoch with the epoch dict (same shape
+the Fitter's `log_fn` receives). `finalize` is invoked at end of seed
+with `{'val': val_post, 'test': test_post}` — the post-fit re-evaluated
+metrics on both loaders. `close` is invoked last. Both extras are
+optional (`hasattr` is checked); a logger can be just a callable.
+
+WandB users get a reference implementation in
+[`deepSTRF.training.wandb_log`](../../deepSTRF/training/wandb_log.py):
+
+```python
+from deepSTRF.training import fit_multi_seed
+from deepSTRF.training.wandb_log import make_wandb_logger_factory
+
+fit_multi_seed(
+    model_factory=..., loader_factory=..., n_seeds=3,
+    logger_factory=make_wandb_logger_factory(
+        project="deepstrf", entity="urancon",
+        group="ns1-linear", mode="offline",   # offline by default; "disabled" no-ops
+    ),
+    fitter_kwargs={...},
+)
+```
+
+The `WandbSeedLogger` per-epoch hook reduces every per-neuron tensor
+(e.g. `val_cc_norm: (N,)`) to a `{mean, p10, p50, p90}` scalar quadruple
+plus a `wandb.Histogram` of the cell distribution — so the dashboard
+shows population-level percentile lines instead of a single average,
+and the per-epoch histogram panel surfaces tails. `finalize` pushes
+test metrics (`test_cc`, `test_cc_norm`, `test_loss`) plus their
+percentile scalars into `run.summary`, where they become sortable
+columns in the run table.
 
 Run names auto-derive: `<name>-seed{i}` if `name=` is given,
-`<group>-seed{i}` if `group=` is given, else `seed{i}`. The `seed`
-value is appended to `wandb.config` so dashboards can colour-code
-trajectories by seed.
+`<group>-seed{i}` if `group=` is given, else `seed{i}`. The seed value
+is added to `wandb.config` so dashboards can colour-code by seed.
 
-**Logging vs `log_fn` override.** When `wandb_kwargs` is set, the
-per-seed `Fitter` gets a wandb-shaped `log_fn` adapter automatically
-(per-neuron tensors are `nanmean`-reduced to scalars before `run.log`).
-If `wandb_kwargs` is `None`, the multi-seed sweep is silent by default
-unless the user passes their own `log_fn` in `fitter_kwargs` — Fitter's
-default `print`-each-epoch behaviour is too noisy for a K-seed sweep.
+For MLflow / TensorBoard / a local CSV writer, implement the
+`SeedLogger` protocol in your own module — `fit_multi_seed` does not
+care which dashboard, only that the protocol is met.
+
+### 4.4 Auto-save (`output_dir`)
+
+Independent of any dashboard, set `output_dir=` to materialise every
+run's metrics and best state on disk. The library treats this as part
+of its job: a 30-minute training shouldn't lose all its metrics just
+because the user forgot to pickle the returned dict.
+
+```
+output_dir/
+├── seed0/
+│   ├── history.json            # per-epoch dict; per-neuron tensors are
+│   │                            # summarised to {mean, p10/p50/p90, n_valid}
+│   ├── final.json              # post-fit val + test population summaries
+│   ├── final_neurons.pt        # per-neuron (N,) tensors for downstream stats
+│   └── best.pt                  # state_dict (deep copy of post-fit model)
+├── seed1/...
+├── seed2/...
+├── summary.json                 # across-seed mean/std + best_seed + monitor
+└── summary_neurons.pt           # per-neuron mean / std / per-seed tensors
+```
+
+`history.json` and `final.json` are human-readable / machine-greppable.
+`.pt` files hold the full per-neuron tensors as a `torch.save` dict;
+load with `torch.load(path, weights_only=False)` and read keys like
+`saved['val']['cc_norm']` (shape `(N,)`). The
+`output_dir/summary_neurons.pt` mirrors the in-memory `results` dict
+for the across-seed aggregates.
 
 ## 5. Hooks for customization
 
