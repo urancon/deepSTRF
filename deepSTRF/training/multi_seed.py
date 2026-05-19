@@ -13,7 +13,6 @@ TODOs that need a split-factory rather than a seed sweep.
 from __future__ import annotations
 
 import copy
-import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -65,49 +64,6 @@ def _stack_metric(values: Sequence[Any]) -> torch.Tensor:
 
 
 # -----------------------------------------------------------------------------
-# WandB integration (optional)
-# -----------------------------------------------------------------------------
-
-
-def _start_wandb_run(wandb_kwargs: Mapping[str, Any], seed: int) -> Any:
-    """Init one ``wandb`` run for one seed.
-
-    Defaults ``WANDB_MODE=offline`` when the env var is unset, so a fresh
-    user with no wandb account can still get local file logging. Run name is
-    auto-derived: ``<name>-seed{i}`` if the user passed ``name=``,
-    ``<group>-seed{i}`` if they passed ``group=``, else just ``seed{i}``.
-    """
-    import wandb
-
-    os.environ.setdefault("WANDB_MODE", "offline")
-    init_kwargs = dict(wandb_kwargs)
-    user_name = init_kwargs.pop("name", None)
-    group = init_kwargs.get("group")
-    if user_name is not None:
-        name = f"{user_name}-seed{seed}"
-    elif group is not None:
-        name = f"{group}-seed{seed}"
-    else:
-        name = f"seed{seed}"
-    config = dict(init_kwargs.pop("config", {}))
-    config["seed"] = seed
-    return wandb.init(name=name, config=config, reinit=True, **init_kwargs)
-
-
-def _make_wandb_log_fn(run) -> Callable[[Mapping[str, Any]], None]:
-    """Build a ``log_fn`` that reduces per-neuron tensors to scalars and logs to wandb."""
-    def _log(epoch_dict: Mapping[str, Any]) -> None:
-        step = int(epoch_dict.get("epoch", 0))
-        flat: Dict[str, float] = {}
-        for k, v in epoch_dict.items():
-            if k == "epoch":
-                continue
-            flat[k] = _to_scalar(v)
-        run.log(flat, step=step)
-    return _log
-
-
-# -----------------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------------
 
@@ -119,7 +75,7 @@ def fit_multi_seed(
     *,
     seeds: Optional[Sequence[int]] = None,
     fitter_kwargs: Optional[Mapping[str, Any]] = None,
-    wandb_kwargs: Optional[Mapping[str, Any]] = None,
+    logger_factory: Optional[Callable[[int], Any]] = None,
     set_seed_strict: bool = False,
 ) -> Dict[str, Any]:
     """Run the same Fitter configuration ``n_seeds`` times under different seeds.
@@ -150,11 +106,16 @@ def fit_multi_seed(
         ``'train_loader'``, or ``'val_loader'``. If ``'ckpt_path'`` is set,
         each seed's checkpoint is saved to ``<stem>_seed{seed}<suffix>`` so
         seeds don't overwrite each other.
-    wandb_kwargs
-        If given, spawn one wandb run per seed. Keys forwarded to
-        ``wandb.init``. ``WANDB_MODE`` defaults to ``offline`` when unset, so
-        pure local file logging works with no account / network. Pass
-        ``wandb_kwargs={'mode': 'disabled'}`` to no-op (for tests, smoke).
+    logger_factory
+        Optional ``Callable[[int], SeedLogger]``. If given, the returned
+        object is used as the Fitter's ``log_fn`` for that seed (so it is
+        invoked once per epoch with the epoch dict). After ``fit()``, if
+        the logger exposes ``finalize(final_metrics)``, it is called with
+        ``{'val': val_post, 'test': test_post}``. ``close()`` is called
+        at end of seed if present. See
+        :class:`deepSTRF.training.wandb_log.WandbSeedLogger` for the
+        reference implementation. Default ``None`` (silent multi-seed sweep
+        unless ``fitter_kwargs['log_fn']`` is set).
     set_seed_strict
         Forwarded to ``set_random_seed(strict=...)``. Default ``False``.
 
@@ -213,10 +174,9 @@ def fit_multi_seed(
         model = model_factory(seed)
         train_loader, val_loader, test_loader = loader_factory(seed)
 
-        run = None
-        if wandb_kwargs is not None:
-            run = _start_wandb_run(wandb_kwargs, seed=seed)
-            log_fn: Callable[[Mapping[str, Any]], None] = _make_wandb_log_fn(run)
+        logger = logger_factory(seed) if logger_factory is not None else None
+        if logger is not None:
+            log_fn: Callable[[Mapping[str, Any]], None] = logger
         elif user_log_fn is not None:
             log_fn = user_log_fn
         else:
@@ -234,8 +194,11 @@ def fit_multi_seed(
         val_post = fitter.evaluate(val_loader)
         test_post = fitter.evaluate(test_loader)
 
-        if run is not None:
-            run.finish()
+        if logger is not None:
+            if hasattr(logger, "finalize"):
+                logger.finalize({"val": val_post, "test": test_post})
+            if hasattr(logger, "close"):
+                logger.close()
 
         histories.append(history)
         val_per_seed.append(val_post)

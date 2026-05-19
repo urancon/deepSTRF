@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from deepSTRF.training import fit_multi_seed
+from deepSTRF.training.wandb_log import make_wandb_logger_factory
 from deepSTRF.utils.data import neural_collate
 
 from tests.test_fitter import (
@@ -217,15 +218,17 @@ def test_ckpt_path_is_suffixed_per_seed(tmp_path):
 
 
 def test_wandb_disabled_creates_no_directory(tmp_path, monkeypatch):
-    """``wandb_kwargs={'mode': 'disabled'}`` must be a true no-op — no
-    ``./wandb/`` directory under the (chdir'd) cwd, no run files."""
+    """``mode='disabled'`` must be a true no-op — no ``./wandb/`` directory
+    under the (chdir'd) cwd, no run files."""
     monkeypatch.chdir(tmp_path)
     results = fit_multi_seed(
         model_factory=_model_factory,
         loader_factory=_loader_factory,
         seeds=[0],
         fitter_kwargs={"max_epochs": 1, "patience": 1},
-        wandb_kwargs={"mode": "disabled", "project": "deepstrf-test"},
+        logger_factory=make_wandb_logger_factory(
+            mode="disabled", project="deepstrf-test",
+        ),
     )
     assert "per_seed_val_cc_norm" in results
     assert not (tmp_path / "wandb").exists()
@@ -233,18 +236,16 @@ def test_wandb_disabled_creates_no_directory(tmp_path, monkeypatch):
 
 def test_wandb_offline_writes_run_files(tmp_path):
     """``mode='offline'`` writes one ``offline-run-*`` directory per seed
-    under ``wandb_kwargs['dir']``."""
+    under ``dir=``."""
     fit_multi_seed(
         model_factory=_model_factory,
         loader_factory=_loader_factory,
         seeds=[0, 1],
         fitter_kwargs={"max_epochs": 1, "patience": 1},
-        wandb_kwargs={
-            "mode": "offline",
-            "project": "deepstrf-test",
-            "group": "smoke",
-            "dir": str(tmp_path),
-        },
+        logger_factory=make_wandb_logger_factory(
+            mode="offline", project="deepstrf-test",
+            group="smoke", dir=str(tmp_path),
+        ),
     )
     wandb_dir = tmp_path / "wandb"
     assert wandb_dir.exists()
