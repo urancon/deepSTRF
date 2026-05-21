@@ -131,6 +131,7 @@ welcome to add yours.
 
    _source/md/README_models.md
    _source/md/README_AdapTrans.md
+   _source/md/wav2spec.md
    _source/md/README_gradmap_strf.md
    _source/md/pretrained_models.md
 
@@ -145,6 +146,7 @@ welcome to add yours.
    _source/ipynb/explore_nat4.ipynb
    _source/ipynb/dataset_concatenation.ipynb
    _source/ipynb/fit_ns1_statenet.ipynb
+   _source/ipynb/fit_ns1_linear_from_waveform.ipynb
    _source/ipynb/load_pretrained_statenet_ns1.ipynb
    _source/ipynb/alice_eeg_tutorial.ipynb
    _source/ipynb/meliza_2025_baseline.ipynb
