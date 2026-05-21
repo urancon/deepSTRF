@@ -1,0 +1,62 @@
+"""Waveform-to-spectrogram front-ends for audio encoding models.
+
+A ``wav2spec`` module is an ``nn.Module`` that maps a mono audio waveform
+``(B, 1, T_audio)`` to a (batched) spectrogram ``(B, 1, F, T_neural)`` for
+downstream consumption by an ``AudioEncodingModel``. The leading ``1`` on
+the output is the ``C_in`` channel axis carried by the rest of the pipeline
+(``prefiltering → core → readout``); it is a singleton for most front-ends
+and can be enlarged by a downstream prefilter such as ``AdapTrans``.
+
+Every wav2spec module satisfies the deepSTRF strict-causality contract:
+output frame ``t`` depends only on input audio samples
+``[0, (t+1) * hop)`` — i.e. it cannot leak any future audio across the
+neural bin boundary. The contract is enforced by a parametrised Jacobian
+test in ``tests/test_wav2spec.py``.
+
+Modules expose:
+
+- ``out_channels: int``   — the spec-channel count produced by the module
+                            (``F`` in the rest of the pipeline).
+- ``hop: int``            — audio-samples-per-neural-bin (used by causality
+                            tests and downstream collate / batching logic).
+- ``audio_fs: int``       — sample rate the module expects on its input.
+"""
+
+from .causal_mel import CausalMelSpectrogram
+
+
+__all__ = ["CausalMelSpectrogram", "make_wav2spec"]
+
+
+def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
+    """Factory for constructing a ``wav2spec`` module from compact arguments.
+
+    Parameters
+    ----------
+    kind : {'mel'}
+        Which front-end to build. Currently only the non-learnable causal
+        mel spectrogram is shipped; learnable front-ends (``'sincnet'``,
+        ``'icnet'``) will register here in later phases.
+    audio_fs : int
+        Audio sample rate (Hz). Must match the dataset's ``audio_fs``.
+    dt_ms : float
+        Neural time-bin width in milliseconds (matches ``dataset.dt_ms``).
+        Determines the STFT hop: ``hop = audio_fs * dt_ms / 1000`` samples
+        per neural bin.
+    **kwargs
+        Forwarded to the underlying module's ``__init__``. See each class's
+        docstring for the available knobs.
+
+    Returns
+    -------
+    nn.Module
+        Configured wav2spec instance with ``out_channels`` / ``hop`` /
+        ``audio_fs`` attributes.
+    """
+    kind = kind.lower()
+    if kind == "mel":
+        return CausalMelSpectrogram(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
+    raise ValueError(
+        f"Unknown wav2spec kind {kind!r}. Currently supported: 'mel'. "
+        f"More learnable front-ends to follow."
+    )
