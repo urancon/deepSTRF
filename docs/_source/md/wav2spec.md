@@ -76,17 +76,20 @@ Both classes are also directly importable from
 
 ### 4.1 `CausalMelSpectrogram` — non-learnable mel baseline
 
-Strictly-causal log-mel spectrogram. Left-padded STFT (`win - hop` zeros)
-+ `n_fft = win` (so the STFT frame stride matches the windowed region
-exactly) + `center=False` on `torch.stft` + mel filterbank + `log(mel +
-log_offset)`. The pipeline-validation phase 2 acceptance test trains
-`Linear(wav2spec=CausalMelSpectrogram(...))` on NS1 and confirms test
-`cc_norm` matches the precomputed-spec baseline.
+Strictly-causal log-mel spectrogram with defaults that reproduce the
+[Rahman et al. 2019](https://doi.org/10.1371/journal.pcbi.1006618)
+cochleagram used by the NS1 dataset: 10 ms Hanning window, 5 ms hop,
+34 log-spaced channels 500–22 627 Hz, amplitude (not power) spectrogram,
+threshold-clipped log. Causality: left-padded STFT (`win - hop` zeros)
++ `n_fft = win` + `center=False` on `torch.stft`. Acceptance: on NS1
+``Linear(wav2spec=CausalMelSpectrogram(audio_fs=48000))`` reaches
+test ``cc_norm`` 0.573 vs the precomputed-spec baseline at 0.548.
 
 ```python
 from deepSTRF.models.wav2spec import CausalMelSpectrogram
-m = CausalMelSpectrogram(audio_fs=16000, n_mels=34, hop_ms=5.0,
-                          win_ms=25.0, f_min=300.0, f_max=8000.0)
+# Defaults reproduce Rahman et al. 2019: 10 ms Hanning win, 500–22 627 Hz,
+# amplitude, threshold-clipped log. Pair with audio_fs >= 45 kHz.
+m = CausalMelSpectrogram(audio_fs=48000, n_mels=34)
 ```
 
 ### 4.2 `SincNet` — parametric bandpass (Ravanelli & Bengio 2018)
@@ -114,8 +117,9 @@ Two activations carried over from the literature:
 
 ```python
 from deepSTRF.models.wav2spec import SincNet
-m = SincNet(audio_fs=16000, n_filters=34, kernel_size=251,
-             hop_ms=5.0, init="mel", activation="logabs", envelope=True)
+m = SincNet(audio_fs=48000, n_filters=34, kernel_size=753,
+             hop_ms=5.0, init="mel", activation="logabs", envelope=True,
+             env_window_ms=10.0)
 ```
 
 ### 4.3 ICNet's encoder — internal to `deepSTRF.models.audio.ICNet`
