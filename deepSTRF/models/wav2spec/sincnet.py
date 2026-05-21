@@ -55,6 +55,18 @@ class SincNet(nn.Module):
         Output nonlinearity. ``'symlog'`` = ``sgn(x)·log(|x|+1)`` (the ICNet
         variant — sign-preserving log-compression); ``'logabs'`` = ``log(|x|+1)``
         (standard SincNet, half-wave rectified); ``'none'`` = identity.
+    envelope : bool, default False
+        If ``True``, compute a proper power-envelope spectrogram: run the
+        bandpass at stride 1 (full audio rate), apply ``abs()`` (rectify),
+        average-pool over ``hop`` samples, then apply the activation. The
+        rectify+pool step is what a real auditory filterbank does — and
+        what mel-STFT does implicitly via the window. Recommended when
+        SincNet is the *whole* wav2spec front-end (the downstream readout
+        is too thin to learn envelope extraction from signed bandpass
+        output). ``False`` (default) keeps the lighter ICNet behaviour
+        (strided conv, no envelope step) — appropriate when SincNet is
+        followed by additional conv layers that can extract envelopes
+        themselves.
 
     References
     ----------
@@ -69,7 +81,8 @@ class SincNet(nn.Module):
     def __init__(self, audio_fs: int, n_filters: int = 34,
                  kernel_size: int = 251, hop_ms: float = 5.0,
                  f_min: float = 300.0, f_max: float | None = None,
-                 init: str = "mel", activation: str = "symlog"):
+                 init: str = "mel", activation: str = "symlog",
+                 envelope: bool = False):
         super().__init__()
         if audio_fs <= 0:
             raise ValueError(f"audio_fs must be positive (got {audio_fs})")
@@ -83,16 +96,23 @@ class SincNet(nn.Module):
         self.out_channels = self.n_filters
         self.kernel_size = int(kernel_size)
         self.hop = max(1, int(round(audio_fs * hop_ms / 1000.0)))
-        # left-pad = max(0, K - hop). When K < hop the output frames are
-        # genuinely causal but leave a (hop - K)-sample gap at the *end* of
-        # each neural bin (the filter just doesn't reach there). Stand-alone
-        # wav2spec users typically want K >= hop; the K < hop regime is
-        # supported for internal-block reuse (e.g. SincNet stage of ICNet,
-        # where the surrounding conv stack does the temporal aggregation).
-        self.left_pad = max(0, self.kernel_size - self.hop)
         self.f_min = float(f_min)
         self.f_max = float(f_max) if f_max is not None else audio_fs / 2.0
         self.activation = activation
+        self.envelope = bool(envelope)
+        # Causal left padding depends on the stride layout:
+        #  - envelope mode:   conv runs at stride 1 then avg-pool(hop) → need
+        #                     left_pad = K - 1 so the per-sample conv output
+        #                     at time t reads orig[t - (K-1) : t+1].
+        #  - strided mode:    conv runs at stride hop → need left_pad =
+        #                     max(0, K - hop). When K < hop the output frames
+        #                     are genuinely causal but leave a (hop - K) gap
+        #                     at the *end* of each neural bin. Stand-alone
+        #                     wav2spec users typically want K >= hop; the
+        #                     K < hop regime is supported for internal-block
+        #                     reuse (e.g. SincNet stage of ICNet).
+        self.left_pad = self.kernel_size - 1 if self.envelope \
+                                              else max(0, self.kernel_size - self.hop)
 
         # ---- initial filter edges (n_filters + 1 edges -> n_filters bands) ----
         f_max_t = torch.tensor(self.f_max, dtype=torch.float32)
@@ -152,22 +172,23 @@ class SincNet(nn.Module):
         f1 = self.f1.view(-1, 1)  # (n_filters, 1)
         f2 = self.f2.view(-1, 1)
         n = self._n  # (1, K)
-        # 2 f * sinc(2π f n / fs) = sin(2π f n / fs) / (π n / fs)  for n != 0
-        # at n = 0, returns 2 f.
+        # Discrete-time ideal lowpass with cutoff f Hz at sample rate fs:
+        #   H_lp[n] = sin(2π f n / fs) / (π n)   for n != 0
+        #   H_lp[0] = 2 f / fs
+        # Bandpass = lp(f2) - lp(f1). DC gain = (f2 - f1) · 2 / fs.
         two_pi_over_fs = 2.0 * math.pi / fs
-        # sin terms (nonzero-n branch)
         sin1 = torch.sin(two_pi_over_fs * f1 * n)  # (n_filters, K)
         sin2 = torch.sin(two_pi_over_fs * f2 * n)
         # safe denominator: replace n=0 with 1 to avoid div0; we overwrite the
         # corresponding row afterwards.
-        denom = math.pi * n / fs                   # (1, K)
+        denom = math.pi * n                          # (1, K)
         mask = (n.abs() < 0.5)  # (1, K) — True only at the centre tap
         denom_safe = torch.where(mask, torch.ones_like(denom), denom)
         h_lp1 = sin1 / denom_safe
         h_lp2 = sin2 / denom_safe
         h = h_lp2 - h_lp1                            # bandpass = lp(f2) - lp(f1)
-        # overwrite centre-tap with the analytic limit value 2(f2 - f1)
-        centre = 2.0 * (f2 - f1).view(-1, 1)  # (n_filters, 1)
+        # overwrite centre-tap with the analytic limit 2(f2 - f1) / fs
+        centre = 2.0 * (f2 - f1) / fs   # (n_filters, 1)
         h = torch.where(mask, centre.expand_as(h), h)
         # window + reshape for Conv1d
         h = h * self._window
@@ -181,7 +202,17 @@ class SincNet(nn.Module):
         if self.left_pad > 0:
             x = F.pad(x, (self.left_pad, 0))
         kernels = self._build_filters()
-        y = F.conv1d(x, kernels, stride=self.hop)   # (B, n_filters, T_neural)
+
+        if self.envelope:
+            # bandpass at full audio rate → |·| → avg-pool over hop samples.
+            # left_pad = K - 1 above guarantees the per-sample conv output has
+            # length T_audio (= T_neural · hop), so the avg-pool collapses
+            # cleanly to T_neural frames.
+            y = F.conv1d(x, kernels, stride=1)        # (B, n_filters, T_audio)
+            y = y.abs()
+            y = F.avg_pool1d(y, kernel_size=self.hop, stride=self.hop)  # (B, n_filters, T_neural)
+        else:
+            y = F.conv1d(x, kernels, stride=self.hop)   # (B, n_filters, T_neural)
 
         if self.activation == "symlog":
             y = torch.sign(y) * torch.log1p(y.abs())

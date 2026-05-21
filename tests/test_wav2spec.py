@@ -30,6 +30,10 @@ WAV2SPEC_CASES = [
      lambda: __import__("deepSTRF.models.wav2spec", fromlist=["SincNet"])
              .SincNet(audio_fs=16000, n_filters=48, kernel_size=64, hop_ms=5.0,
                       init="linear", activation="logabs")),
+    ("SincNet-16kHz-5ms-K251-envelope-logabs",
+     lambda: __import__("deepSTRF.models.wav2spec", fromlist=["SincNet"])
+             .SincNet(audio_fs=16000, n_filters=34, kernel_size=251, hop_ms=5.0,
+                      init="mel", activation="logabs", envelope=True)),
 ]
 
 
