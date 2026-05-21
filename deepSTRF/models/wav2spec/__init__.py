@@ -23,9 +23,10 @@ Modules expose:
 """
 
 from .causal_mel import CausalMelSpectrogram
+from .sincnet import SincNet
 
 
-__all__ = ["CausalMelSpectrogram", "make_wav2spec"]
+__all__ = ["CausalMelSpectrogram", "SincNet", "make_wav2spec"]
 
 
 def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
@@ -56,7 +57,9 @@ def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
     kind = kind.lower()
     if kind == "mel":
         return CausalMelSpectrogram(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
+    if kind == "sincnet":
+        return SincNet(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
     raise ValueError(
-        f"Unknown wav2spec kind {kind!r}. Currently supported: 'mel'. "
-        f"More learnable front-ends to follow."
+        f"Unknown wav2spec kind {kind!r}. Currently supported: "
+        f"'mel', 'sincnet'. More learnable front-ends to follow."
     )

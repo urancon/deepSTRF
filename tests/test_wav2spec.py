@@ -22,6 +22,14 @@ WAV2SPEC_CASES = [
     ("CausalMelSpectrogram-16kHz-5ms-10ms",
      lambda: __import__("deepSTRF.models.wav2spec", fromlist=["CausalMelSpectrogram"])
              .CausalMelSpectrogram(audio_fs=16000, n_mels=34, hop_ms=5.0, win_ms=10.0)),
+    ("SincNet-16kHz-5ms-K251-mel-symlog",
+     lambda: __import__("deepSTRF.models.wav2spec", fromlist=["SincNet"])
+             .SincNet(audio_fs=16000, n_filters=34, kernel_size=251, hop_ms=5.0,
+                      init="mel", activation="symlog")),
+    ("SincNet-16kHz-5ms-K64-linear-logabs",
+     lambda: __import__("deepSTRF.models.wav2spec", fromlist=["SincNet"])
+             .SincNet(audio_fs=16000, n_filters=48, kernel_size=64, hop_ms=5.0,
+                      init="linear", activation="logabs")),
 ]
 
 
@@ -31,7 +39,9 @@ def wav2spec(request):
 
 
 def test_factory_dispatch():
-    from deepSTRF.models.wav2spec import CausalMelSpectrogram, make_wav2spec
+    from deepSTRF.models.wav2spec import (
+        CausalMelSpectrogram, SincNet, make_wav2spec,
+    )
 
     m = make_wav2spec("mel", audio_fs=16000, dt_ms=5.0)
     assert isinstance(m, CausalMelSpectrogram)
@@ -39,8 +49,54 @@ def test_factory_dispatch():
     assert m.hop == 80
     assert m.out_channels == 34
 
+    s = make_wav2spec("sincnet", audio_fs=16000, dt_ms=5.0,
+                      n_filters=48, kernel_size=64)
+    assert isinstance(s, SincNet)
+    assert s.audio_fs == 16000
+    assert s.hop == 80
+    assert s.out_channels == 48
+    assert s.kernel_size == 64
+
     with pytest.raises(ValueError):
         make_wav2spec("not-a-real-frontend", audio_fs=16000, dt_ms=5.0)
+
+
+def test_sincnet_constructor_rejects_bad_args():
+    from deepSTRF.models.wav2spec import SincNet
+
+    with pytest.raises(ValueError):
+        SincNet(audio_fs=0)
+    with pytest.raises(ValueError):
+        SincNet(audio_fs=16000, activation="not-a-real-activation")
+    with pytest.raises(ValueError):
+        SincNet(audio_fs=16000, init="not-a-real-init")
+
+
+def test_sincnet_gradient_flow_through_cutoffs():
+    """Backprop populates ``.grad`` on both ``low_hz_`` and ``band_hz_``."""
+    from deepSTRF.models.wav2spec import SincNet
+
+    sn = SincNet(audio_fs=16000, n_filters=34, kernel_size=251, hop_ms=5.0)
+    y = sn(torch.randn(2, 1, 100 * sn.hop) * 0.1)
+    y.pow(2).mean().backward()
+    assert sn.low_hz_.grad is not None
+    assert sn.band_hz_.grad is not None
+    assert sn.low_hz_.grad.abs().sum().item() > 0
+    assert sn.band_hz_.grad.abs().sum().item() > 0
+
+
+def test_sincnet_cutoff_clamps():
+    """``f1`` and ``f2`` stay in (0, fs/2] regardless of raw param value."""
+    from deepSTRF.models.wav2spec import SincNet
+
+    sn = SincNet(audio_fs=16000, n_filters=34, kernel_size=251, hop_ms=5.0)
+    # tamper with the raw params: push low_hz negative and band_hz large
+    with torch.no_grad():
+        sn.low_hz_.data[:] = -1234.0
+        sn.band_hz_.data[:] = 1e6
+    f1, f2 = sn.f1, sn.f2
+    assert (f1 >= 1.0).all() and (f1 < sn.audio_fs / 2).all()
+    assert (f2 > f1).all() and (f2 <= sn.audio_fs / 2).all()
 
 
 def test_constructor_rejects_bad_args():
