@@ -28,16 +28,37 @@ class AudioEncodingModel(NeuralModel):
         ``ICAdaptation``). Must expose an ``out_channels`` integer
         attribute so the model can size ``C_in`` automatically. ``None``
         (default) gives ``nn.Identity()`` and ``C_in = 1``.
+    wav2spec : nn.Module, optional
+        Optional raw-waveform front-end. Maps a mono waveform
+        ``(B, 1, T_audio)`` to a spectrogram ``(B, 1, F, T_neural)`` and
+        slots in at the top of the canonical forward pipeline (see
+        :class:`~deepSTRF.models.neural_model.NeuralModel`). Must expose an
+        ``out_channels: int`` attribute equal to ``n_frequency_bands``.
+        Pair with a dataset in waveform mode (e.g.
+        ``NS1Dataset(return_waveform=True)``). ``None`` (default) keeps the
+        slot as ``nn.Identity()`` — the model then expects spectrogram
+        input ``(B, 1, F, T)`` as before.
     """
 
     def __init__(self, n_frequency_bands: int, temporal_window_size: int,
                  out_neurons: int = 1, prefiltering: nn.Module = None,
+                 wav2spec: nn.Module = None,
                  *args, **kwargs):
         super().__init__(out_neurons=out_neurons, *args, **kwargs)
 
         # general attributes for AUDIO response models
         self.F = n_frequency_bands
         self.T = temporal_window_size
+
+        # wav2spec: optional raw-waveform front-end (defaults to Identity).
+        if wav2spec is not None:
+            assert isinstance(wav2spec, nn.Module), \
+                f"wav2spec must be an nn.Module instance, got {type(wav2spec).__name__}"
+            assert getattr(wav2spec, 'out_channels', None) == n_frequency_bands, (
+                f"wav2spec.out_channels ({getattr(wav2spec, 'out_channels', None)}) "
+                f"must equal n_frequency_bands ({n_frequency_bands})"
+            )
+            self.wav2spec = wav2spec
 
         # prefiltering: an nn.Module exposing out_channels (int)
         if prefiltering is None:
@@ -104,8 +125,19 @@ class AudioEncodingModel(NeuralModel):
         stim_opt = Parameter(torch.zeros(B, 1, self.F, T_eff, device=device),
                              requires_grad=True)
 
-        # forward pass — output is (B=N, N, R=1, T_eff)
-        response = self.forward(stim_opt)
+        # forward pass — output is (B=N, N, R=1, T_eff). We temporarily mask
+        # any ``wav2spec`` slot to Identity because the null stimulus IS
+        # already at the spectrogram-output rank; what we want is the model's
+        # STRF in the space of *spectrogram inputs*, regardless of whether
+        # the production model takes waveform or spectrogram input. Swap (not
+        # bypass) so that subclasses with a custom ``forward`` (Transformer,
+        # StateNet, etc.) still go through their own pipeline.
+        saved_wav2spec = self.wav2spec
+        self.wav2spec = nn.Identity()
+        try:
+            response = self.forward(stim_opt)
+        finally:
+            self.wav2spec = saved_wav2spec
 
         # Spike-Triggered-Average loss = sum of diagonal activations at last
         # timestep. response[:, :, 0, -1] is (N, N): row b is the prediction

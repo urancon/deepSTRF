@@ -48,6 +48,12 @@ class Linear(AudioEncodingModel):
         a vanilla ``nn.Conv2d``; pass ``ParametricSTRF(...)`` for DCLS,
         or a separable ``nn.Sequential`` for a rank-1 factorization.
         See ``deepSTRF.models.layers`` for the kernel module catalogue.
+    wav2spec : nn.Module, optional
+        Optional raw-waveform front-end (``deepSTRF.models.wav2spec.*``).
+        When provided, the model accepts raw audio ``(B, 1, T_audio)``
+        instead of a spectrogram. ``None`` (default) keeps the slot as
+        ``nn.Identity()`` and the model expects ``(B, 1, F, T)`` spec
+        input.
 
     References
     ----------
@@ -73,12 +79,14 @@ class Linear(AudioEncodingModel):
                  out_neurons: int = 1,
                  output_activation: nn.Module = None,
                  prefiltering: nn.Module = None,
-                 kernel: nn.Module = None):
+                 kernel: nn.Module = None,
+                 wav2spec: nn.Module = None):
         super().__init__(
             n_frequency_bands=n_frequency_bands,
             temporal_window_size=temporal_window_size,
             out_neurons=out_neurons,
             prefiltering=prefiltering,
+            wav2spec=wav2spec,
         )
         # core: identity. All learnable parameters live in the readout —
         # the per-neuron BatchNorm1d inside STRFReadout handles normalisation

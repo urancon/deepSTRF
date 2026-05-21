@@ -151,6 +151,40 @@ def test_bitwise_causality_in_eval_mode(factory):
         f"{type(m).__name__}: causality violation; max past diff = {diff:.2e}"
 
 
+def test_bitwise_causality_through_wav2spec():
+    """End-to-end causality contract for a model with a non-Identity
+    ``wav2spec`` slot: changing future audio samples must not perturb past
+    output frames. The wav2spec module is exercised in isolation by
+    ``tests/test_wav2spec.py``; this is the composition with Linear.
+    """
+    _seed()
+    from deepSTRF.models.audio import Linear
+    from deepSTRF.models.wav2spec import CausalMelSpectrogram
+
+    audio_fs = 16000
+    hop = 80  # 5 ms at 16 kHz
+    T_neural = 100
+    T_audio = T_neural * hop
+    wav2spec = CausalMelSpectrogram(audio_fs=audio_fs, n_mels=F, hop_ms=5.0, win_ms=25.0)
+    m = Linear(n_frequency_bands=F, temporal_window_size=9, out_neurons=N,
+               wav2spec=wav2spec)
+    m.eval()
+
+    cut_neural = T_neural // 2
+    cut_audio = cut_neural * hop
+    x = torch.randn(B, 1, T_audio) * 0.1
+    x_perturbed = x.clone()
+    x_perturbed[..., cut_audio:] = torch.randn_like(x_perturbed[..., cut_audio:])
+
+    with torch.no_grad():
+        y = m(x)
+        y_perturbed = m(x_perturbed)
+    diff = (y - y_perturbed)[..., :cut_neural].abs().max().item()
+    assert diff < 1e-5, (
+        f"Linear+wav2spec: causality violation; max past diff = {diff:.2e}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # validate()
 # ---------------------------------------------------------------------------
