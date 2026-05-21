@@ -116,15 +116,21 @@ def neural_collate(batch):
     Returns
     -------
     stims : torch.Tensor
-        ``(B, ..., T_max)`` float tensor, zero-padded along the last axis.
-        Contains no NaN.
+        ``(B, ..., T_stim_max)`` float tensor, zero-padded along the last
+        axis. Contains no NaN.
     responses : torch.Tensor
-        ``(B, N_selected, R_max, T_max)`` float tensor. NaN-padded along
-        both the repeat (``R``) and time (``T``) axes. Fully-NaN slabs mark
-        (stim, neuron) pairs with no recorded data.
+        ``(B, N_selected, R_max, T_resp_max)`` float tensor. NaN-padded
+        along both the repeat (``R``) and time (``T``) axes. Fully-NaN
+        slabs mark (stim, neuron) pairs with no recorded data. The
+        response-time axis is sized to ``T_resp_max`` independently of the
+        stim-time axis: in spectrogram mode the two are equal (one bin
+        per neural sample), but in waveform mode the stim axis runs at
+        ``audio_fs`` Hz while responses stay at the dataset's neural
+        ``dt_ms`` rate.
     valid_mask : torch.Tensor
-        ``(B, N_selected, R_max, T_max)`` bool tensor. ``~responses.isnan()``,
-        cached here so downstream loss code does not have to recompute.
+        ``(B, N_selected, R_max, T_resp_max)`` bool tensor.
+        ``~responses.isnan()``, cached here so downstream loss code does
+        not have to recompute.
     stim_metas : list
         Length-``B`` list of the per-item stim_meta dicts.
     """
@@ -135,29 +141,20 @@ def neural_collate(batch):
     # pad stims along their time axis (last dim) with zeros.
     # fill_missing_data operates over any shape; we ask it to pad the last axis.
     stims = fill_missing_data(stims_list, dims=-1, value=0.0)
-    T_max = stims.shape[-1]
 
-    # pad each response to (R_n, T_max) along T first, tracking R_max.
-    R_max = 0
-    padded_per_item = []
-    for b in range(B):
-        padded = []
-        for n in range(N):
-            r = resps_list[b][n]
-            pad_t = torch.full((r.shape[0], T_max), float('nan'),
-                               dtype=r.dtype, device=r.device)
-            pad_t[:, :r.shape[1]] = r
-            padded.append(pad_t)
-            R_max = max(R_max, pad_t.shape[0])
-        padded_per_item.append(padded)
+    # response-T axis is independent from stim-T (they differ in waveform mode
+    # where stim is at audio_fs and responses are at neural rate); pad each
+    # axis to its own max.
+    T_resp_max = max((r.shape[1] for resps in resps_list for r in resps), default=0)
+    R_max = max((r.shape[0] for resps in resps_list for r in resps), default=0)
 
-    # pad the repeat axis to R_max — fill the (B, N, R, T) grid.
-    responses = torch.full((B, N, R_max, T_max), float('nan'),
+    # fill the (B, N, R, T_resp) grid directly.
+    responses = torch.full((B, N, R_max, T_resp_max), float('nan'),
                            dtype=stims.dtype, device=stims.device)
     for b in range(B):
         for n in range(N):
-            pr = padded_per_item[b][n]
-            responses[b, n, :pr.shape[0], :] = pr
+            r = resps_list[b][n]
+            responses[b, n, :r.shape[0], :r.shape[1]] = r
 
     # derive fine-grained mask once per batch — the training loop gets it
     # "for free" and does not need to scan again.

@@ -25,15 +25,23 @@ class NeuralDataset(Dataset, ABC):
     ``__init__`` and then call ``self.validate()`` as its last line:
 
     - ``self.stims``           — list of length ``S``, each element a stimulus
-                                  tensor of modality-specific shape
-                                  (audio: ``(1, F, T_s)``, video:
-                                  ``(1, H, W, T_s)``). ``T_s`` may vary.
+                                  tensor of modality-specific shape (audio
+                                  spectrogram: ``(1, F, T_stim)``, audio
+                                  waveform: ``(1, T_stim)``, video:
+                                  ``(1, H, W, T_stim)``). ``T_stim`` may vary
+                                  across stimuli AND may differ from the
+                                  response time axis when the stim sampling
+                                  rate is finer than the neural rate (e.g.
+                                  raw waveforms vs spike counts).
     - ``self.responses``       — list of length ``S``, each element itself a
                                   list of length ``N``. ``responses[s][n]`` is
-                                  a ``(R_{s,n}, T_s)`` float tensor of spike
-                                  counts per repeat × time bin, or a
-                                  ``(1, 1)`` NaN tensor if neuron ``n`` did
-                                  not hear stim ``s``.
+                                  a ``(R_{s,n}, T_resp_s)`` float tensor of
+                                  spike counts per repeat × time bin at the
+                                  dataset's neural ``dt_ms``, or a ``(1, 1)``
+                                  NaN tensor if neuron ``n`` did not hear
+                                  stim ``s``. ``T_resp_s`` is the per-stim
+                                  response length; in spectrogram mode it
+                                  equals the last axis of ``self.stims[s]``.
     - ``self.stim_meta``       — list of length ``S``, per-stim metadata dicts.
     - ``self.nrn_meta`` — list of length ``N``, per-neuron metadata dicts.
     - ``self.N_neurons``       — int, must equal ``len(self.nrn_meta)``.
