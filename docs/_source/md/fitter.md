@@ -42,7 +42,7 @@ only sanctioned way to train a deepSTRF model.
 |---                                                   |---              |---                                            |
 | Fit one model, log val metrics, save best checkpoint | yes             | —                                             |
 | Quick sanity check on a notebook                     | yes             | —                                             |
-| Multi-seed sweep with averaged metrics               | yes (loop over seeds, instantiate one Fitter per seed) | —                            |
+| Multi-seed sweep with averaged metrics               | yes — use `fit_multi_seed` (§4.2)                       | —                            |
 | Mixed-precision (`autocast` + `GradScaler`)          | no              | Custom loop, or a v2 `MixedPrecisionFitter`   |
 | Multi-GPU / multi-node                                | no              | `accelerate` + custom loop (v2)              |
 | Curriculum / dynamic dataloader                      | no              | Custom loop                                   |
@@ -172,6 +172,147 @@ not strict.
 callable must return a `(N,)` per-cell tensor; the default
 `_default_val_metrics` does this. With a scalar monitor, the flag
 raises `ValueError` at the first eval.
+
+### 4.2 Multi-seed init-variance sweeps (`fit_multi_seed`)
+
+A second opt-in convenience: `deepSTRF.training.fit_multi_seed` runs the
+same Fitter configuration K times under different seeds and aggregates
+per-neuron val and test metrics across seeds.
+
+```python
+from deepSTRF.training import fit_multi_seed
+
+results = fit_multi_seed(
+    model_factory  = lambda seed: Linear(n_frequency_bands=34,
+                                          temporal_window_size=9,
+                                          out_neurons=N),
+    loader_factory = lambda seed: (train_loader_fn(seed),
+                                    val_loader_fn(seed),
+                                    test_loader_fn(seed)),
+    n_seeds        = 5,
+    fitter_kwargs  = {"patience": 50, "monitor": "val_cc_norm", "mode": "max",
+                       "track_per_cell_best": True},
+    logger_factory = None,                    # see §4.3 for the optional logger hook
+    output_dir     = "runs/ns1-linear",       # auto-save JSON + best.pt per seed (§4.4)
+)
+```
+
+**Scope.** This is multi-seed *initialization* variance: same data
+split, same hyperparameters, different initial weights and shuffle
+order. It is **not** k-fold or leave-one-stim-out cross-validation —
+those need a split-factory rather than a seed sweep and are separate
+roadmap items.
+
+**Contract.**
+
+- `model_factory(seed) -> nn.Module` is called *after*
+  `set_random_seed(seed)`, so the model's weight init draws from the
+  seeded RNG.
+- `loader_factory(seed) -> (train, val, test)` is a required 3-tuple.
+  Fresh loaders per seed let each run get a deterministic shuffle
+  generator if the user wires one in the `DataLoader(..., generator=...)`
+  slot.
+- `fitter_kwargs` is forwarded verbatim to `Fitter(...)`. The three
+  managed kwargs (`model`, `train_loader`, `val_loader`) raise if
+  present. `ckpt_path` is auto-suffixed with `_seed{seed}` so seeds
+  don't overwrite each other's checkpoints.
+
+**Returns.** `results` is a flat dict (regardless of `output_dir`):
+
+| Key                            | Shape / type                  | Notes                                            |
+|---                             |---                             |---                                              |
+| `seeds`                         | `list[int]`                   | `[0, 1, ..., n_seeds-1]` by default              |
+| `per_seed_val_<m>`              | `(n_seeds, N)`                | per-neuron val metric, one row per seed          |
+| `mean_val_<m>`                  | `(N,)`                        | `nanmean` over seeds                              |
+| `std_val_<m>`                   | `(N,)`                        | population nanstd over seeds                      |
+| `per_seed_test_<m>`             | `(n_seeds, N)`                | same triple for the test loader                  |
+| `mean_test_<m>`                 | `(N,)`                        |                                                  |
+| `std_test_<m>`                  | `(N,)`                        |                                                  |
+| `per_seed_val_loss`             | `(n_seeds, 1)`                | scalar metrics become length-1 along axis 1      |
+| `per_seed_histories`            | `list[list[dict]]`            | raw per-seed Fitter histories                    |
+| `best_seed`                     | `int`                         | argmax (or argmin if `mode='min'`) of mean val monitor |
+| `best_state_dict`               | `OrderedDict[str, Tensor]`    | deep copy of the best seed's post-fit state      |
+
+### 4.3 Logger hook (`logger_factory`)
+
+`fit_multi_seed` does not import any dashboard. The optional
+`logger_factory` arg takes a `Callable[[int], SeedLogger]` — anything
+duck-typed to the following protocol:
+
+```python
+class SeedLogger:
+    def __call__(self, epoch_dict: Mapping[str, Any]) -> None: ...
+    def finalize(self, final_metrics: Mapping[str, Any]) -> None: ...   # optional
+    def close(self) -> None: ...                                          # optional
+```
+
+`__call__` is invoked once per epoch with the epoch dict (same shape
+the Fitter's `log_fn` receives). `finalize` is invoked at end of seed
+with `{'val': val_post, 'test': test_post}` — the post-fit re-evaluated
+metrics on both loaders. `close` is invoked last. Both extras are
+optional (`hasattr` is checked); a logger can be just a callable.
+
+WandB users get a reference implementation in
+[`deepSTRF.training.wandb_log`](../../deepSTRF/training/wandb_log.py):
+
+```python
+from deepSTRF.training import fit_multi_seed
+from deepSTRF.training.wandb_log import make_wandb_logger_factory
+
+fit_multi_seed(
+    model_factory=..., loader_factory=..., n_seeds=3,
+    logger_factory=make_wandb_logger_factory(
+        project="deepstrf", entity="urancon",
+        group="ns1-linear", mode="offline",   # offline by default; "disabled" no-ops
+    ),
+    fitter_kwargs={...},
+)
+```
+
+The `WandbSeedLogger` per-epoch hook reduces every per-neuron tensor
+(e.g. `val_cc_norm: (N,)`) to a `{mean, p10, p50, p90}` scalar quadruple
+plus a `wandb.Histogram` of the cell distribution — so the dashboard
+shows population-level percentile lines instead of a single average,
+and the per-epoch histogram panel surfaces tails. `finalize` pushes
+test metrics (`test_cc`, `test_cc_norm`, `test_loss`) plus their
+percentile scalars into `run.summary`, where they become sortable
+columns in the run table.
+
+Run names auto-derive: `<name>-seed{i}` if `name=` is given,
+`<group>-seed{i}` if `group=` is given, else `seed{i}`. The seed value
+is added to `wandb.config` so dashboards can colour-code by seed.
+
+For MLflow / TensorBoard / a local CSV writer, implement the
+`SeedLogger` protocol in your own module — `fit_multi_seed` does not
+care which dashboard, only that the protocol is met.
+
+### 4.4 Auto-save (`output_dir`)
+
+Independent of any dashboard, set `output_dir=` to materialise every
+run's metrics and best state on disk. The library treats this as part
+of its job: a 30-minute training shouldn't lose all its metrics just
+because the user forgot to pickle the returned dict.
+
+```
+output_dir/
+├── seed0/
+│   ├── history.json            # per-epoch dict; per-neuron tensors are
+│   │                            # summarised to {mean, p10/p50/p90, n_valid}
+│   ├── final.json              # post-fit val + test population summaries
+│   ├── final_neurons.pt        # per-neuron (N,) tensors for downstream stats
+│   └── best.pt                  # state_dict (deep copy of post-fit model)
+├── seed1/...
+├── seed2/...
+├── summary.json                 # across-seed mean/std + best_seed + monitor
+└── summary_neurons.pt           # per-neuron mean / std / per-seed tensors
+```
+
+`history.json` and `final.json` are human-readable / machine-greppable.
+`.pt` files hold the full per-neuron tensors as a `torch.save` dict;
+load with `torch.load(path, weights_only=False)` and read keys like
+`saved['val']['cc_norm']` (shape `(N,)`). The
+`output_dir/summary_neurons.pt` mirrors the in-memory `results` dict
+for the across-seed aggregates.
 
 ## 5. Hooks for customization
 
@@ -330,13 +471,16 @@ for seed in [0, 1, 2, 3, 4]:
            ckpt_path=f'best_seed{seed}.pt').fit()
 ```
 
+For the K-seed-then-aggregate case, use `fit_multi_seed` (§4.2) — it
+calls `set_random_seed(seed)` internally before each
+`model_factory(seed)` invocation, auto-suffixes `ckpt_path`, and
+aggregates per-neuron val + test metrics into `(n_seeds, N)` tensors.
+
 ## 8. What is NOT in v1
 
 These were considered and explicitly cut. Restoration will re-open this
 doc.
 
-- **Multi-seed wrapper.** Trivial to write as a user loop (§7); no
-  point baking it in.
 - **Multi-GPU / DDP.** Out of scope. v2 candidate built on `accelerate`.
 - **Mixed-precision.** Same.
 - **LR schedulers.** Pass an optimizer with the scheduler attached;

@@ -60,6 +60,7 @@ dependencies = [
     "pandas>=1.5",
     "tqdm>=4.60",
     "wandb>=0.15",
+    "tensorboard>=2.10",
     "requests>=2.28",       # auto-download (OSF, etc.)
     "platformdirs>=3.0",    # default cache dir for downloaded datasets
     "huggingface_hub>=0.20", # pretrained model weights — download / upload
