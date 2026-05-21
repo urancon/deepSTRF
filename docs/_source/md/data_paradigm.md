@@ -28,8 +28,8 @@ A concrete `NeuralDataset` subclass populates six attributes:
 
 | Attribute             | Type                               | Shape / structure                                                                                 |
 |-----------------------|------------------------------------|---------------------------------------------------------------------------------------------------|
-| `self.stims`          | `list` of length `S`               | Each element is a stimulus tensor of modality-specific shape. Audio: `(1, F, T_s)`. Video: `(1, H, W, T_s)`. `T_s` varies. |
-| `self.responses`      | `list[list]` of length `S × N`     | `responses[s][n]` is a float tensor of shape `(R_{s,n}, T_s)` (spike counts per repeat × time). |
+| `self.stims`          | `list` of length `S`               | Each element is a stimulus tensor of modality-specific shape. Audio spectrogram: `(1, F, T_stim)`. Audio waveform: `(1, T_stim)` mono at `self.audio_fs` Hz. Video: `(1, H, W, T_stim)`. `T_stim` varies. |
+| `self.responses`      | `list[list]` of length `S × N`     | `responses[s][n]` is a float tensor of shape `(R_{s,n}, T_resp_s)` (spike counts per repeat × time). `T_resp_s` is the **neural** time-bin count at `self.dt_ms`; in spectrogram mode it equals the stim's last axis, but for raw waveforms it is finer than the stim T (the stim runs at `audio_fs`, the response at neural rate). |
 | `self.stim_meta`      | `list` of length `S`               | Per-stim metadata **dict**: e.g. `{"name": "...", "type": "...", ...}`. Fields vary per dataset.  |
 | `self.nrn_meta`| `list` of length `N`               | Per-neuron metadata **dict**: e.g. `{"cell_id": "...", "animal_id": "...", "area": "..."}`.       |
 | `self.N_neurons`      | `int`                              | Total neurons; equals `len(self.nrn_meta)`.                                                |
@@ -65,13 +65,32 @@ missingness information entirely.
 
 Introduced at **batch time** by the collate function. Stims are zero-padded
 on the right; responses are NaN-padded on the right. The batched output
-shapes become `(B, 1, F, T_max)` for stims and `(B, N, R_max, T_max)` for
-responses.
+shapes become `(B, ..., T_stim_max)` for stims and `(B, N, R_max, T_resp_max)`
+for responses. The two `T_*` axes are sized independently — equal in
+spectrogram mode (one bin per neural sample), unequal in the raw-waveform
+mode where the stim runs at `audio_fs` and responses stay at the dataset's
+neural rate.
 
 ### 3.3 Repeat padding: `R_{s,n}` varies across neurons within a stim
 
 Also introduced at batch time by the collate function. Responses are NaN-padded
 along the repeat dimension up to `R_max`.
+
+### 3.4 Raw-waveform inputs (audio only)
+
+Audio datasets may expose an opt-in waveform-input mode (e.g.
+`NS1Dataset(return_waveform=True, audio_fs=16000)`). In this mode:
+
+- `self.stims[s]` is a `(1, T_stim)` mono float32 tensor at `self.audio_fs` Hz,
+  cropped / zero-padded so `T_stim = T_neural · audio_fs · dt_ms / 1000`.
+- `self.responses[s][n]` is unchanged — still `(R, T_neural)` at the dataset's
+  `dt_ms`.
+- The model is responsible for the rate change. Pair the waveform stim with a
+  model whose `wav2spec` slot is a non-`Identity()` module (see
+  `deepSTRF.models.wav2spec`); the slot maps `(B, 1, T_stim) → (B, 1, F, T_neural)`
+  and the rest of the canonical `prefiltering → core → readout` pipeline
+  operates as in spectrogram mode.
+- Datasets without a waveform branch leave `self.audio_fs = None`.
 
 ## 4. Why NaN-as-sentinel
 
@@ -121,12 +140,12 @@ loader = DataLoader(dataset, batch_size=8, shuffle=True, collate_fn=neural_colla
 
 One yielded batch is a 4-tuple:
 
-| Name          | Shape                         | Contents                                                                                  |
-|---------------|-------------------------------|-------------------------------------------------------------------------------------------|
-| `stims`       | `(B, 1, F, T_max)` (audio)    | Float tensor. Zero-padded on the right along `T`. **Never contains NaN.**                 |
-| `responses`   | `(B, N, R_max, T_max)`        | Float tensor. NaN-padded on the right along `R` and `T`; full-NaN slab where neuron n didn't hear stim s. |
-| `valid_mask`  | `(B, N, R_max, T_max)` `bool` | `~responses.isnan()`. Derived once per batch. Canonical "this position holds real data."  |
-| `stim_metas`  | `list` length `B`             | Per-stim metadata dicts, same as stored in `dataset.stim_meta`.                           |
+| Name          | Shape                              | Contents                                                                                  |
+|---------------|------------------------------------|-------------------------------------------------------------------------------------------|
+| `stims`       | `(B, 1, F, T_stim_max)` (audio spec) or `(B, 1, T_stim_max)` (audio waveform) | Float tensor. Zero-padded on the right along `T`. **Never contains NaN.**                 |
+| `responses`   | `(B, N, R_max, T_resp_max)`        | Float tensor. NaN-padded on the right along `R` and `T_resp`; full-NaN slab where neuron n didn't hear stim s. |
+| `valid_mask`  | `(B, N, R_max, T_resp_max)` `bool` | `~responses.isnan()`. Derived once per batch. Canonical "this position holds real data."  |
+| `stim_metas`  | `list` length `B`                  | Per-stim metadata dicts, same as stored in `dataset.stim_meta`.                           |
 
 If you need the coarser "did this neuron hear this stim" per batch-item
 mask, recover it as `valid_mask.any(dim=(-1, -2))` — a `(B, N)` bool

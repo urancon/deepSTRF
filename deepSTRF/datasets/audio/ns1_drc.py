@@ -64,6 +64,25 @@ NS1_TYPE_OVERRIDES = {
 NS1_RAHMAN_TRAINVAL_INDICES = [0, 1, 2, 4, 5, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18]
 NS1_RAHMAN_TEST_INDICES = [3, 6, 9, 19]
 
+# Mapping from stim index (0..19) to the matching wav filename under
+# ``spikesandwav/SH.En.C/``. Verified empirically (mel-spec correlation to
+# X_nfht — see ``tests/test_ns1_waveform.py``): stim_idx 0..11 come from
+# ``source.1`` with ``fw=2`` and frozen tokens 1..12; stim_idx 12..19 come
+# from ``source.2`` with ``fw=1`` and frozen tokens 1..8.
+NS1_WAV_FILENAMES = tuple(
+    f"source.1.sound.0.snr.0.token.0.fw.2.frozen.{i+1}" for i in range(12)
+) + tuple(
+    f"source.2.sound.0.snr.0.token.0.fw.1.frozen.{i+1}" for i in range(8)
+)
+assert len(NS1_WAV_FILENAMES) == NS1_NAT_SOUNDS
+
+# Raw wavs are float-mono at 48828.125 Hz, 5.000 s long (244140 samples). The
+# precomputed spec covers 4.995 s (999 bins × 5 ms) — so when constructing
+# waveforms aligned to the response window we crop / pad the resampled audio
+# to exactly ``T_neural * audio_fs * dt_ms / 1000`` samples.
+NS1_WAV_NATIVE_FS = 48828
+NS1_WAV_DIR_NAME = "spikesandwav/SH.En.C"
+
 
 def download_ns1(dest: Optional[str] = None) -> str:
     """Download all NS1 data assets into ``dest``.
@@ -153,8 +172,16 @@ class NS1Dataset(AudioNeuralDataset):
     =============== STRUCTURE ================
 
     Follows the standard deepSTRF data paradigm (see docs/_source/md/data_paradigm.md).
+    Stim shape depends on the loading mode (see ``return_waveform`` parameter):
+
+    - **Spectrogram mode** (default): ``self.stims[s]`` is a ``(1, F=34, T=999)``
+      tensor of the precomputed Harper/Rahman mel-spectrogram at dt=5 ms.
+    - **Waveform mode**: ``self.stims[s]`` is a ``(1, T_audio)`` mono float tensor
+      at ``self.audio_fs`` Hz, aligned to the response window (i.e.
+      ``T_audio = T_neural * audio_fs * dt_ms / 1000``).
+
     NS1-specific metadata contents:
-     - self.stims                       list of S=20 tensors (1, F=34, T=999)
+     - self.stims                       list of S=20 tensors (see shape above)
      - self.responses                   list of S lists of N tensors (R=20, T=999)
      - self.stim_meta                   list of S dicts {"name", "type"}
      - self.nrn_meta             list of N dicts {"cell_id", "area",
@@ -172,7 +199,8 @@ class NS1Dataset(AudioNeuralDataset):
     """
 
     def __init__(self, path: Optional[str] = None, dt_ms: float = 5.0,
-                 smooth: bool = True, download: bool = False):
+                 smooth: bool = True, download: bool = False,
+                 return_waveform: bool = False, audio_fs: int = 16000):
         """
         Parameters
         ----------
@@ -195,6 +223,18 @@ class NS1Dataset(AudioNeuralDataset):
              - DNet GitHub (https://github.com/monzilur/DNet): the
                precomputed 5 ms mel-spectrogram tensor (``test_data_5ms.mat``).
             Total ~160 MB, ~16 s on a fast connection. See ``download_ns1``.
+        return_waveform : bool, default False
+            If True, ``self.stims`` holds raw audio waveforms instead of
+            precomputed spectrograms. Each ``self.stims[s]`` is a
+            ``(1, T_audio)`` float32 tensor at ``audio_fs`` Hz, downmixed to
+            mono, resampled from the native 48 828 Hz, and right-cropped /
+            zero-padded to exactly ``T_neural * audio_fs * dt_ms / 1000``
+            samples so it aligns with the 4.995 s response window. Pair with a
+            model that has a ``wav2spec`` front-end (see
+            ``deepSTRF.models.wav2spec``).
+        audio_fs : int, default 16000
+            Sample rate (Hz) for waveform mode. Default 16 kHz gives a clean
+            80 samples / 5-ms bin. Ignored when ``return_waveform=False``.
         """
 
         if path is None:
@@ -226,14 +266,37 @@ class NS1Dataset(AudioNeuralDataset):
         assert S == NS1_NAT_SOUNDS, f"expected {NS1_NAT_SOUNDS} stims, got {S}"
         self.F = int(F)
 
-        self.stims = [
-            torch.from_numpy(X[s, :, 0, :]).float().unsqueeze(0)  # (1, F, T)
-            for s in range(S)
-        ]
         self.stim_meta = [
             {"name": f"nat{s + 1:02d}", "type": NS1_TYPE_OVERRIDES.get(s, "unknown")}
             for s in range(S)
         ]
+
+        if return_waveform:
+            # ---- raw-waveform mode: load the 20 OSF wavs in stim-index order ----
+            from deepSTRF.utils.audio_io import load_resampled_mono_wav
+            wav_root = os.path.join(path, NS1_WAV_DIR_NAME)
+            if not os.path.isdir(wav_root):
+                raise FileNotFoundError(
+                    f"NS1 waveform mode expects raw wavs at {wav_root}; pass\n"
+                    f"download=True to fetch them from OSF (https://osf.io/ayw2p/)."
+                )
+            T_neural = NS1_RAW_LEN_MS // int(round(dt_ms))  # 999 at 5 ms
+            T_audio = int(round(T_neural * audio_fs * dt_ms / 1000))
+            self.audio_fs = int(audio_fs)
+            self.stims = [
+                load_resampled_mono_wav(
+                    os.path.join(wav_root, NS1_WAV_FILENAMES[s]),
+                    target_fs=audio_fs,
+                    target_length=T_audio,
+                )
+                for s in range(S)
+            ]
+        else:
+            # ---- spectrogram mode (default): use the precomputed tensor ----
+            self.stims = [
+                torch.from_numpy(X[s, :, 0, :]).float().unsqueeze(0)  # (1, F, T)
+                for s in range(S)
+            ]
 
         # ----------- 2. load per-neuron metadata + spike data -----------
         meta = sio.loadmat(os.path.join(path, "MetadataSHEnCneurons.mat"))
