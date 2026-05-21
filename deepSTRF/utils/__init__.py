@@ -14,12 +14,14 @@ from .data import (
     ResponseSmoothingTransform,
 )
 from .plotting import (
+    compare_wav2spec_to_groundtruth,
     plot_psth_vs_pred,
     plot_stim_with_response,
     plot_strf_grid,
 )
 
 __all__ = [
+    "compare_wav2spec_to_groundtruth",
     "concat_neural_datasets",
     "hanning_smooth",
     "neural_collate",

@@ -390,3 +390,103 @@ def plot_strf_grid(
         fig.suptitle(suptitle)
 
     return fig, axes_flat[:K]
+
+
+def compare_wav2spec_to_groundtruth(
+    ds,
+    wav2spec,
+    stim_idx: int = 0,
+    *,
+    ground_truth_stims: Optional[Sequence] = None,
+    z_score: bool = True,
+    figsize: Optional[Tuple[float, float]] = None,
+    suptitle: Optional[str] = None,
+):
+    """Side-by-side visual comparison of a learned/hand-built ``wav2spec``
+    output against a dataset's precomputed (ground-truth) spectrogram.
+
+    Useful for sanity-checking a new front-end on a dataset that ships both
+    raw waveforms and a precomputed spectrogram (e.g. NS1, where the OSF
+    release has raw wavs and the DNet companion repo provides the matching
+    log-mel ``X_nfht``).
+
+    Parameters
+    ----------
+    ds : NeuralDataset
+        Dataset instance in **waveform mode** (``ds.stims[s].shape ==
+        (1, T_audio)``). The dataset's regular spectrogram is treated as
+        the ground truth, supplied via ``ground_truth_stims``.
+    wav2spec : nn.Module
+        Module to apply. Must accept ``(B, 1, T_audio)`` and return
+        ``(B, 1, F, T_neural)`` — i.e. the wav2spec slot contract.
+    stim_idx : int, default 0
+        Which dataset stim to compare. Indexes ``ds.stims``.
+    ground_truth_stims : sequence, optional
+        Per-stim ground-truth spectrograms (each ``(F, T)`` or ``(1, F, T)``).
+        Required: the waveform-mode dataset doesn't carry them itself. For
+        NS1 build them by re-instantiating ``NS1Dataset()`` (spec mode) and
+        passing its ``stims``.
+    z_score : bool, default True
+        If True, both spectrograms are independently z-scored (mean 0, std 1)
+        before plotting, so a constant offset / global scale mismatch does
+        not visually dominate the comparison.
+
+    Returns
+    -------
+    pred_spec : numpy.ndarray
+        The wav2spec output, shape ``(F, T)``.
+    truth_spec : numpy.ndarray
+        The ground-truth spectrogram, shape ``(F, T)``.
+    fig : matplotlib.figure.Figure
+        3-panel side-by-side figure (pred | truth | difference).
+    """
+    import torch
+
+    if ground_truth_stims is None:
+        raise ValueError(
+            "ground_truth_stims is required — the waveform-mode dataset does "
+            "not carry the precomputed spec internally. Pass the spec-mode "
+            "dataset's ``stims`` list (e.g. ``NS1Dataset().stims``)."
+        )
+
+    wav = ds.stims[stim_idx]
+    if wav.dim() == 2:
+        wav = wav.unsqueeze(0)  # (1, 1, T_audio)
+    wav2spec.eval()
+    with torch.no_grad():
+        pred = wav2spec(wav)  # (1, 1, F, T)
+    pred_np = _to_numpy(pred).squeeze()  # (F, T)
+
+    truth = ground_truth_stims[stim_idx]
+    truth_np = _to_numpy(truth).squeeze()  # (F, T)
+
+    # crop to common T
+    T_common = min(pred_np.shape[-1], truth_np.shape[-1])
+    pred_np = pred_np[..., :T_common]
+    truth_np = truth_np[..., :T_common]
+
+    if z_score:
+        pred_np = (pred_np - pred_np.mean()) / (pred_np.std() + 1e-12)
+        truth_np = (truth_np - truth_np.mean()) / (truth_np.std() + 1e-12)
+
+    fig, axs = plt.subplots(1, 3, figsize=figsize or (10, 3), sharex=True, sharey=True)
+    vmax = float(max(np.abs(pred_np).max(), np.abs(truth_np).max()))
+    diff = pred_np - truth_np
+    vmax_diff = float(np.abs(diff).max() + 1e-12)
+
+    axs[0].imshow(pred_np, aspect="auto", origin="lower", cmap="viridis",
+                  vmin=-vmax, vmax=vmax)
+    axs[0].set_title("wav2spec output")
+    axs[1].imshow(truth_np, aspect="auto", origin="lower", cmap="viridis",
+                  vmin=-vmax, vmax=vmax)
+    axs[1].set_title("ground truth")
+    im = axs[2].imshow(diff, aspect="auto", origin="lower", cmap="RdBu_r",
+                       vmin=-vmax_diff, vmax=vmax_diff)
+    axs[2].set_title("difference")
+    for ax in axs:
+        ax.set_xlabel("time bin")
+    axs[0].set_ylabel("freq band")
+    if suptitle is not None:
+        fig.suptitle(suptitle)
+
+    return pred_np, truth_np, fig
