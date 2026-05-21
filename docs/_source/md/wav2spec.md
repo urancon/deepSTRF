@@ -118,22 +118,22 @@ m = SincNet(audio_fs=16000, n_filters=34, kernel_size=251,
              hop_ms=5.0, init="mel", activation="logabs", envelope=True)
 ```
 
-### 4.3 `ICNetFrontend` — the deep frontend of Drakopoulos et al. 2025
+### 4.3 ICNet's encoder — internal to `deepSTRF.models.audio.ICNet`
 
-The convolutional encoder of [ICNet](https://doi.org/10.1038/s42256-025-01104-9):
+[ICNet](https://doi.org/10.1038/s42256-025-01104-9) (Drakopoulos et al.
+Nat. Mach. Intell. 2025) has its own SincNet-and-conv-stack front-end:
 `SincNet(48 filters, K=64, stride 1, symlog)` → 5× causal `Conv1d(128
-ch, K=64, PReLU)` → bottleneck `Conv1d(64 ch, K=64, stride 1, PReLU)`.
-Output `out_channels = 64` (the bottleneck latent — not a "spectrogram"
-in the conventional sense, but it slots into the contract).
-
-The 5 encoder strides multiply to `audio_fs · dt_ms / 1000`. Paper
-defaults (24414 Hz / 1.31 ms) give `[2,2,2,2,2]` (total ÷32); NS1
-(16 kHz / 5 ms) gives `[2,2,2,2,5]` (total ÷80). The full ICNet model
-(encoder + Poisson decoder) is `deepSTRF.models.audio.ICNet`.
+ch, K=64, PReLU)` → bottleneck `Conv1d(64 ch, K=64, stride 1, PReLU)`,
+producing a 64-channel bottleneck latent at the neural rate. It slots
+into ICNet's own `wav2spec` attribute but is not exposed in the public
+`deepSTRF.models.wav2spec` namespace — it's tightly coupled to the
+ICNet model and not particularly useful as a generic front-end. Build
+the full ICNet model instead:
 
 ```python
-from deepSTRF.models.wav2spec import ICNetFrontend
-fe = ICNetFrontend(audio_fs=16000, dt_ms=5.0)   # ~5.0M params on NS1
+from deepSTRF.models.audio import ICNet
+m = ICNet(audio_fs=48000, out_neurons=119, dt_ms=5.0)   # NS1 config
+# m.wav2spec is the encoder; treat it as opaque.
 ```
 
 ## 5. Writing your own

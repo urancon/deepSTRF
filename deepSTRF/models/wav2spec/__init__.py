@@ -23,11 +23,10 @@ Modules expose:
 """
 
 from .causal_mel import CausalMelSpectrogram
-from .icnet_frontend import ICNetFrontend
 from .sincnet import SincNet
 
 
-__all__ = ["CausalMelSpectrogram", "ICNetFrontend", "SincNet", "make_wav2spec"]
+__all__ = ["CausalMelSpectrogram", "SincNet", "make_wav2spec"]
 
 
 def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
