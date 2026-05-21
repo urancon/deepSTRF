@@ -61,15 +61,23 @@ class SincNet(nn.Module):
     envelope : bool, default False
         If ``True``, compute a proper power-envelope spectrogram: run the
         bandpass at stride 1 (full audio rate), apply ``abs()`` (rectify),
-        average-pool over ``hop`` samples, then apply the activation. The
-        rectify+pool step is what a real auditory filterbank does — and
-        what mel-STFT does implicitly via the window. Recommended when
-        SincNet is the *whole* wav2spec front-end (the downstream readout
-        is too thin to learn envelope extraction from signed bandpass
-        output). ``False`` (default) keeps the lighter ICNet behaviour
-        (strided conv, no envelope step) — appropriate when SincNet is
-        followed by additional conv layers that can extract envelopes
-        themselves.
+        average-pool over ``env_window_ms`` of audio with stride ``hop``,
+        then apply the activation. The rectify+pool step is what a real
+        auditory filterbank does — and what mel-STFT does implicitly via
+        the window. Recommended when SincNet is the *whole* wav2spec
+        front-end (the downstream readout is too thin to learn envelope
+        extraction from signed bandpass output). ``False`` (default)
+        keeps the lighter ICNet behaviour (strided conv, no envelope
+        step) — appropriate when SincNet is followed by additional conv
+        layers that can extract envelopes themselves.
+    env_window_ms : float, optional
+        Width of the envelope-averaging window in ms. Only meaningful
+        when ``envelope=True``. ``None`` (default) → uses ``hop_ms`` (no
+        overlap, one bin's worth of samples per frame). Set to a value
+        greater than ``hop_ms`` for an overlapping pool — e.g. 10 ms to
+        match Rahman 2019's effective STFT window. Causal: the pool input
+        is left-padded by ``env_window - hop`` so each output frame ends
+        at audio sample ``(t+1)*hop - 1`` of the original waveform.
 
     References
     ----------
@@ -85,7 +93,8 @@ class SincNet(nn.Module):
                  kernel_size: int = 251, hop_ms: float = 5.0,
                  f_min: float = 300.0, f_max: float | None = None,
                  init: str = "mel", activation: str = "logabs",
-                 envelope: bool = False):
+                 envelope: bool = False,
+                 env_window_ms: float | None = None):
         super().__init__()
         if audio_fs <= 0:
             raise ValueError(f"audio_fs must be positive (got {audio_fs})")
@@ -103,6 +112,16 @@ class SincNet(nn.Module):
         self.f_max = float(f_max) if f_max is not None else audio_fs / 2.0
         self.activation = activation
         self.envelope = bool(envelope)
+        # Envelope-averaging window: defaults to hop (no overlap) — wider
+        # values give an overlapping pool, e.g. 10 ms to mirror Rahman's STFT.
+        env_ms = float(env_window_ms) if env_window_ms is not None else float(hop_ms)
+        self.env_window = max(1, int(round(audio_fs * env_ms / 1000.0)))
+        if self.env_window < self.hop:
+            raise ValueError(
+                f"env_window_ms ({env_ms}) must be >= hop_ms ({hop_ms})"
+            )
+        # extra left-padding for the avg-pool when env_window > hop
+        self.pool_left_pad = self.env_window - self.hop
         # Causal left padding depends on the stride layout:
         #  - envelope mode:   conv runs at stride 1 then avg-pool(hop) → need
         #                     left_pad = K - 1 so the per-sample conv output
@@ -207,13 +226,16 @@ class SincNet(nn.Module):
         kernels = self._build_filters()
 
         if self.envelope:
-            # bandpass at full audio rate → |·| → avg-pool over hop samples.
-            # left_pad = K - 1 above guarantees the per-sample conv output has
-            # length T_audio (= T_neural · hop), so the avg-pool collapses
-            # cleanly to T_neural frames.
+            # bandpass at full audio rate → |·| → avg-pool over env_window
+            # samples with stride=hop. left_pad = K - 1 above guarantees the
+            # per-sample conv output has length T_audio; if env_window > hop,
+            # we left-pad it again by (env_window - hop) so the pool windows
+            # stay strictly causal and the output is exactly T_neural frames.
             y = F.conv1d(x, kernels, stride=1)        # (B, n_filters, T_audio)
             y = y.abs()
-            y = F.avg_pool1d(y, kernel_size=self.hop, stride=self.hop)  # (B, n_filters, T_neural)
+            if self.pool_left_pad > 0:
+                y = F.pad(y, (self.pool_left_pad, 0))
+            y = F.avg_pool1d(y, kernel_size=self.env_window, stride=self.hop)  # (B, n_filters, T_neural)
         else:
             y = F.conv1d(x, kernels, stride=self.hop)   # (B, n_filters, T_neural)
 
