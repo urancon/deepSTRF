@@ -200,7 +200,7 @@ class NS1Dataset(AudioNeuralDataset):
 
     def __init__(self, path: Optional[str] = None, dt_ms: float = 5.0,
                  smooth: bool = True, download: bool = False,
-                 return_waveform: bool = False, audio_fs: int = 16000):
+                 return_waveform: bool = False, audio_fs: int = 48000):
         """
         Parameters
         ----------
@@ -227,14 +227,18 @@ class NS1Dataset(AudioNeuralDataset):
             If True, ``self.stims`` holds raw audio waveforms instead of
             precomputed spectrograms. Each ``self.stims[s]`` is a
             ``(1, T_audio)`` float32 tensor at ``audio_fs`` Hz, downmixed to
-            mono, resampled from the native 48 828 Hz, and right-cropped /
+            mono, resampled from the native 48 828.125 Hz, and right-cropped /
             zero-padded to exactly ``T_neural * audio_fs * dt_ms / 1000``
             samples so it aligns with the 4.995 s response window. Pair with a
             model that has a ``wav2spec`` front-end (see
             ``deepSTRF.models.wav2spec``).
-        audio_fs : int, default 16000
-            Sample rate (Hz) for waveform mode. Default 16 kHz gives a clean
-            80 samples / 5-ms bin. Ignored when ``return_waveform=False``.
+        audio_fs : int, default 48000
+            Sample rate (Hz) for waveform mode. Default 48 kHz gives a clean
+            240 samples / 5-ms bin and a Nyquist of 24 kHz — enough to
+            preserve the ~22.6 kHz content used in Rahman et al. 2019's
+            cochleagram. (Native is 48 828.125 Hz; the small downsample
+            keeps an integer sample-per-bin factor.) Ignored when
+            ``return_waveform=False``.
         """
 
         if path is None:

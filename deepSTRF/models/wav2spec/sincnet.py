@@ -51,10 +51,13 @@ class SincNet(nn.Module):
         hard clamps are at 0 Hz and audio_fs/2.
     init : {'mel', 'linear'}, default 'mel'
         Initial filter edge spacing.
-    activation : {'symlog', 'logabs', 'none'}, default 'symlog'
-        Output nonlinearity. ``'symlog'`` = ``sgn(x)·log(|x|+1)`` (the ICNet
-        variant — sign-preserving log-compression); ``'logabs'`` = ``log(|x|+1)``
-        (standard SincNet, half-wave rectified); ``'none'`` = identity.
+    activation : {'symlog', 'logabs', 'none'}, default 'logabs'
+        Output nonlinearity. ``'logabs'`` = ``log(|x|+1)`` (standard
+        SincNet, half-wave rectified) — sensible default when SincNet is
+        the only wav2spec stage. ``'symlog'`` = ``sgn(x)·log(|x|+1)`` (the
+        ICNet variant — sign-preserving log-compression) — use when SincNet
+        is followed by deeper conv layers that can extract envelopes
+        themselves. ``'none'`` = identity.
     envelope : bool, default False
         If ``True``, compute a proper power-envelope spectrogram: run the
         bandpass at stride 1 (full audio rate), apply ``abs()`` (rectify),
@@ -81,7 +84,7 @@ class SincNet(nn.Module):
     def __init__(self, audio_fs: int, n_filters: int = 34,
                  kernel_size: int = 251, hop_ms: float = 5.0,
                  f_min: float = 300.0, f_max: float | None = None,
-                 init: str = "mel", activation: str = "symlog",
+                 init: str = "mel", activation: str = "logabs",
                  envelope: bool = False):
         super().__init__()
         if audio_fs <= 0:
