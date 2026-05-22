@@ -318,9 +318,18 @@ def _enumerate_neurons(
 def _load_timit_stims(path: Union[str, Path]) -> list[dict]:
     """Load the 499 TIMIT sentences from ``stimuli/out_sentence_details_timit_all_loudness.mat``.
 
+    **The ``befaft`` silence (0.5 s pre + 0.5 s post by default) is trimmed
+    before the waveform is returned.** ``sentdet[].sound`` is shipped with
+    real digital silence at both ends for STRF-analysis convenience, but
+    the per-trial ``stimon`` time markers in TRIALINFO point at the
+    *speech onset*, not the start of the padded waveform. Keeping the
+    padding would shift every spectrogram 500 ms ahead of its paired
+    response — well outside the typical STRF context window.
+
     Returns a list of dicts (one per ``sentdet`` entry) with keys
-    ``name``, ``stim_id``, ``sound`` (np.ndarray, 16 kHz mono),
-    ``soundf``, ``duration_s``, ``befaft_s``. The packaged ``aud``
+    ``name``, ``stim_id``, ``sound`` (np.ndarray, 16 kHz mono,
+    silence-trimmed), ``soundf``, ``duration_s`` (speech-only),
+    ``befaft_s = (0.0, 0.0)`` after trimming. The packaged ``aud``
     cochleagram is *not* loaded — we recompute mel from ``sound``
     using the deepSTRF audio pipeline.
     """
@@ -333,16 +342,30 @@ def _load_timit_stims(path: Union[str, Path]) -> list[dict]:
     for s in sd:
         sound = np.asarray(s.sound, dtype=np.float32).reshape(-1)
         soundf = int(np.asarray(s.soundf).item())
-        dur = float(np.asarray(s.duration).item())
+        dur_padded = float(np.asarray(s.duration).item())
         ba = np.asarray(s.befaft)
         befaft = tuple(float(x) for x in ba.ravel()[:2]) if ba.size else (0.0, 0.0)
+
+        # Trim the silence padding -- stimon points at speech onset.
+        n_pre  = int(round(befaft[0] * soundf))
+        n_post = int(round(befaft[1] * soundf))
+        if n_pre or n_post:
+            assert n_pre + n_post < sound.size, \
+                f"befaft={befaft} would empty sound array of length {sound.size}"
+            sound_speech = sound[n_pre : sound.size - n_post]
+        else:
+            sound_speech = sound
+        dur_speech = sound_speech.size / soundf
+
         out.append({
             "name": str(s.name),
             "stim_id": int(np.asarray(s.sentId).item()),
-            "sound": sound,
+            "sound": sound_speech,
             "soundf": soundf,
-            "duration_s": dur,
-            "befaft_s": befaft,
+            "duration_s": dur_speech,
+            "befaft_s": (0.0, 0.0),
+            "befaft_s_trimmed": befaft,    # provenance
+            "duration_s_padded": dur_padded,
         })
     return out
 
