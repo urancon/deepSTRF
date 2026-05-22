@@ -187,7 +187,12 @@ def _enumerate_neurons(
     else:
         session_whitelist = set(sessions)
 
-    area_whitelist = set(areas) if areas is not None else None
+    # 'primary' is an Ahmed-2025-style alias for the YAML's 'core' group.
+    area_whitelist: Optional[set[str]]
+    if areas is None:
+        area_whitelist = None
+    else:
+        area_whitelist = {("core" if a == "primary" else a) for a in areas}
 
     nrn_meta: list[dict] = []
     for session_id in sorted(os.listdir(root)):
@@ -315,8 +320,9 @@ class Downer2025Dataset(AudioNeuralDataset):
             ``'estimation'`` keeps the single-rep stims, ``'test'`` keeps
             the canonical high-rep subset (10 TIMIT IDs or 11 mVocs IDs).
         animals : 'all' or iterable of {'b','c','f'}
-        areas : iterable of {'core','non-primary'} or fine labels
-            {'A1','R','ML','AL','CL','CPB','RPB'}. None = no filter.
+        areas : iterable of {'core'|'primary', 'non-primary'} or fine labels
+            {'A1','R','ML','AL','CL','CPB','RPB'}. ``'primary'`` is an
+            alias for ``'core'``. None = no filter.
         sessions : iterable of session-id strings, or None.
         audio_fs : int, default 16000
             Common sample rate both stim classes are resampled to before
