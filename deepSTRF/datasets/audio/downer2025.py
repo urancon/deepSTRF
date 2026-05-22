@@ -26,7 +26,13 @@ import re
 from pathlib import Path
 from typing import Literal, Optional, Sequence, Union
 
+import numpy as np
+import scipy.io as sio
+import torch
+import torch.nn.functional as F
+import torchaudio
 import yaml
+from tqdm import tqdm
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 from deepSTRF.utils.data_download import default_cache_dir
@@ -250,6 +256,101 @@ def _enumerate_neurons(
     return nrn_meta
 
 
+def _load_timit_stims(path: Union[str, Path]) -> list[dict]:
+    """Load the 499 TIMIT sentences from ``stimuli/out_sentence_details_timit_all_loudness.mat``.
+
+    Returns a list of dicts (one per ``sentdet`` entry) with keys
+    ``name``, ``stim_id``, ``sound`` (np.ndarray, 16 kHz mono),
+    ``soundf``, ``duration_s``, ``befaft_s``. The packaged ``aud``
+    cochleagram is *not* loaded — we recompute mel from ``sound``
+    using the deepSTRF audio pipeline.
+    """
+    mat = sio.loadmat(
+        Path(path) / "stimuli" / "out_sentence_details_timit_all_loudness.mat",
+        squeeze_me=True, struct_as_record=False, variable_names=["sentdet"],
+    )
+    sd = mat["sentdet"]
+    out: list[dict] = []
+    for s in sd:
+        sound = np.asarray(s.sound, dtype=np.float32).reshape(-1)
+        soundf = int(np.asarray(s.soundf).item())
+        dur = float(np.asarray(s.duration).item())
+        ba = np.asarray(s.befaft)
+        befaft = tuple(float(x) for x in ba.ravel()[:2]) if ba.size else (0.0, 0.0)
+        out.append({
+            "name": str(s.name),
+            "stim_id": int(np.asarray(s.sentId).item()),
+            "sound": sound,
+            "soundf": soundf,
+            "duration_s": dur,
+            "befaft_s": befaft,
+        })
+    return out
+
+
+def _load_session_trial(channel_file: Union[str, Path]) -> dict:
+    """Load just the ``trial`` struct from a session's first MUspk file.
+
+    All channels within a session share the same trial struct (verified
+    on session 180501 — plain Ch and Chp variants have identical
+    ``stimon`` and ``*Stimcode`` arrays).
+    """
+    m = sio.loadmat(channel_file, squeeze_me=True, struct_as_record=False,
+                    variable_names=["trial"])
+    t = m["trial"]
+    return {
+        "stimon": np.asarray(t.stimon, dtype=np.float64),
+        "timitStimcode": np.asarray(t.timitStimcode, dtype=np.int64),
+        "mVocStimcode": np.asarray(t.mVocStimcode, dtype=np.int64),
+    }
+
+
+def _load_spike_times(channel_file: Union[str, Path]) -> np.ndarray:
+    """Load only ``spike.spktimes`` from a MUspk file (skipping the large events matrix)."""
+    m = sio.loadmat(channel_file, squeeze_me=True, struct_as_record=False,
+                    variable_names=["spike"])
+    return np.asarray(m["spike"].spktimes, dtype=np.float64).reshape(-1)
+
+
+def _bin_spikes_per_rep(
+    spktimes: np.ndarray, onsets: np.ndarray, T: int, dt_s: float,
+) -> torch.Tensor:
+    """Bin per-rep spike counts into a ``(R, T)`` tensor.
+
+    ``onsets`` is the array of stimulus onset times (s) for the R reps.
+    Bin edges: ``[onset + i*dt_s, onset + (i+1)*dt_s)`` for i = 0..T-1.
+    """
+    R = onsets.shape[0]
+    out = np.zeros((R, T), dtype=np.float32)
+    edges = np.linspace(0.0, T * dt_s, T + 1)
+    for r, t0 in enumerate(onsets):
+        rel = spktimes - t0
+        # only spikes within the stim window matter
+        rel = rel[(rel >= 0.0) & (rel < T * dt_s)]
+        if rel.size:
+            out[r], _ = np.histogram(rel, bins=edges)
+    return torch.from_numpy(out)
+
+
+def _discover_high_rep_set(
+    per_session_codes: list[np.ndarray], min_reps: int,
+) -> set[int]:
+    """Return the set of stim IDs that get >= min_reps reps in at least one session.
+
+    Used to identify the canonical "test" subset (TIMIT: min_reps=11,
+    mVocs: min_reps=15) without hard-coding stim IDs — robust if the
+    upstream upload ever re-shuffles the ordering.
+    """
+    high: set[int] = set()
+    for codes in per_session_codes:
+        codes = codes[codes > 0]
+        if codes.size == 0:
+            continue
+        uniq, counts = np.unique(codes, return_counts=True)
+        high.update(int(u) for u, c in zip(uniq, counts) if c >= min_reps)
+    return high
+
+
 class Downer2025Dataset(AudioNeuralDataset):
     """Squirrel-monkey auditory cortex (Downer 2025 / Ahmed 2025).
 
@@ -289,6 +390,7 @@ class Downer2025Dataset(AudioNeuralDataset):
         stimuli: Literal["timit", "mvocs"] = "timit",
         dt_ms: float = 5.0,
         n_mels: int = 32,
+        compression: Literal["cubic", "log1p", "none"] = "cubic",
         smooth: bool = True,
         subset: Literal["all", "estimation", "test"] = "all",
         animals: Union[str, Sequence[str]] = "all",
@@ -314,6 +416,9 @@ class Downer2025Dataset(AudioNeuralDataset):
             Neural time-bin width. The paper's main analysis uses 50 ms;
             5 ms matches NS1 and gives users the freedom to re-bin.
         n_mels : int, default 32
+        compression : {'cubic', 'log1p', 'none'}, default 'cubic'
+            Spectrogram amplitude compression. Cubic root matches the
+            other deepSTRF audio datasets.
         smooth : bool, default True
             Hsu 2004 21 ms PSTH smoothing.
         subset : {'all', 'estimation', 'test'}
@@ -340,6 +445,9 @@ class Downer2025Dataset(AudioNeuralDataset):
         assert subset in ("all", "estimation", "test"), (
             f"subset must be 'all', 'estimation' or 'test' (got {subset!r})"
         )
+        assert compression in ("cubic", "log1p", "none"), (
+            f"compression must be 'cubic', 'log1p' or 'none' (got {compression!r})"
+        )
         assert n_mels > 0 and dt_ms > 0 and audio_fs > 0 and fmax > 0
 
         if path is None:
@@ -357,6 +465,7 @@ class Downer2025Dataset(AudioNeuralDataset):
         self.F = int(n_mels)
         self.audio_fs = int(audio_fs)
         self.fmax = int(fmax)
+        self.compression = compression
         self.smooth = bool(smooth)
 
         if not Path(path).is_dir():
@@ -375,11 +484,130 @@ class Downer2025Dataset(AudioNeuralDataset):
         self.N_neurons = len(self.nrn_meta)
 
         if _enumerate_only:
-            # Phase-1 inspection mode — skip stim/response loading.
+            # Inspection escape hatch — skip stim/response loading.
             return
 
-        # Phases 2–3: load stims (TIMIT or mVocs) + per-(stim,neuron) responses.
-        raise NotImplementedError(
-            "Downer2025Dataset stim/response loading is not yet implemented. "
-            "Use _enumerate_only=True for Phase-1 neuron-metadata inspection."
+        if stimuli == "mvocs":
+            raise NotImplementedError("Phase 3 — mVocs loading not yet implemented")
+
+        ########################################
+        # 1. group neurons by session for I/O batching
+        ########################################
+        from collections import defaultdict
+        sess_neurons: dict[str, list[tuple[int, str]]] = defaultdict(list)
+        sessions_root = Path(path) / "sessions"
+        for i, nm in enumerate(self.nrn_meta):
+            sid = nm["session_id"]
+            suf = nm["channel_suffix"] or ""
+            fname = f"{nm['animal_id']}_{sid}_Ch{nm['channel']}{suf}_MUspk.mat"
+            sess_neurons[sid].append((i, str(sessions_root / sid / fname)))
+
+        ########################################
+        # 2. read trial structs (once per session)
+        ########################################
+        trial_by_sess: dict[str, dict] = {}
+        for sid, neurons in sess_neurons.items():
+            trial_by_sess[sid] = _load_session_trial(neurons[0][1])
+
+        stim_field = "timitStimcode"
+        canon_key = "timit"
+        min_reps = int(sess_meta["n_reps_canonical"][canon_key])
+        high_rep_ids = _discover_high_rep_set(
+            [trial_by_sess[sid][stim_field] for sid in trial_by_sess],
+            min_reps=min_reps,
         )
+
+        ########################################
+        # 3. load TIMIT stims, build mel + stim_meta
+        ########################################
+        timit_entries = _load_timit_stims(path)
+
+        if subset == "test":
+            keep = lambda e: e["stim_id"] in high_rep_ids
+        elif subset == "estimation":
+            keep = lambda e: e["stim_id"] not in high_rep_ids
+        else:
+            keep = lambda e: True
+        timit_entries = [e for e in timit_entries if keep(e)]
+
+        hop = int(round(self.dt * self.audio_fs / 1000))
+        assert hop > 0, f"dt_ms={self.dt} too small for audio_fs={self.audio_fs}"
+        mel_tf = torchaudio.transforms.MelSpectrogram(
+            sample_rate=self.audio_fs, n_fft=10 * hop, hop_length=hop,
+            n_mels=self.F, f_max=float(self.fmax),
+        )
+
+        dt_s = self.dt / 1000.0
+        S = len(timit_entries)
+        T_by_stim: list[int] = [0] * S
+
+        for s_idx, entry in enumerate(timit_entries):
+            wav = torch.from_numpy(entry["sound"]).unsqueeze(0)
+            if entry["soundf"] != self.audio_fs:
+                wav = torchaudio.functional.resample(wav, entry["soundf"], self.audio_fs)
+            spec = mel_tf(wav)  # (1, F, T_spec)
+            if self.compression == "cubic":
+                spec = spec.pow(1.0 / 3.0)
+            elif self.compression == "log1p":
+                spec = torch.log1p(spec)
+            T_canon = int(round(entry["duration_s"] * 1000.0 / self.dt))
+            T_by_stim[s_idx] = T_canon
+            T_spec = spec.shape[-1]
+            if T_spec > T_canon:
+                spec = spec[..., :T_canon]
+            elif T_spec < T_canon:
+                spec = F.pad(spec, (0, T_canon - T_spec), mode="constant", value=0.0)
+            is_repeat = entry["stim_id"] in high_rep_ids
+            self.stims.append(spec)
+            self.stim_meta.append({
+                "name": entry["name"],
+                "type": "timit",
+                "stim_id": entry["stim_id"],
+                "duration_s": entry["duration_s"],
+                "n_samples": int(entry["sound"].shape[0]),
+                "split": "test" if is_repeat else "estimation",
+                "n_reps_canonical": min_reps if is_repeat else 1,
+                "befaft_s": entry["befaft_s"],
+            })
+
+        ########################################
+        # 4. bin spike times into per-(stim, neuron) responses
+        ########################################
+        N = self.N_neurons
+        stim_idx_by_id = {e["stim_id"]: i for i, e in enumerate(timit_entries)}
+        self.responses = [[None] * N for _ in range(S)]
+
+        for sid, neurons in tqdm(
+            sess_neurons.items(), desc=f"Downer2025 {stimuli} sessions",
+        ):
+            tr = trial_by_sess[sid]
+            codes = tr[stim_field]
+            onsets = tr["stimon"]
+            sess_stim_reps: dict[int, np.ndarray] = {}
+            for code_val in np.unique(codes):
+                if code_val == 0:
+                    continue
+                if int(code_val) not in stim_idx_by_id:
+                    continue
+                sess_stim_reps[int(code_val)] = onsets[codes == code_val]
+
+            for neuron_idx, chan_path in neurons:
+                spks = _load_spike_times(chan_path)
+                for stim_id_mat, rep_onsets in sess_stim_reps.items():
+                    s_idx = stim_idx_by_id[stim_id_mat]
+                    self.responses[s_idx][neuron_idx] = _bin_spikes_per_rep(
+                        spks, rep_onsets, T_by_stim[s_idx], dt_s,
+                    )
+
+        ########################################
+        # 5. NaN sentinels for unobserved (stim, neuron) pairs
+        ########################################
+        nan11 = torch.full((1, 1), float("nan"))
+        for s_idx in range(S):
+            for n in range(N):
+                if self.responses[s_idx][n] is None:
+                    self.responses[s_idx][n] = nan11.clone()
+
+        if self.smooth:
+            self.smooth_responses(window_ms=21.0)
+        self.validate()
