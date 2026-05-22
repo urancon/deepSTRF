@@ -346,3 +346,33 @@ def test_compute_paper_tuning_errors_when_no_test_stims():
                                  smooth=False)
     with pytest.raises(RuntimeError, match="No test-split stims"):
         ds_est.compute_paper_tuning(n_resamples=10, verbose=False)
+
+
+# ============================================================
+# Zenodo download helper (network-free unit tests)
+# ============================================================
+
+def test_download_downer2025_skips_when_extracted_exists(tmp_path):
+    """download_downer2025 is idempotent: if the unzipped layout already
+    exists (sessions/ subdir present), it returns the path without
+    re-downloading or re-unzipping."""
+    from deepSTRF.datasets.audio import download_downer2025
+
+    fake_extracted = tmp_path / "auditory_cortex_data"
+    (fake_extracted / "sessions").mkdir(parents=True)
+    out = download_downer2025(dest=str(tmp_path))
+    assert out == str(fake_extracted)
+
+
+def test_download_downer2025_reexported_from_package():
+    """Re-export check: the helper is accessible via deepSTRF.datasets.audio."""
+    from deepSTRF.datasets.audio import download_downer2025  # noqa: F401
+
+
+def test_missing_path_error_message_mentions_download():
+    """The FileNotFoundError when path doesn't exist tells the user how
+    to obtain the data."""
+    from deepSTRF.datasets.audio import Downer2025Dataset
+    with pytest.raises(FileNotFoundError, match="download=True"):
+        Downer2025Dataset(path="/definitely/does/not/exist",
+                            _enumerate_only=True)

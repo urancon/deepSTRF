@@ -35,11 +35,70 @@ import yaml
 from tqdm import tqdm
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
-from deepSTRF.utils.data_download import default_cache_dir
+from deepSTRF.utils.data_download import (
+    default_cache_dir,
+    unzip,
+    zenodo_download,
+)
 
 
 # Public Zenodo record. https://doi.org/10.5281/zenodo.16175377
 DOWNER_ZENODO_RECORD = 16175377
+DOWNER_ZENODO_ARCHIVE = "auditory_cortex_data.zip"
+# Filename inside the archive that uniquely identifies a complete extraction.
+DOWNER_EXTRACTED_SUBDIR = "auditory_cortex_data"
+
+
+def download_downer2025(dest: Optional[str] = None) -> str:
+    """Download the Downer 2025 / Ahmed 2025 archive from Zenodo.
+
+    The archive (``auditory_cortex_data.zip``, ~29 GB) ships in Zenodo
+    record ``10.5281/zenodo.16175377`` and unzips to
+    ``<dest>/auditory_cortex_data/`` — the standard layout the
+    ``Downer2025Dataset`` constructor expects.
+
+    Parameters
+    ----------
+    dest : str, optional
+        Parent directory the archive is downloaded into. Defaults to
+        ``default_cache_dir('Downer2025')`` (overridable via
+        ``$DEEPSTRF_DATA_DIR``).
+
+    Returns
+    -------
+    str
+        Path to the extracted ``auditory_cortex_data/`` directory.
+
+    Notes
+    -----
+    Idempotent: skips the zip download if already present, and skips
+    the unzip step if the expected ``auditory_cortex_data/sessions/``
+    subdirectory already exists.
+
+    **Heads up:** the archive is ~29 GB on disk; the unpacked
+    directory is also ~29 GB. Allow ~60 GB total during extraction
+    (zip plus contents); you can delete the zip once unpacking is
+    complete.
+    """
+    dest_path = Path(default_cache_dir("Downer2025") if dest is None else dest)
+    dest_path.mkdir(parents=True, exist_ok=True)
+
+    extracted_dir = dest_path / DOWNER_EXTRACTED_SUBDIR
+    sessions_marker = extracted_dir / "sessions"
+    if sessions_marker.is_dir():
+        return str(extracted_dir)
+
+    archive_path = dest_path / DOWNER_ZENODO_ARCHIVE
+    if not archive_path.exists():
+        zenodo_download(
+            DOWNER_ZENODO_RECORD, DOWNER_ZENODO_ARCHIVE, archive_path,
+        )
+    unzip(archive_path, dest_path)
+    if not sessions_marker.is_dir():
+        raise RuntimeError(
+            f"Downer2025 unzip incomplete: expected {sessions_marker} not found."
+        )
+    return str(extracted_dir)
 
 
 # Fine-area assignments are encoded as YAML *comments* in
@@ -514,7 +573,9 @@ class Downer2025Dataset(AudioNeuralDataset):
         fmax : int, default 8000
             Mel-band high cutoff. Matches Ahmed 2025's cochleagram.
         download : bool, default False
-            Fetch the 29 GB Zenodo archive if missing.
+            Fetch the 29 GB Zenodo archive (record 16175377) if missing
+            and unzip it. Idempotent — both the download and the unzip
+            steps are skipped when their outputs already exist.
         _enumerate_only : bool, default False
             Phase-1 internal flag. Populates ``self.nrn_meta`` and
             ``self.N_neurons`` then returns, skipping stim and response
@@ -529,11 +590,12 @@ class Downer2025Dataset(AudioNeuralDataset):
         )
         assert n_mels > 0 and dt_ms > 0 and audio_fs > 0 and fmax > 0
 
-        if path is None:
-            path = str(default_cache_dir("Downer2025"))
         if download:
-            # Phase 7 — Zenodo fetcher lands in a later commit.
-            raise NotImplementedError("download=True will land in Phase 7")
+            # Idempotent — returns the extracted auditory_cortex_data/ dir.
+            # When path is None this defaults to the platformdirs cache.
+            path = download_downer2025(path)
+        elif path is None:
+            path = str(default_cache_dir("Downer2025") / DOWNER_EXTRACTED_SUBDIR)
 
         super().__init__(path, dt_ms)
 
@@ -550,7 +612,9 @@ class Downer2025Dataset(AudioNeuralDataset):
         if not Path(path).is_dir():
             raise FileNotFoundError(
                 f"Downer2025 root not found: {path}. "
-                f"Pass download=True (Phase 7) or supply path= manually."
+                f"Pass download=True to fetch the ~29 GB Zenodo archive, "
+                f"or supply path= pointing to a pre-unpacked "
+                f"auditory_cortex_data/ directory."
             )
 
         sess_meta = _parse_sessions_metadata(path)
