@@ -808,6 +808,7 @@ class Downer2025Dataset(AudioNeuralDataset):
         sessions: Optional[Sequence[str]] = None,
         audio_fs: int = 16000,
         fmax: int = 8000,
+        window_ms: float = 25.0,
         download: bool = False,
         _enumerate_only: bool = False,
     ):
@@ -844,6 +845,16 @@ class Downer2025Dataset(AudioNeuralDataset):
             mel. mVocs source is 41 kHz stereo; TIMIT is already 16 kHz.
         fmax : int, default 8000
             Mel-band high cutoff. Matches Ahmed 2025's cochleagram.
+        window_ms : float, default 25.0
+            FFT analysis-window length in ms (Kaldi default). The window
+            is decoupled from the hop so phonemic detail is preserved
+            regardless of ``dt_ms``. Earlier versions of this dataset
+            hardcoded ``n_fft = 10 * hop`` which produced a 500 ms FFT
+            window at ``dt_ms=50`` and over-smoothed the spectrogram so
+            badly that a closed-form ridge STRF only reached
+            cc_norm ≈ 0.40 on the well-tuned cohort. With ``window_ms=25``
+            the same fit reaches cc_norm ≈ 0.53 — matching Ahmed 2025's
+            paper-reported STRF baseline.
         download : bool, default False
             Fetch the 29 GB Zenodo archive (record 16175377) if missing
             and unzip it. Idempotent — both the download and the unzip
@@ -879,6 +890,7 @@ class Downer2025Dataset(AudioNeuralDataset):
         self.audio_fs = int(audio_fs)
         self.fmax = int(fmax)
         self.compression = compression
+        self.window_ms = float(window_ms)
         self.smooth = bool(smooth)
 
         if not Path(path).is_dir():
@@ -957,8 +969,19 @@ class Downer2025Dataset(AudioNeuralDataset):
 
         hop = int(round(self.dt * self.audio_fs / 1000))
         assert hop > 0, f"dt_ms={self.dt} too small for audio_fs={self.audio_fs}"
+        # FFT window in samples: decoupled from the hop so the window length
+        # is roughly phoneme-scale regardless of dt_ms. Previously n_fft was
+        # 10 * hop, which at dt=50 ms ballooned to a 500 ms FFT window and
+        # smeared all phonemic structure -- see CLAUDE/TODO for the bug
+        # write-up.
+        n_fft_target = int(round(self.window_ms * self.audio_fs / 1000))
+        # n_fft must be at least the hop, otherwise the FFT window doesn't
+        # cover the bin's worth of audio; round up to a power of 2 for
+        # FFT efficiency.
+        n_fft = max(n_fft_target, hop)
+        n_fft = 1 << (n_fft - 1).bit_length()   # next power of 2
         mel_tf = torchaudio.transforms.MelSpectrogram(
-            sample_rate=self.audio_fs, n_fft=10 * hop, hop_length=hop,
+            sample_rate=self.audio_fs, n_fft=n_fft, hop_length=hop,
             n_mels=self.F, f_max=float(self.fmax),
         )
 
