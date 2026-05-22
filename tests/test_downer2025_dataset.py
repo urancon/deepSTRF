@@ -376,3 +376,55 @@ def test_missing_path_error_message_mentions_download():
     with pytest.raises(FileNotFoundError, match="download=True"):
         Downer2025Dataset(path="/definitely/does/not/exist",
                             _enumerate_only=True)
+
+
+# ============================================================
+# Hardcoded well-tuned lists (network-free)
+# ============================================================
+
+def test_hardcoded_well_tuned_lists_are_unique_and_sorted():
+    from deepSTRF.datasets.audio.downer2025 import (
+        AHMED2025_WELL_TUNED_TIMIT, AHMED2025_WELL_TUNED_MVOCS,
+    )
+    # Cardinalities match the phase 4 measurement
+    assert len(AHMED2025_WELL_TUNED_TIMIT) == 417
+    assert len(AHMED2025_WELL_TUNED_MVOCS) == 476
+    # Unique within each list
+    assert len(set(AHMED2025_WELL_TUNED_TIMIT)) == 417
+    assert len(set(AHMED2025_WELL_TUNED_MVOCS)) == 476
+    # Sorted (the helper builds via sorted())
+    assert list(AHMED2025_WELL_TUNED_TIMIT) == sorted(AHMED2025_WELL_TUNED_TIMIT)
+    assert list(AHMED2025_WELL_TUNED_MVOCS) == sorted(AHMED2025_WELL_TUNED_MVOCS)
+
+
+def test_hardcoded_well_tuned_format():
+    """Each cell_id matches the downer2025 cell-id format."""
+    import re
+    from deepSTRF.datasets.audio.downer2025 import (
+        AHMED2025_WELL_TUNED_TIMIT, AHMED2025_WELL_TUNED_MVOCS,
+    )
+    pat = re.compile(r"^[bcf]_\d{6}_Ch\d+[a-z0-9]*$")
+    for cid in AHMED2025_WELL_TUNED_TIMIT + AHMED2025_WELL_TUNED_MVOCS:
+        assert pat.match(cid), f"unexpected cell_id format: {cid}"
+
+
+def test_attach_ahmed2025_well_tuned_one_session():
+    """Helper attaches the right flag to nrn_meta for cells present in the
+    hardcoded list. Session 190606 has ~28-29 TIMIT well-tuned cells (the
+    exact number drifts with the RNG seed of compute_paper_tuning)."""
+    if not HAS_DATA:
+        pytest.skip("data missing")
+    from deepSTRF.datasets.audio import Downer2025Dataset
+    from deepSTRF.datasets.audio.downer2025 import AHMED2025_WELL_TUNED_TIMIT
+    ds = Downer2025Dataset(path=DOWNER_LOCAL, stimuli="timit",
+                            sessions=["190606"], smooth=False)
+    n = ds.attach_ahmed2025_well_tuned()
+    # The hardcoded list intersects this session in ~28-29 cells.
+    assert 20 <= n <= 40, n
+    flagged = sum(1 for m in ds.nrn_meta
+                   if m.get("ahmed2025_timit_well_tuned"))
+    assert flagged == n
+    # All flagged cells must indeed be in the hardcoded list.
+    for m in ds.nrn_meta:
+        if m["ahmed2025_timit_well_tuned"]:
+            assert m["cell_id"] in AHMED2025_WELL_TUNED_TIMIT
