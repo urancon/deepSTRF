@@ -705,3 +705,190 @@ class Downer2025Dataset(AudioNeuralDataset):
         if self.smooth:
             self.smooth_responses(window_ms=21.0)
         self.validate()
+
+    # ------------------------------------------------------------------
+    # Paper-faithful tuning criterion (Ahmed et al. 2025, §"Trial-to-trial
+    # neural variability"). Opt-in like ``compute_neuron_quality()`` — it
+    # mutates ``nrn_meta`` in place.
+    # ------------------------------------------------------------------
+    def compute_paper_tuning(
+        self,
+        n_resamples: int = 10_000,
+        dt_ms_analysis: float = 50.0,
+        seed: int = 0,
+        alpha: float = 0.05,
+        delta: float = 0.5,
+        verbose: bool = True,
+    ) -> dict:
+        """Replicate Ahmed 2025's tuned / well-tuned multi-unit criterion.
+
+        For each neuron and each of the M test-split stims, the method
+        randomly samples a pair of reps (with replacement across iterations
+        but never the same rep within a pair), concatenates them into long
+        sequences U and V (each of length sum_s T_s_coarse), and computes
+        their Pearson correlation. The null distribution is built the same
+        way but with each V circularly shifted by a random offset before
+        correlating. ``n_resamples`` iterations yield two empirical
+        distributions per neuron.
+
+        ``tuned`` -- one-sided Wilcoxon rank-sum test (true > null) at
+        ``alpha`` (default 0.05). Paper target: 1195 (TIMIT) / 1231 (mVocs).
+
+        ``well_tuned`` -- additionally requires
+        ``(mean(true) - mean(null)) / std(null) >= delta`` (default 0.5).
+        Paper target: 404 (TIMIT) / 489 (mVocs).
+
+        Writes four floats / booleans to each ``nrn_meta[i]``, prefixed by
+        the current stim mode::
+
+            ahmed2025_{timit|mvocs}_tuned          : bool
+            ahmed2025_{timit|mvocs}_well_tuned     : bool
+            ahmed2025_{timit|mvocs}_p_wilcoxon     : float
+            ahmed2025_{timit|mvocs}_delta_normalized : float
+
+        Parameters
+        ----------
+        n_resamples : int, default 10_000
+            Pair-resamplings per neuron. The paper used 100_000; 10_000 is
+            ~10x faster and gives a stable Wilcoxon (the criterion only
+            cares about the rank order of the two distributions).
+        dt_ms_analysis : float, default 50.0
+            Coarse bin width for the long-sequence correlations. Must be an
+            integer multiple of ``self.dt``. Paper used 50 ms for the main
+            results, 20 ms for Fig 4.
+        seed : int, default 0
+            RNG seed for reproducibility.
+        alpha, delta : float
+            Significance and effect-size thresholds (see above).
+        verbose : bool, default True
+            Show a tqdm progress bar.
+
+        Returns
+        -------
+        summary : dict
+            Aggregate counts ``{'tuned': int, 'well_tuned': int,
+            'n_with_data': int, 'stimuli': str}``.
+
+        Notes
+        -----
+        Re-bins ``self.responses`` to ``dt_ms_analysis`` on the fly via
+        summing; if ``smooth=True`` was passed to the constructor the
+        smoothing has already been applied at ``self.dt``. For the
+        strictest paper match instantiate with ``smooth=False`` — though
+        in practice the 21 ms Hanning smoothing × subsequent 50 ms
+        re-binning makes the smoothing nearly invisible.
+        """
+        from scipy.stats import ranksums  # local import — scipy is a runtime dep
+
+        ratio = dt_ms_analysis / self.dt
+        if abs(ratio - round(ratio)) > 1e-6 or ratio < 1:
+            raise ValueError(
+                f"dt_ms_analysis ({dt_ms_analysis}) must be an integer multiple "
+                f"of self.dt ({self.dt})"
+            )
+        rebin = int(round(ratio))
+
+        prefix = f"ahmed2025_{self.stimuli}"
+        test_s_idces = [s for s, m in enumerate(self.stim_meta) if m["split"] == "test"]
+        if not test_s_idces:
+            raise RuntimeError(
+                "No test-split stims in current dataset (subset filter dropped them?)."
+            )
+
+        # Coarse T per test stim
+        T_coarse: list[int] = []
+        for s in test_s_idces:
+            T5 = int(self.stims[s].shape[-1])
+            T_coarse.append(T5 // rebin)
+        T_total = sum(T_coarse)
+
+        rng = np.random.default_rng(seed)
+        n_tuned = 0
+        n_well = 0
+        n_with_data = 0
+
+        iterator = tqdm(range(self.N_neurons),
+                        desc=f"paper tuning {self.stimuli}",
+                        disable=not verbose)
+        for n in iterator:
+            # Pull and re-bin each test stim's reps for this neuron.
+            rebinned: list[np.ndarray] = []
+            ok = True
+            for s, Tc in zip(test_s_idces, T_coarse):
+                r = self.responses[s][n]
+                if r.shape[0] < 2 or bool(r.isnan().any()):
+                    ok = False
+                    break
+                if Tc < 2:
+                    ok = False
+                    break
+                r_trunc = r[:, :Tc * rebin]
+                r_coarse = r_trunc.reshape(r.shape[0], Tc, rebin).sum(dim=-1)
+                rebinned.append(r_coarse.numpy().astype(np.float64))
+            if not ok:
+                self.nrn_meta[n][f"{prefix}_tuned"] = False
+                self.nrn_meta[n][f"{prefix}_well_tuned"] = False
+                self.nrn_meta[n][f"{prefix}_p_wilcoxon"] = float("nan")
+                self.nrn_meta[n][f"{prefix}_delta_normalized"] = float("nan")
+                continue
+            n_with_data += 1
+
+            # Build U, V (n_resamples, T_total) by picking 2 distinct reps per stim
+            U = np.empty((n_resamples, T_total), dtype=np.float64)
+            V = np.empty((n_resamples, T_total), dtype=np.float64)
+            offset = 0
+            for r_coarse, Tc in zip(rebinned, T_coarse):
+                R = r_coarse.shape[0]
+                first = rng.integers(0, R, size=n_resamples)
+                second = rng.integers(0, R - 1, size=n_resamples)
+                second = np.where(second >= first, second + 1, second)
+                U[:, offset:offset + Tc] = r_coarse[first]
+                V[:, offset:offset + Tc] = r_coarse[second]
+                offset += Tc
+
+            # Null V: circular shift per iteration (non-zero shift)
+            shifts = rng.integers(1, T_total, size=n_resamples)
+            col_idx = (np.arange(T_total)[None, :] - shifts[:, None]) % T_total
+            V_null = np.take_along_axis(V, col_idx, axis=1)
+
+            true_corrs = _row_pearson(U, V)
+            null_corrs = _row_pearson(U, V_null)
+            true_corrs = true_corrs[~np.isnan(true_corrs)]
+            null_corrs = null_corrs[~np.isnan(null_corrs)]
+            if true_corrs.size < 2 or null_corrs.size < 2:
+                self.nrn_meta[n][f"{prefix}_tuned"] = False
+                self.nrn_meta[n][f"{prefix}_well_tuned"] = False
+                self.nrn_meta[n][f"{prefix}_p_wilcoxon"] = float("nan")
+                self.nrn_meta[n][f"{prefix}_delta_normalized"] = float("nan")
+                continue
+
+            _, p = ranksums(true_corrs, null_corrs, alternative="greater")
+            null_std = float(null_corrs.std())
+            null_mean = float(null_corrs.mean())
+            true_mean = float(true_corrs.mean())
+            delta_norm = (true_mean - null_mean) / null_std if null_std > 0 else 0.0
+            tuned = bool(p < alpha)
+            well = bool(tuned and delta_norm >= delta)
+            self.nrn_meta[n][f"{prefix}_tuned"] = tuned
+            self.nrn_meta[n][f"{prefix}_well_tuned"] = well
+            self.nrn_meta[n][f"{prefix}_p_wilcoxon"] = float(p)
+            self.nrn_meta[n][f"{prefix}_delta_normalized"] = float(delta_norm)
+            n_tuned += int(tuned)
+            n_well += int(well)
+
+        return {"stimuli": self.stimuli, "n_with_data": n_with_data,
+                "tuned": n_tuned, "well_tuned": n_well}
+
+
+def _row_pearson(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """Row-wise Pearson correlation of two ``(n_rows, T)`` arrays.
+
+    Returns a ``(n_rows,)`` array. Rows where either A or B has zero
+    variance yield NaN.
+    """
+    A = A - A.mean(axis=1, keepdims=True)
+    B = B - B.mean(axis=1, keepdims=True)
+    num = (A * B).sum(axis=1)
+    den = np.sqrt((A ** 2).sum(axis=1) * (B ** 2).sum(axis=1))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return num / den
