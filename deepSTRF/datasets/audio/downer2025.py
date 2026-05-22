@@ -288,6 +288,85 @@ def _load_timit_stims(path: Union[str, Path]) -> list[dict]:
     return out
 
 
+def _load_mvocs_stims(path: Union[str, Path]) -> tuple[list[dict], dict[int, int]]:
+    """Load the 303 unique monkey vocalizations from the concat WAV.
+
+    The release ships ``stimuli/MonkVocs_15Blocks.wav`` (41 kHz stereo,
+    ~28 min) with the play-order in ``SqMoPhys_MVOCStimcodes.mat``
+    (``mVocsStimCodes`` + ``mVocsStimOnTimes``, 780 slots). Each voc ID
+    (1..303) appears in multiple slots; we take **the first occurrence**
+    as the canonical waveform and **the minimum inter-onset interval**
+    across that ID's occurrences as the canonical duration (which excludes
+    the variable inter-stim silence that follows each voc).
+
+    Returns
+    -------
+    entries : list of dict
+        One dict per unique voc ID, sorted by ``stim_id``, with the same
+        shape as ``_load_timit_stims`` so the downstream pipeline is shared:
+        ``name``, ``stim_id``, ``sound`` (np.float32 mono at native 41 kHz),
+        ``soundf``, ``duration_s``, ``befaft_s = (0.0, 0.0)``.
+    wav_rep_counts : dict
+        ``stim_id -> rep_count_in_canonical_wav``. The Ahmed 2025 paper's
+        "test" subset of 11 vocs corresponds to the IDs whose
+        ``rep_count_in_canonical_wav == 15`` (see the WAV's design).
+    """
+    import soundfile as sf  # local import — already a runtime dep
+
+    stimuli_dir = Path(path) / "stimuli"
+    code_mat = sio.loadmat(
+        stimuli_dir / "SqMoPhys_MVOCStimcodes.mat",
+        squeeze_me=True, struct_as_record=False,
+    )
+    codes = np.asarray(code_mat["mVocsStimCodes"], dtype=np.int64)
+    onsets = np.asarray(code_mat["mVocsStimOnTimes"], dtype=np.float64)
+
+    wav_path = stimuli_dir / "MonkVocs_15Blocks.wav"
+    wav_info = sf.info(str(wav_path))
+    total_dur = wav_info.duration
+    sr = int(wav_info.samplerate)
+
+    # Per-slot duration: next-onset gap (or WAV-end gap for the last slot).
+    slot_dur = np.empty_like(onsets)
+    slot_dur[:-1] = np.diff(onsets)
+    slot_dur[-1] = total_dur - onsets[-1]
+
+    # Group slot durations by voc ID; per-ID canonical duration = min.
+    durs_by_id: dict[int, list[float]] = {}
+    first_onset_by_id: dict[int, float] = {}
+    for code, on, d in zip(codes, onsets, slot_dur):
+        cid = int(code)
+        durs_by_id.setdefault(cid, []).append(float(d))
+        if cid not in first_onset_by_id:
+            first_onset_by_id[cid] = float(on)
+
+    out: list[dict] = []
+    wav_rep_counts: dict[int, int] = {}
+    for cid in sorted(durs_by_id):
+        canon_dur = float(min(durs_by_id[cid]))
+        on0 = first_onset_by_id[cid]
+        wav_rep_counts[cid] = len(durs_by_id[cid])
+        # Read the snippet for this voc (any occurrence works -- they
+        # all play the same recorded waveform; we use the first).
+        start_frame = int(round(on0 * sr))
+        stop_frame = start_frame + int(round(canon_dur * sr))
+        snippet, snippet_sr = sf.read(
+            str(wav_path), start=start_frame, stop=stop_frame, dtype="float32",
+        )
+        assert snippet_sr == sr
+        if snippet.ndim == 2:
+            snippet = snippet.mean(axis=1)  # stereo -> mono
+        out.append({
+            "name": f"mvoc_{cid:03d}",
+            "stim_id": cid,
+            "sound": snippet.astype(np.float32),
+            "soundf": sr,
+            "duration_s": canon_dur,
+            "befaft_s": (0.0, 0.0),
+        })
+    return out, wav_rep_counts
+
+
 def _load_session_trial(channel_file: Union[str, Path]) -> dict:
     """Load just the ``trial`` struct from a session's first MUspk file.
 
@@ -487,9 +566,6 @@ class Downer2025Dataset(AudioNeuralDataset):
             # Inspection escape hatch — skip stim/response loading.
             return
 
-        if stimuli == "mvocs":
-            raise NotImplementedError("Phase 3 — mVocs loading not yet implemented")
-
         ########################################
         # 1. group neurons by session for I/O batching
         ########################################
@@ -509,26 +585,39 @@ class Downer2025Dataset(AudioNeuralDataset):
         for sid, neurons in sess_neurons.items():
             trial_by_sess[sid] = _load_session_trial(neurons[0][1])
 
-        stim_field = "timitStimcode"
-        canon_key = "timit"
-        min_reps = int(sess_meta["n_reps_canonical"][canon_key])
-        high_rep_ids = _discover_high_rep_set(
-            [trial_by_sess[sid][stim_field] for sid in trial_by_sess],
-            min_reps=min_reps,
-        )
+        if stimuli == "timit":
+            stim_field = "timitStimcode"
+            canon_key = "timit"
+            stim_type_label = "timit"
+            entries = _load_timit_stims(path)
+            min_reps = int(sess_meta["n_reps_canonical"][canon_key])
+            # TIMIT design = per-session: 489 single-rep + 10 at 11 reps.
+            # Session-level >= 11 reps robustly identifies the 10 test IDs.
+            high_rep_ids = _discover_high_rep_set(
+                [trial_by_sess[sid][stim_field] for sid in trial_by_sess],
+                min_reps=min_reps,
+            )
+        else:
+            stim_field = "mVocStimcode"
+            canon_key = "mVocs"
+            stim_type_label = "mvoc"
+            entries, wav_rep_counts = _load_mvocs_stims(path)
+            min_reps = int(sess_meta["n_reps_canonical"][canon_key])
+            # mVocs design = canonical WAV: 11 IDs at exactly 15 reps,
+            # the other 292 at variable (1-30) reps. Per-session discovery
+            # would over-count (sessions can multiply WAV-level reps).
+            high_rep_ids = {cid for cid, n in wav_rep_counts.items() if n == min_reps}
 
         ########################################
-        # 3. load TIMIT stims, build mel + stim_meta
+        # 3. build mel + stim_meta
         ########################################
-        timit_entries = _load_timit_stims(path)
-
         if subset == "test":
             keep = lambda e: e["stim_id"] in high_rep_ids
         elif subset == "estimation":
             keep = lambda e: e["stim_id"] not in high_rep_ids
         else:
             keep = lambda e: True
-        timit_entries = [e for e in timit_entries if keep(e)]
+        entries = [e for e in entries if keep(e)]
 
         hop = int(round(self.dt * self.audio_fs / 1000))
         assert hop > 0, f"dt_ms={self.dt} too small for audio_fs={self.audio_fs}"
@@ -538,10 +627,10 @@ class Downer2025Dataset(AudioNeuralDataset):
         )
 
         dt_s = self.dt / 1000.0
-        S = len(timit_entries)
+        S = len(entries)
         T_by_stim: list[int] = [0] * S
 
-        for s_idx, entry in enumerate(timit_entries):
+        for s_idx, entry in enumerate(entries):
             wav = torch.from_numpy(entry["sound"]).unsqueeze(0)
             if entry["soundf"] != self.audio_fs:
                 wav = torchaudio.functional.resample(wav, entry["soundf"], self.audio_fs)
@@ -559,22 +648,27 @@ class Downer2025Dataset(AudioNeuralDataset):
                 spec = F.pad(spec, (0, T_canon - T_spec), mode="constant", value=0.0)
             is_repeat = entry["stim_id"] in high_rep_ids
             self.stims.append(spec)
-            self.stim_meta.append({
+            meta = {
                 "name": entry["name"],
-                "type": "timit",
+                "type": stim_type_label,
                 "stim_id": entry["stim_id"],
                 "duration_s": entry["duration_s"],
                 "n_samples": int(entry["sound"].shape[0]),
                 "split": "test" if is_repeat else "estimation",
                 "n_reps_canonical": min_reps if is_repeat else 1,
                 "befaft_s": entry["befaft_s"],
-            })
+            }
+            if stimuli == "mvocs":
+                # mVocs design has variable canonical reps (1-30) per voc;
+                # surface the actual WAV count so users can sub-filter.
+                meta["n_reps_in_wav"] = wav_rep_counts[entry["stim_id"]]
+            self.stim_meta.append(meta)
 
         ########################################
         # 4. bin spike times into per-(stim, neuron) responses
         ########################################
         N = self.N_neurons
-        stim_idx_by_id = {e["stim_id"]: i for i, e in enumerate(timit_entries)}
+        stim_idx_by_id = {e["stim_id"]: i for i, e in enumerate(entries)}
         self.responses = [[None] * N for _ in range(S)]
 
         for sid, neurons in tqdm(
