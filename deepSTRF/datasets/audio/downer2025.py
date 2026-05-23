@@ -978,23 +978,28 @@ class Downer2025Dataset(AudioNeuralDataset):
             keep = lambda e: True
         entries = [e for e in entries if keep(e)]
 
-        hop = int(round(self.dt * self.audio_fs / 1000))
-        assert hop > 0, f"dt_ms={self.dt} too small for audio_fs={self.audio_fs}"
-        # FFT window in samples: decoupled from the hop so the window length
-        # is roughly phoneme-scale regardless of dt_ms. Previously n_fft was
-        # 10 * hop, which at dt=50 ms ballooned to a 500 ms FFT window and
-        # smeared all phonemic structure -- see CLAUDE/TODO for the bug
-        # write-up.
-        n_fft_target = int(round(self.window_ms * self.audio_fs / 1000))
-        # n_fft must be at least the hop, otherwise the FFT window doesn't
-        # cover the bin's worth of audio; round up to a power of 2 for
-        # FFT efficiency.
-        n_fft = max(n_fft_target, hop)
-        n_fft = 1 << (n_fft - 1).bit_length()   # next power of 2
-        mel_tf = torchaudio.transforms.MelSpectrogram(
-            sample_rate=self.audio_fs, n_fft=n_fft, hop_length=hop,
-            n_mels=self.F, f_max=float(self.fmax),
-        )
+        # Kaldi-fbank wav→spec pipeline (Ahmed 2025 §"Encoding models"
+        # references their utils.get_spectrogram, which is literally this
+        # function). Using torchaudio.compliance.kaldi.fbank gives:
+        #   - true ``window_ms``-length FFT (25 ms default) regardless of dt
+        #   - Kaldi pre-emphasis (high-pass, 0.97) -- boosts HF detail
+        #   - Kaldi triangular mel filterbank
+        #   - log(mel_energy) built-in (no separate compression step)
+        # Strategy: compute at the finest frame_shift available, then
+        # average-pool to dt-rate. For dt ≤ 10 ms we use frame_shift=dt
+        # directly (no pooling); for dt > 10 ms we use the Kaldi default
+        # 10 ms hop and pool by dt/10.
+        if self.dt <= 10.0:
+            frame_shift_ms = self.dt
+            pool_factor = 1
+        else:
+            frame_shift_ms = 10.0
+            ratio = self.dt / frame_shift_ms
+            pool_factor = int(round(ratio))
+            if abs(ratio - pool_factor) > 1e-6:
+                raise ValueError(
+                    f"dt_ms ({self.dt}) must be a multiple of 10 ms when dt > 10."
+                )
 
         dt_s = self.dt / 1000.0
         S = len(entries)
@@ -1004,11 +1009,33 @@ class Downer2025Dataset(AudioNeuralDataset):
             wav = torch.from_numpy(entry["sound"]).unsqueeze(0)
             if entry["soundf"] != self.audio_fs:
                 wav = torchaudio.functional.resample(wav, entry["soundf"], self.audio_fs)
-            spec = mel_tf(wav)  # (1, F, T_spec)
+            # Kaldi fbank expects int16-scale input (Ahmed multiplies wav by 2**15).
+            wav_k = wav * (2 ** 15)
+            spec_native = torchaudio.compliance.kaldi.fbank(
+                wav_k,
+                num_mel_bins=self.F,
+                window_type="hanning",
+                sample_frequency=float(self.audio_fs),
+                frame_length=float(self.window_ms),
+                frame_shift=float(frame_shift_ms),
+                low_freq=0.0, high_freq=float(self.fmax),
+            )                              # (T_native, F), log-mel
+            # average-pool to dt-rate: (T_native, F) -> (T_pool, F)
+            T_native = spec_native.shape[0]
+            T_pool = T_native // pool_factor
+            spec_pooled = spec_native[: T_pool * pool_factor].view(
+                T_pool, pool_factor, self.F).mean(dim=1)
+            # back to deepSTRF shape (1, F, T)
+            spec = spec_pooled.t().unsqueeze(0)
             if self.compression == "cubic":
-                spec = spec.pow(1.0 / 3.0)
+                # Kaldi already applies log; cubic-root would undo that.
+                # Treat compression='cubic' as a no-op here for back-compat
+                # (or surface a warning). For now, leave the log-mel as is.
+                pass
             elif self.compression == "log1p":
-                spec = torch.log1p(spec)
+                # Already log-compressed by Kaldi; no further transformation.
+                pass
+            # 'none' is also a no-op here for the same reason.
             if self.spec_zscore:
                 # Per-stim, per-band z-score over the time axis -- matches
                 # Ahmed 2025 utils.normalize(). spec is (1, F, T_spec).
