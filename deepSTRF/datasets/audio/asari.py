@@ -8,71 +8,29 @@ from torch.utils.data.dataset import Dataset
 
 
 class AsariDataset(Dataset):
-    """
-    Pytorch class to manipulate the subset of the CRCNS-ac1 dataset known as "Asari"
+    """PyTorch class for the "Asari" subset of the CRCNS-ac1 dataset.
 
-    TODO: edit docstring
+    Intracellular recordings: 25 neurons in rat A1 (deeply anesthetized),
+    membrane potential recorded at 4 kHz under whole-cell patch clamp, in
+    response to natural and synthetic stimuli. Spectrograms are simple
+    short-term Fourier amplitudes, 1 ms resolution by default, spanning
+    100 Hz - 25.6 kHz at 6 bins/octave (49 logarithmically spaced bands).
 
+    ``signal_type`` selects ``'raw'``, ``'subthreshold'`` or
+    ``'psth'``/``'suprathreshold'``. With ``max_clip_length='min'`` the
+    clips are all truncated to the shortest one, so they share a length and
+    become batchable; otherwise use ``batch_size=1`` since durations vary.
+    Set the time-bin width via the ``dt`` constructor argument (in ms).
 
-    signal_type = 'raw', 'subtreshold', 'psth'/'suprathreshold'
+    References
+    ----------
+    Machens, Wehr & Zador (2004). "Linearity of Cortical Receptive Fields
+    Measured with Natural Sounds." *J. Neurophysiol.* 102(5): 2638-56.
 
-    if max_clip_length = 'min' then max_clip_length is set to that of the lowest clip.
-      ==> As a result, all clips will have the same length and will be therefore batchable.
-
-
-    ============= ABOUT ==============
-
-    data acquisition:
-    - 25 neurons recorded in A1 in deeply anesthetized rats
-    - standard blind whole-cell patch-clamp --> membrane potential recorded at 4kHz in current-clamp
-    - presentation of natural and synthetic stimuli
-
-    spectrograms:
-    - simple amplitude short-term fourier transform
-    - spectrograms with a temporal resolution of 1 msec (default)
-    - 100 Hz to 25.6 kHz, 6 bins by octave (default) --> 49 logarithmically scaled frequency bands
-
-
-    ============= USAGE ==============
-
-    you can select specific neurons, either by their index, or by masking on the following features:
-    - TODO: mask here ?
-
-    you can select specific stimuli, by applying the following mask
-     - TODO: also include white noise and pure tone data ---> possible masks: 'natural', 'whitenoise', 'puretone'
-
-    after class instanciation, you can select a particular neuron to train a model
-
-    TODO: example code + because stimuli/response pairs do not all have the same duration, batchsize must be = 1 at all
-     times
-
-    set a temporal resolution of your choice (> 1ms) with the 'dt' argument in the constructor. dt is the duration of
-    spectrogram / response time bins, in ms
-
-
-    ============= STRUCTURE ==============
-
-    data is contained in the class attribute 'self.data', which contains a list of N_neurons dictionaries  of the
-    following structure:
-    e.g.
-        {"spectrograms": list,      # N_sounds * torch.tensor(1, F, T)
-         "responses": list,         # N_sounds * torch.tensor(N_repeats, T)
-         "stim_type": list          # str, e.g. 'natural'/'tone'/'whitenoise'
-        }
-
-
-    ============= SOURCE ==============
-
-    Original data freely available at:
-        http://crcns.org/data-sets/ac/ac-1/about
-
-    Original paper:
-        C. K. Machens, M. S. Wehr a,d A. M. Zador (2004), "Linearity of Cortical Receptive Fields Measured with
-        Natural Sounds", J. Neurophysiol. 102(5):2638-56
-
-    Dataset citation:
-        Asari, Hiroki; Wehr, Michael; Machens, Christian; Zador, Anthony M. (2009): Auditory cortex and thalamic
-        neuronal responses to various natural and synthetic sounds. CRCNS.org, http://dx.doi.org/10.6080/K0KW5CXR
+    Dataset: Asari, Wehr, Machens & Zador (2009). "Auditory cortex and
+    thalamic neuronal responses to various natural and synthetic sounds."
+    CRCNS.org. http://dx.doi.org/10.6080/K0KW5CXR — data at
+    http://crcns.org/data-sets/ac/ac-1/about
 
     """
 

@@ -35,6 +35,11 @@ napoleon_use_param = True
 napoleon_use_rtype = True
 napoleon_preprocess_types = True
 
+# Render both the class docstring and the ``__init__`` docstring on each
+# class page, so constructor Parameters sections (documented on ``__init__``
+# for the datasets) appear in the API reference.
+autoclass_content = "both"
+
 # Enable LaTeX-style math in MyST markdown: `$...$` (inline) and
 # `$$...$$` (displayed), plus AMS math environments via `amsmath`.
 # Pairs with `sphinx.ext.mathjax` above to render in RTD.
