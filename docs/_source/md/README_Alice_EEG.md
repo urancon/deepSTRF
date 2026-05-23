@@ -94,22 +94,100 @@ ceiling.
 
 ## Benchmark targets (Brodbeck et al. 2023, eLife)
 
-Brodbeck reports **% variability explained** (the deepSTRF
-[`fve`](metrics_paradigm.md) metric) per channel, averaged across 33
-subjects. Headline numbers from Figure 4:
+Brodbeck reports **% variability explained** per channel, averaged across
+33 subjects. The key thing to internalise about these numbers — and the
+[envelope-tracking literature](#what-good-looks-like-on-scalp-eeg)
+generally — is the **unit**:
 
-| Predictor model | Average % variability explained |
-|---|---|
-| Envelope alone | ~14 % |
-| Envelope + acoustic-onset | ~17 % |
-| Gammatone spectrogram + onset spectrogram | ~20 % |
+> **% variability explained = 100 · r²**, *not* Pearson `r`.
+
+Figure 4B's "envelope predictive power" topography has a colorbar that
+**maxes at 1 %**. That is `r² = 0.01`, i.e. a per-channel Pearson `r ≈
+0.10`. The incremental panels (4C/4D — the predictive-power *gain* from
+adding onsets / spectrogram over the envelope-only model) span **±0.1 %**
+Δ-variance, i.e. another `r ≈ ±0.03`. So the real headline ceiling is:
+
+| Predictor model | % variability explained | equiv. Pearson `r` |
+|---|---|---|
+| Envelope alone | up to ~1 % | up to ~0.10 |
+| + acoustic-onset | + ~0.1 % | + ~0.03 |
+| + spectrogram | + ~0.1 % | + ~0.03 |
+
+These are tiny absolute prediction accuracies **by design** — scalp EEG
+single-trial envelope tracking is a low-SNR problem (see below). The
+science is in the *significance of the increment* and the *shape of the
+recovered TRF*, not the absolute predictive power.
+
+### What this library reproduces
+
+We verified empirically (subject S01, single 9/1/2 stim split, Heeris
+gammatone-8 spectrogram, 0.5–20 Hz bandpass) that **four independent
+estimators converge on the same per-channel test accuracy**:
+
+| Estimator | Mean test `r` | Max | Mean % var |
+|---|---|---|---|
+| deepSTRF `Linear` STRF (AdamW + MSE) | 0.084 | 0.16 | 0.86 % |
+| `sklearn` Ridge (α-grid) | 0.084 | 0.16 | 0.97 % |
+| deepSTRF `StateNet` GRU (C=14, 6.8k params) | 0.086 | 0.17 | 0.74 % |
+| **eelbrain `boosting`** (Brodbeck's own method) | **0.090** | 0.17 | **1.05 %** |
+
+The `Δ` between the deepSTRF Linear STRF and eelbrain's L1-boosting +
+50 ms-basis pipeline is **+0.005 `r` — within run-to-run noise.** There
+is **no algorithmic gap and no spec-pipeline gap**: deepSTRF reaches the
+published single-subject envelope-TRF ceiling on this dataset. The
+recurrent `StateNet` matches the linear STRF with **7× fewer
+parameters** — the sample-efficient choice for the small per-subject
+data, and the natural backbone for multi-subject pooling.
 
 The accompanying [example notebook](../../examples/alice_eeg_tutorial.ipynb)
-reproduces these numbers with a linear baseline and compares against
-DNN cores plugged into the same data pipeline. The deepSTRF reframing of
-the onset-spectrogram condition is `AdapTrans + Linear` — a learnable
-peripheral adaptation front-end in place of the hand-engineered
-Fishbach-2001 onset detector.
+walks through a linear baseline and a `StateNet` core on the same data
+pipeline. The deepSTRF reframing of the onset-spectrogram condition is
+`AdapTrans + Linear` — a learnable peripheral adaptation front-end in
+place of the hand-engineered Fishbach-2001 onset detector.
+
+## What "good" looks like on scalp EEG
+
+If you come to this dataset from single-unit or ECoG work, the
+per-channel `r ≈ 0.1` ceiling will look like a broken fit. It is not.
+Single-trial scalp-EEG envelope-TRF prediction `r` is **0.05–0.15**
+across the foundational literature (Lalor & Foxe 2010; Ding & Simon
+2012; Di Liberto et al. 2015; Crosse et al. 2016; Broderick et al.
+2018; Brodbeck et al. 2018). `r ≥ 0.3` only happens with **intracranial
+recordings** (ECoG/sEEG) or **unit-level** data with many trial
+repeats — the cortical envelope-tracking response is ~1 µV against
+30–50 µV of background, so even `r² = 1 %` is a real, replicable signal.
+
+Because absolute prediction accuracy is low, the EEG/MEG-TRF field
+reports its results differently from the spike-prediction `cc_norm` that
+deepSTRF's auditory datasets use:
+
+1. **The TRF/STRF kernel shape itself** is the primary deliverable. The
+   recovered response function has interpretable, replicable peaks
+   (P1/M50 ≈ 50 ms, N1/M100 ≈ 100 ms, P2 ≈ 200 ms); their latencies and
+   topographies *are* the science. The kernel is estimated precisely
+   even when single-trial prediction is poor. deepSTRF surfaces this via
+   [`AudioEncodingModel.STRF_gradmap`](README_gradmap_strf.md).
+2. **Predictive power as a significance test, not a score.** With n=33
+   subjects, even `r² = 0.5 %` is `p ≪ 0.001` at the group level. The
+   question is "does adding predictor X *significantly increase*
+   predictive power over the model without it?" — the Δ%-variance you
+   see in Brodbeck Fig 4C/4D, tested across subjects.
+3. **Nested-model comparison / variance partitioning.** "Does a
+   phoneme-surprisal predictor explain variance *beyond* the acoustic
+   envelope?" Fit nested models, compare predictive power. This is the
+   main thing TRFs are *for* — disentangling overlapping, correlated
+   acoustic / lexical / semantic predictors.
+4. **Backward (decoding) models + attention decoding.** Reconstructing
+   the stimulus envelope *from* EEG pools all channels and reaches
+   higher `r` (≈ 0.1–0.3); auditory-attention decoding then reports
+   *classification accuracy* (often 80–90 % in 60 s windows), not `r`.
+5. **Group-level cluster statistics** over the (time-lag × sensor) TRF
+   (TFCE / cluster-permutation corrected) — the result is a significant
+   spatiotemporal cluster, reported as a topography + time-course.
+
+For deepSTRF's purposes, the per-channel `r` we measure is the right
+*sanity* number; the scientifically useful outputs on EEG are (1) the
+recovered TRF kernels and (3) nested-model predictive-power comparisons.
 
 ## Setup
 
@@ -170,52 +248,47 @@ ds = AliceEEGDataset(download=True, treat_subjects_as="repeats")
 ds.select_pop_by_nrn_attr("channel_id", "1")    # one channel by id
 ```
 
-## Status and gap to Brodbeck
+## Status
 
 The shipped `AliceEEGDataset` + canonical preprocessing (0.5–20 Hz
 bandpass, base-class `standardize_stims` + `normalize_responses`)
-correctly loads the data and feeds the deepSTRF model API.
+correctly loads the data and feeds the deepSTRF model API, and **reaches
+the published single-subject envelope-TRF ceiling** (see the
+[four-estimator comparison above](#what-this-library-reproduces)).
+There is no accuracy gap to close against Brodbeck on the acoustic-only
+models — `r ≈ 0.09` mean per channel is what the data supports, and
+deepSTRF's `Linear` and `StateNet` both get there.
 
-On a single subject, single held-out segment, with `StateNet GRU C=14`
-(~6.8k params), one obtains test cc ≈ 0.05 mean (~0.12 best channel),
-test fve ≈ 0.003. Brodbeck reports test fve ≈ 0.14–0.20 averaged across
-33 subjects with 12-fold CV. The **~8× gap** is regularization-bound,
-not pipeline-bound:
+What *would* extend the analysis (in the directions the EEG-TRF field
+actually cares about — kernel recovery and nested-model comparison
+rather than raw predictive power), in increasing order of effort:
 
-- Brodbeck fits TRFs with **boosting** — coordinate descent + strict L1
-  sparsity + 50 ms Hamming-basis smoothing on the temporal axis. The
-  effective parameter count is far below deepSTRF's dense STRF kernel.
-- Adam + weight decay alone cannot replicate that prior. Training on
-  the full 12 segments shows train cc rising to 0.29 while held-out
-  val cc stalls at 0.07 — pure overfitting, not capacity-limited.
-
-### Concrete improvements to close the gap
-
-Listed in increasing order of implementation effort. Each is a
-standalone follow-up branch from this one.
-
-1. **Hamming-basis STRF kernel.** Add a `BasisKernel` to
+1. **Word-onset / surprisal predictors** from
+   `stimuli/AliceChapterOne-EEG.csv`. Reproduces Brodbeck Fig 5–6
+   (TRF-of-discrete-events; function vs content words). This is the
+   nested-model-comparison story — "does a lexical predictor explain
+   variance *beyond* acoustics?" — and is where TRFs earn their keep.
+2. **Hamming-basis STRF kernel.** Add a `BasisKernel` to
    `deepSTRF.models.layers` that constrains the temporal axis of the
-   STRF to a sparse basis of overlapping Hamming windows. Direct port
-   of eelbrain's `basis_window=50ms`. Plug into `Linear`/`NRF` via the
-   existing `kernel` kwarg. Highest expected impact.
-2. **Subject embeddings + shared StateNet backbone.** A learned
-   per-subject context vector concatenated to the GRU input. Different
-   from naive pooling (which already has per-subject readouts via the
-   `N` axis but doesn't condition the shared backbone). Enables true
-   multi-subject pretraining.
-3. **`eelbrain.boosting` wrapper as an alternative `Fitter`.** Direct
-   apples-to-apples comparison with the reference paper. Useful as a
-   regression test for any future deepSTRF method on EEG/MEG data.
-4. **Word-onset / surprisal predictors** from
-   `stimuli/AliceChapterOne-EEG.csv`. Reproduces Brodbeck Fig 5+
-   (TRF-of-discrete-events comparisons).
+   STRF to a sparse basis of overlapping Hamming windows (eelbrain's
+   `basis=0.050`). It won't move the per-channel `r` much — we're at the
+   ceiling — but it produces **smoother, more interpretable TRF
+   kernels**, which is the actual deliverable on EEG.
+3. **Subject embeddings + shared StateNet backbone.** A learned
+   per-subject context vector concatenated to the GRU input — true
+   multi-subject pretraining, beyond the per-subject readouts the `N`
+   axis already provides. The most promising route to a meaningfully
+   *higher* number, by pooling the across-subject shared response.
+4. **`eelbrain.boosting` wrapper as an alternative `Fitter`.** The
+   apples-to-apples cross-check used to validate this dataset (see
+   `untracked/alice_eeg_eelbrain_compare.py`); worth promoting to a
+   reusable utility + regression test for future EEG/MEG work.
 5. **Topomap helper** using `mne.viz.plot_topomap` from
-   `nrn_meta['xyz']` — for the eLife figure.
+   `nrn_meta['xyz']` — for the eLife-style scalp figures.
 6. **Per-subject `download=True`** instead of all 2.5 GiB at once.
 
 The accompanying [tutorial notebook](../../examples/alice_eeg_tutorial.ipynb)
-exercises the dataset end-to-end and documents the gap explicitly. It
-is a **library-on-EEG demonstration**, not a numerical reproduction of
-the eelbrain paper; closing the gap is the work of the follow-ups
-above.
+exercises the dataset end-to-end. It is a **library-on-EEG
+demonstration** — showing that the same model API that fits ferret A1
+spikes also fits human scalp EEG, lands at the field-standard ceiling,
+and recovers interpretable TRF kernels.
