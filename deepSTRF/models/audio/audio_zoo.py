@@ -7,7 +7,7 @@ from .audio_model import AudioEncodingModel
 import deepSTRF.models.layers as layers
 from deepSTRF.models.activations import ParametricSoftplus
 from deepSTRF.models.dependencies.lmu import LMU
-from deepSTRF.models.dependencies.mamba import MambaBlock, MambaConfig
+from mambapy.mamba import MambaBlock, MambaConfig
 from deepSTRF.models.prefiltering import AdapTrans
 from deepSTRF.models.readouts import STRFReadout, LinearReadout
 # S4Block is imported lazily inside StateNet — its module emits noisy stderr

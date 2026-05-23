@@ -52,6 +52,7 @@ dependencies = [
     "matplotlib>=3.5",
     "Pillow>=9.0",
     "einops>=0.6",
+    "mambapy>=1.2",         # pure-PyTorch Mamba backbone for StateNet(rnn_type='Mamba')
     "soundfile>=0.12",
     "scikit-image>=0.20",
     "h5py>=3.7",

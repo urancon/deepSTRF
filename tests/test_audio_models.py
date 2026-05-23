@@ -316,6 +316,56 @@ def test_transformer_freq_patch_size_subdivides_F():
     assert y.shape == (B, N, 1, T_in)
 
 
+# ---------------------------------------------------------------------------
+# StateNet recurrent / state-space backbones
+# ---------------------------------------------------------------------------
+# The native torch backbones (GRU/LSTM/RNN) need no extra dependency; LMU and
+# S4 are vendored under deepSTRF.models.dependencies; Mamba is the upstream
+# ``mambapy`` PyPI package. This block guarantees every advertised backbone
+# constructs, produces the canonical (B, N, 1, T) rank, and stays bit-causal
+# in eval mode — the regression guard for the SSM-dependency swap.
+
+STATENET_BACKBONES = ['GRU', 'LSTM', 'RNN', 'vanilla', 'LMU', 'Mamba', 'S4']
+
+
+@pytest.mark.parametrize("rnn_type", STATENET_BACKBONES)
+def test_statenet_backbone_forward_and_causal(rnn_type):
+    _seed()
+    m = StateNet(n_frequency_bands=F, kernel_size=7, hidden_channels=4,
+                 rnn_type=rnn_type, out_neurons=N)
+    m.eval()
+    x = torch.randn(B, 1, F, T_in)
+    cut = T_in // 2
+    x_perturbed = x.clone()
+    x_perturbed[..., cut:] = torch.randn_like(x_perturbed[..., cut:])
+    with torch.no_grad():
+        y = m(x)
+        y_perturbed = m(x_perturbed)
+    assert y.shape == (B, N, 1, T_in), \
+        f"StateNet(rnn_type={rnn_type!r}): expected {(B, N, 1, T_in)}; got {tuple(y.shape)}"
+    assert torch.isfinite(y).all(), f"StateNet(rnn_type={rnn_type!r}): non-finite output"
+    diff = (y - y_perturbed)[..., :cut].abs().max().item()
+    assert diff < 1e-5, \
+        f"StateNet(rnn_type={rnn_type!r}): causality violation; max past diff = {diff:.2e}"
+
+
+def test_statenet_mamba_backbone_is_mambapy():
+    """The Mamba backbone must resolve to the upstream ``mambapy`` package,
+    not a vendored copy (the SSM-dependency swap)."""
+    _seed()
+    m = StateNet(n_frequency_bands=F, kernel_size=7, hidden_channels=4,
+                 rnn_type='Mamba', out_neurons=N)
+    assert type(m.rnn).__module__.startswith("mambapy"), \
+        f"expected mambapy MambaBlock; got {type(m.rnn).__module__}"
+
+
+def test_statenet_unknown_backbone_raises():
+    _seed()
+    with pytest.raises(NotImplementedError):
+        StateNet(n_frequency_bands=F, kernel_size=7, hidden_channels=4,
+                 rnn_type='NoSuchRNN', out_neurons=N)
+
+
 def test_transformer_freq_patch_size_must_divide_F():
     """Mismatched freq_patch_size should error cleanly."""
     with pytest.raises(ValueError, match="must divide"):
