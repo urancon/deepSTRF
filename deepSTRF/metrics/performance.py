@@ -138,6 +138,67 @@ def fve(
 # -----------------------------------------------------------------------------
 
 
+def _per_stim_sp_np(
+    responses_b: torch.Tensor,
+    valid_b: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Per-stim SP, NP, and valid-time-count, all shape ``(N,)``.
+
+    Behaviour-preserving extraction of the inner per-``(stim, neuron)`` loop
+    from :func:`_sahani_linden_per_neuron` — exposes a stim-streaming entry
+    point so callers can accumulate length-weighted partial sums without
+    pre-building an ``(S, N, R_max, T_max)`` padded tensor (see
+    :meth:`NeuralDataset.compute_neuron_quality`).
+
+    Parameters
+    ----------
+    responses_b : torch.Tensor
+        Per-stim responses, shape ``(N, R, T)``. Invalid entries flagged via
+        ``valid_b`` (NaN sentinels or an explicit mask).
+    valid_b : torch.Tensor
+        Bool mask of the same shape as ``responses_b``.
+
+    Returns
+    -------
+    sp_b, np_b : torch.Tensor
+        ``(N,)`` per-neuron SP / NP for this stim. ``NaN`` for neurons that
+        don't qualify (``R_v < 2`` or ``T_v < 2``).
+    Tv_b : torch.Tensor
+        ``(N,)`` per-neuron valid-time-bin count. ``0`` for non-qualifying
+        neurons — used as the weight in length-weighted aggregation.
+    """
+    if responses_b.dim() != 3:
+        raise ValueError(
+            f"_per_stim_sp_np expects (N, R, T), got {tuple(responses_b.shape)}"
+        )
+    N, _, _ = responses_b.shape
+    nan = responses_b.new_full((), float("nan"))
+    zero = responses_b.new_zeros(())
+    sp_out = []
+    np_out = []
+    tv_out = []
+    for n in range(N):
+        v_n = valid_b[n]                              # (R, T)
+        valid_repeats = v_n.any(dim=-1)               # (R,)
+        valid_time = v_n.any(dim=0)                   # (T,)
+        R_v = int(valid_repeats.sum().item())
+        T_v = int(valid_time.sum().item())
+        if R_v < 2 or T_v < 2:
+            sp_out.append(nan)
+            np_out.append(nan)
+            tv_out.append(zero)
+            continue
+        sub = responses_b[n][valid_repeats][:, valid_time]   # (R_v, T_v)
+        psth = sub.mean(dim=0)                                # (T_v,)
+        var_psth = psth.var(unbiased=True)                    # scalar
+        tp = sub.var(dim=-1, unbiased=True).mean()            # scalar
+        sp = (R_v * var_psth - tp) / (R_v - 1)
+        sp_out.append(sp)
+        np_out.append(tp - sp)
+        tv_out.append(responses_b.new_tensor(float(T_v)))
+    return torch.stack(sp_out), torch.stack(np_out), torch.stack(tv_out)
+
+
 def _sahani_linden_per_neuron(
     responses: torch.Tensor,
     valid: torch.Tensor,
@@ -157,41 +218,33 @@ def _sahani_linden_per_neuron(
 
     A given ``(b, n)`` cell is included iff it has ≥ 2 valid repeats and ≥ 2
     valid time bins. Cells that have no qualifying stim get NaN.
+
+    Thin wrapper over :func:`_per_stim_sp_np`: loops over the batch axis and
+    accumulates per-neuron length-weighted partial sums. The streaming-friendly
+    helper is the underscore-prefixed per-stim variant — callers handling
+    large datasets should use it directly to avoid pre-padding ``(S, N,
+    R_max, T_max)`` in memory.
     """
-    B, N, R, T = responses.shape
+    B, N, _, _ = responses.shape
     nan = responses.new_full((), float("nan"))
-    sp_per_neuron = []
-    np_per_neuron = []
-    for n in range(N):
-        sp_stims = []
-        np_stims = []
-        weights = []
-        for b in range(B):
-            v_bn = valid[b, n]                       # (R, T)
-            valid_repeats = v_bn.any(dim=-1)         # (R,)
-            valid_time = v_bn.any(dim=0)             # (T,)
-            R_v = int(valid_repeats.sum().item())
-            T_v = int(valid_time.sum().item())
-            if R_v < 2 or T_v < 2:
-                continue
-            sub = responses[b, n][valid_repeats][:, valid_time]   # (R_v, T_v)
-            psth = sub.mean(dim=0)                                # (T_v,)
-            var_psth = psth.var(unbiased=True)                    # scalar
-            tp = sub.var(dim=-1, unbiased=True).mean()            # scalar
-            sp = (R_v * var_psth - tp) / (R_v - 1)
-            sp_stims.append(sp)
-            np_stims.append(tp - sp)
-            weights.append(float(T_v))
-        if sp_stims:
-            sps = torch.stack(sp_stims)
-            nps = torch.stack(np_stims)
-            ws = sps.new_tensor(weights)
-            sp_per_neuron.append((sps * ws).sum() / ws.sum())
-            np_per_neuron.append((nps * ws).sum() / ws.sum())
-        else:
-            sp_per_neuron.append(nan)
-            np_per_neuron.append(nan)
-    return torch.stack(sp_per_neuron), torch.stack(np_per_neuron)
+    sum_w = responses.new_zeros(N)
+    sum_w_sp = responses.new_zeros(N)
+    sum_w_np = responses.new_zeros(N)
+    for b in range(B):
+        sp_b, np_b, tv_b = _per_stim_sp_np(responses[b], valid[b])
+        contrib = tv_b > 0
+        if not bool(contrib.any()):
+            continue
+        # tv_b is 0 for non-qualifying neurons → masked multiplications stay 0
+        # whether sp_b/np_b are NaN there or not; explicit `where` avoids the
+        # 0 * NaN = NaN trap.
+        sum_w = sum_w + tv_b
+        sum_w_sp = sum_w_sp + torch.where(contrib, tv_b * sp_b, sum_w_sp.new_zeros(()))
+        sum_w_np = sum_w_np + torch.where(contrib, tv_b * np_b, sum_w_np.new_zeros(()))
+    qualifying = sum_w > 0
+    sp_out = torch.where(qualifying, sum_w_sp / sum_w.clamp(min=1), nan.expand(N))
+    np_out = torch.where(qualifying, sum_w_np / sum_w.clamp(min=1), nan.expand(N))
+    return sp_out, np_out
 
 
 @torch.no_grad()
@@ -248,6 +301,83 @@ def snr(
 # -----------------------------------------------------------------------------
 
 
+def _per_stim_ccmax(
+    responses_b: torch.Tensor,
+    valid_b: torch.Tensor,
+    max_iters: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Per-stim CCmax + valid-time-count, both shape ``(N,)``.
+
+    Behaviour-preserving extraction of the inner per-``(stim, neuron)`` loop
+    from :func:`_ccmax_per_neuron`. Returns ``T_v = 0`` for any neuron that
+    doesn't contribute on this stim — both the ``R_v < 2 / T_v < 2``
+    structural skip and the ``ρ_half ≤ 0`` "too noisy to estimate" skip
+    collapse to zero weight in the streaming aggregator.
+
+    Parameters
+    ----------
+    responses_b : torch.Tensor
+        Per-stim responses, shape ``(N, R, T)``.
+    valid_b : torch.Tensor
+        Bool mask of the same shape as ``responses_b``.
+    max_iters : int
+        Cap on random half-splits per neuron (``C(R, R/2)`` blows up
+        quickly).
+
+    Returns
+    -------
+    ccmax_b : torch.Tensor
+        ``(N,)`` per-neuron CCmax for this stim. ``NaN`` for neurons that
+        don't qualify or where ``ρ_half ≤ 0``.
+    Tv_b : torch.Tensor
+        ``(N,)`` per-neuron valid-time-bin count. ``0`` for non-contributing
+        neurons — use as the streaming weight.
+    """
+    if responses_b.dim() != 3:
+        raise ValueError(
+            f"_per_stim_ccmax expects (N, R, T), got {tuple(responses_b.shape)}"
+        )
+    N, _, _ = responses_b.shape
+    nan = responses_b.new_full((), float("nan"))
+    zero = responses_b.new_zeros(())
+    cc_out = []
+    tv_out = []
+    for n in range(N):
+        v_n = valid_b[n]
+        valid_repeats = v_n.any(dim=-1)
+        valid_time = v_n.any(dim=0)
+        R_v = int(valid_repeats.sum().item())
+        T_v = int(valid_time.sum().item())
+        if R_v < 2 or T_v < 2:
+            cc_out.append(nan)
+            tv_out.append(zero)
+            continue
+        sub = responses_b[n][valid_repeats][:, valid_time]
+        if R_v % 2 == 1:
+            R_v -= 1
+            sub = sub[:R_v]
+        half_sets = list(itertools.combinations(range(R_v), R_v // 2))
+        n_iters = min(len(half_sets) // 2, max_iters)
+        cc_halfs = []
+        for i in range(n_iters):
+            first = sub[list(half_sets[i])].mean(dim=0)
+            second = sub[list(half_sets[-1 - i])].mean(dim=0)
+            cc_halfs.append(_pearson_1d(first, second))
+        if not cc_halfs:
+            cc_out.append(nan)
+            tv_out.append(zero)
+            continue
+        rho_half = torch.stack(cc_halfs).mean()
+        if rho_half.item() <= 0:
+            # too noisy to estimate ceiling; drop this stim from the weighted avg
+            cc_out.append(nan)
+            tv_out.append(zero)
+            continue
+        cc_out.append(torch.sqrt(2 * rho_half / (1 + rho_half)))
+        tv_out.append(responses_b.new_tensor(float(T_v)))
+    return torch.stack(cc_out), torch.stack(tv_out)
+
+
 def _ccmax_per_neuron(
     responses: torch.Tensor,
     valid: torch.Tensor,
@@ -261,47 +391,24 @@ def _ccmax_per_neuron(
     natural sample weighting of ``corrcoef`` over the concatenated time axis.
     Per-stim cells with ``ρ_half ≤ 0`` are dropped (NaN-skip in the weighted
     average). Cells with no qualifying stim get NaN.
+
+    Thin wrapper over :func:`_per_stim_ccmax`. See
+    :func:`_sahani_linden_per_neuron` for the equivalent SP/NP streaming
+    rationale.
     """
-    B, N, R, T = responses.shape
+    B, N, _, _ = responses.shape
     nan = responses.new_full((), float("nan"))
-    out = []
-    for n in range(N):
-        ccmax_stims = []
-        weights = []
-        for b in range(B):
-            v_bn = valid[b, n]
-            valid_repeats = v_bn.any(dim=-1)
-            valid_time = v_bn.any(dim=0)
-            R_v = int(valid_repeats.sum().item())
-            T_v = int(valid_time.sum().item())
-            if R_v < 2 or T_v < 2:
-                continue
-            sub = responses[b, n][valid_repeats][:, valid_time]
-            if R_v % 2 == 1:
-                R_v -= 1
-                sub = sub[:R_v]
-            half_sets = list(itertools.combinations(range(R_v), R_v // 2))
-            n_iters = min(len(half_sets) // 2, max_iters)
-            cc_halfs = []
-            for i in range(n_iters):
-                first = sub[list(half_sets[i])].mean(dim=0)
-                second = sub[list(half_sets[-1 - i])].mean(dim=0)
-                cc_halfs.append(_pearson_1d(first, second))
-            if not cc_halfs:
-                continue
-            rho_half = torch.stack(cc_halfs).mean()
-            if rho_half.item() <= 0:
-                # too noisy to estimate ceiling; drop this stim from the weighted avg
-                continue
-            ccmax_stims.append(torch.sqrt(2 * rho_half / (1 + rho_half)))
-            weights.append(float(T_v))
-        if ccmax_stims:
-            cms = torch.stack(ccmax_stims)
-            ws = cms.new_tensor(weights)
-            out.append((cms * ws).sum() / ws.sum())
-        else:
-            out.append(nan)
-    return torch.stack(out)
+    sum_w = responses.new_zeros(N)
+    sum_w_cc = responses.new_zeros(N)
+    for b in range(B):
+        cc_b, tv_b = _per_stim_ccmax(responses[b], valid[b], max_iters=max_iters)
+        contrib = tv_b > 0
+        if not bool(contrib.any()):
+            continue
+        sum_w = sum_w + tv_b
+        sum_w_cc = sum_w_cc + torch.where(contrib, tv_b * cc_b, sum_w_cc.new_zeros(()))
+    qualifying = sum_w > 0
+    return torch.where(qualifying, sum_w_cc / sum_w.clamp(min=1), nan.expand(N))
 
 
 @torch.no_grad()
