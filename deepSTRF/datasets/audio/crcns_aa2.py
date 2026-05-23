@@ -257,6 +257,7 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
                  stimuli=('conspecific', 'flatrip', 'songrip'),
                  animals='all', dt_ms=1, smooth=True, n_mels=32,
                  compression='cubic',
+                 window_ms: float = 10.0,
                  download: bool = False,
                  username: Optional[str] = None,
                  password: Optional[str] = None):
@@ -278,6 +279,15 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
             Number of mel frequency bands.
         compression : str
             Spectrogram compression ('cubic', 'log1p', 'none').
+        window_ms : float, default 10.0
+            FFT analysis-window length in ms. ``n_fft`` is computed as
+            ``round(window_ms * 1e-3 * sample_rate)`` and is **decoupled
+            from ``hop_length``** so phonemic detail is preserved at any
+            ``dt_ms``. Earlier versions of this dataset hardcoded
+            ``n_fft = 10 * hop_length``, which gave a benign 10 ms FFT
+            window at ``dt_ms=1`` but a 500 ms window at ``dt_ms=50``.
+            Default ``window_ms=10.0`` preserves bit-identical behaviour
+            at ``dt_ms=1`` while fixing the scaling bug at coarser bins.
         download : bool, default False
             If True and the data is missing under ``path``, fetch the
             ~30 MB worth of CRCNS-AA2 archives from the NERSC mirror
@@ -295,13 +305,26 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
         super().__init__(path, dt_ms)
 
         self.species = 'zebra finch'
-        # hop_length (samples) | dt (ms)
-        # 320 | 10
-        # 160 | 5
-        # 32  | 1
+        # sr = 32 kHz (CRCNS-AA2 wavs). hop_length tracks dt_ms; n_fft is
+        # **independent of dt_ms** and pinned to ``window_ms``. At the
+        # default (window_ms=10, dt_ms=1) this gives n_fft=320, which
+        # equals the legacy ``10 * hl`` value bit-for-bit. At coarser
+        # dt_ms the legacy formula scaled the window with the hop and
+        # over-smoothed the spec; the new formula caps n_fft at
+        # ``window_ms * sr`` (or ``hop_length`` if that's larger — STFT
+        # constraint). See ``window_ms`` docstring above.
+        sample_rate = 32000
         self.F = n_mels
-        hl = dt_ms * 32
-        transform = torchaudio.transforms.MelSpectrogram(sample_rate=32000, n_fft=10 * hl, hop_length=hl, n_mels=self.F)  # n_fft=800
+        self.window_ms = float(window_ms)
+        hl = int(dt_ms * 32)
+        # See the AA1 spec block for why we derive n_fft from the
+        # truncated hop via the ratio ``window_ms / dt_ms`` — preserves
+        # bit-identical behaviour at the legacy ``window_ms = 10 * dt_ms``
+        # contract for every supported sr.
+        n_fft = max(int(round((self.window_ms / float(dt_ms)) * hl)), hl)
+        transform = torchaudio.transforms.MelSpectrogram(
+            sample_rate=sample_rate, n_fft=n_fft, hop_length=hl, n_mels=self.F,
+        )
         self.compression = compression
 
         #######################
