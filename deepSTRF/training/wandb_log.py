@@ -8,8 +8,8 @@ implements that protocol with one ``wandb.init`` per seed.
 Build a factory with :func:`make_wandb_logger_factory` and pass it as
 ``logger_factory=`` to :func:`deepSTRF.training.fit_multi_seed`.
 
-Example
--------
+Examples
+--------
 >>> from deepSTRF.training import fit_multi_seed
 >>> from deepSTRF.training.wandb_log import make_wandb_logger_factory
 >>> results = fit_multi_seed(

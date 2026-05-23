@@ -16,8 +16,8 @@ Use WandB when:
 Browse the logs with ``tensorboard --logdir=<your log_dir>``; the URL
 defaults to http://localhost:6006.
 
-Example
--------
+Examples
+--------
 >>> from deepSTRF.training import fit_multi_seed
 >>> from deepSTRF.training.tb_log import make_tensorboard_logger_factory
 >>> results = fit_multi_seed(
