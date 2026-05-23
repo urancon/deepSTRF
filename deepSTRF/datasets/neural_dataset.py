@@ -716,6 +716,13 @@ class NeuralDataset(Dataset, ABC):
         can take tens of seconds. Call once after dataset construction;
         results live on ``nrn_meta`` for subsequent filter-API calls.
 
+        Memory profile: streams one stim at a time, peaking at the
+        largest single-stim ``(N, R_s, T_s)`` slab. The earlier
+        implementation pre-built a global ``(S, N, R_max, T_max)``
+        padded tensor and OOMed on Downer 2025 TIMIT (~54 GB); the
+        per-stim streaming variant lands the same numbers bit-identically
+        but with a much smaller working set.
+
         Examples
         --------
         >>> ds = CRCNSAA1Dataset(...)
@@ -724,8 +731,8 @@ class NeuralDataset(Dataset, ABC):
         """
         # lazy imports to avoid pulling in metrics at base-class load time
         from deepSTRF.metrics.performance import (
-            _ccmax_per_neuron,
-            _sahani_linden_per_neuron,
+            _per_stim_ccmax,
+            _per_stim_sp_np,
         )
 
         S = len(self.responses)
@@ -736,39 +743,76 @@ class NeuralDataset(Dataset, ABC):
             snr_n = torch.full((N,), nan)
             ccmax_n = torch.full((N,), nan)
         else:
-            # 1. Determine padding dimensions and the per-neuron "has R>=2
-            # stim" indicator (used for the CCmax R=1 fallback).
-            R_max = 1
-            T_max = 1
+            # Stream per-stim: avoids ever materialising the full
+            # ``(S, N, R_max, T_max)`` padded tensor (≈54 GB on Downer 2025
+            # TIMIT). Peak working memory drops to a single stim's
+            # ``(N, R_s, T_s)`` slab. Length-weighted aggregation across stims
+            # is associative, so the streamed average is bit-identical to
+            # the old "build then aggregate" path. Behaviour-preservation is
+            # covered by ``tests/test_compute_neuron_quality_streaming.py``.
+            sum_w_sp = torch.zeros(N)              # Σ Tᵥ  (SP/NP weight)
+            sum_w_sp_val = torch.zeros(N)          # Σ Tᵥ · SP
+            sum_w_np_val = torch.zeros(N)          # Σ Tᵥ · NP
+            sum_w_cc = torch.zeros(N)              # Σ Tᵥ  (CCmax weight)
+            sum_w_cc_val = torch.zeros(N)          # Σ Tᵥ · CCmax
             has_r2_stim = torch.zeros(N, dtype=torch.bool)
+
             for s in range(S):
+                # Per-stim padding dimensions (small — a single stim's neurons).
+                R_s = 1
+                T_s = 1
                 for n in range(N):
                     r = self.responses[s][n]
                     if tuple(r.shape) == (1, 1):
                         continue
-                    R_max = max(R_max, int(r.shape[0]))
-                    T_max = max(T_max, int(r.shape[1]))
+                    R_s = max(R_s, int(r.shape[0]))
+                    T_s = max(T_s, int(r.shape[1]))
                     if r.shape[0] >= 2:
                         has_r2_stim[n] = True
 
-            # 2. Build a canonical NaN-padded (S, N, R_max, T_max) tensor.
-            stacked = torch.full((S, N, R_max, T_max), nan)
-            for s in range(S):
+                resp_s = torch.full((N, R_s, T_s), nan)
                 for n in range(N):
                     r = self.responses[s][n]
                     if tuple(r.shape) == (1, 1):
                         continue
                     R, T = int(r.shape[0]), int(r.shape[1])
-                    stacked[s, n, :R, :T] = r
+                    resp_s[n, :R, :T] = r
+                valid_s = ~torch.isnan(resp_s)
 
-            valid = ~torch.isnan(stacked)
+                sp_s, np_s, tv_sp_s = _per_stim_sp_np(resp_s, valid_s)
+                cc_s, tv_cc_s = _per_stim_ccmax(
+                    resp_s, valid_s, max_iters=max_ccmax_iters,
+                )
 
-            # 3. Per-neuron SP, NP, CCmax (all length-weighted across stims).
-            sp, np_ = _sahani_linden_per_neuron(stacked, valid)
+                # tv == 0 marks "this stim does not contribute"; NaN values
+                # there get masked to 0 so they can't poison the running sum.
+                contrib_sp = tv_sp_s > 0
+                sum_w_sp = sum_w_sp + tv_sp_s
+                sum_w_sp_val = sum_w_sp_val + torch.where(
+                    contrib_sp, tv_sp_s * sp_s, torch.zeros_like(sp_s)
+                )
+                sum_w_np_val = sum_w_np_val + torch.where(
+                    contrib_sp, tv_sp_s * np_s, torch.zeros_like(np_s)
+                )
+
+                contrib_cc = tv_cc_s > 0
+                sum_w_cc = sum_w_cc + tv_cc_s
+                sum_w_cc_val = sum_w_cc_val + torch.where(
+                    contrib_cc, tv_cc_s * cc_s, torch.zeros_like(cc_s)
+                )
+
+            nan_t = torch.full((N,), nan)
+            qualifies_sp = sum_w_sp > 0
+            sp = torch.where(qualifies_sp, sum_w_sp_val / sum_w_sp.clamp(min=1), nan_t)
+            np_ = torch.where(qualifies_sp, sum_w_np_val / sum_w_sp.clamp(min=1), nan_t)
             snr_n = sp / np_.clamp(min=1e-12)
-            ccmax_n = _ccmax_per_neuron(stacked, valid, max_iters=max_ccmax_iters)
 
-            # 4. CCmax R=1 fallback: neurons with zero R>=2 stims get 1.0.
+            qualifies_cc = sum_w_cc > 0
+            ccmax_n = torch.where(
+                qualifies_cc, sum_w_cc_val / sum_w_cc.clamp(min=1), nan_t
+            )
+
+            # CCmax R=1 fallback: neurons with zero R>=2 stims get 1.0.
             # NaN from any other cause (all rho_half <= 0) is left as NaN.
             fallback = torch.isnan(ccmax_n) & ~has_r2_stim
             ccmax_n = torch.where(fallback, torch.ones_like(ccmax_n), ccmax_n)
