@@ -799,8 +799,9 @@ class Downer2025Dataset(AudioNeuralDataset):
         path: Optional[str] = None,
         stimuli: Literal["timit", "mvocs"] = "timit",
         dt_ms: float = 5.0,
-        n_mels: int = 32,
-        compression: Literal["cubic", "log1p", "none"] = "cubic",
+        n_mels: int = 80,
+        compression: Literal["cubic", "log1p", "none"] = "log1p",
+        spec_zscore: bool = True,
         smooth: bool = True,
         subset: Literal["all", "estimation", "test"] = "all",
         animals: Union[str, Sequence[str]] = "all",
@@ -826,10 +827,19 @@ class Downer2025Dataset(AudioNeuralDataset):
         dt_ms : float, default 5.0
             Neural time-bin width. The paper's main analysis uses 50 ms;
             5 ms matches NS1 and gives users the freedom to re-bin.
-        n_mels : int, default 32
-        compression : {'cubic', 'log1p', 'none'}, default 'cubic'
-            Spectrogram amplitude compression. Cubic root matches the
-            other deepSTRF audio datasets.
+        n_mels : int, default 80
+            Number of mel bands. Matches Ahmed 2025's Kaldi fbank
+            (``num_mel_bins=80``) by default.
+        compression : {'cubic', 'log1p', 'none'}, default 'log1p'
+            Spectrogram amplitude compression. ``log1p`` matches Ahmed
+            2025's log-mel (Kaldi fbank). The other deepSTRF audio
+            datasets default to ``'cubic'``; we picked ``log1p`` here
+            to match the paper as closely as possible.
+        spec_zscore : bool, default True
+            If True, z-score each spectrogram per-band over its own
+            time axis (= Ahmed 2025's ``normalize()`` helper). Boosts
+            contrast in higher-frequency bands that would otherwise
+            be flattened by the log compression.
         smooth : bool, default True
             Hsu 2004 21 ms PSTH smoothing.
         subset : {'all', 'estimation', 'test'}
@@ -890,6 +900,7 @@ class Downer2025Dataset(AudioNeuralDataset):
         self.audio_fs = int(audio_fs)
         self.fmax = int(fmax)
         self.compression = compression
+        self.spec_zscore = bool(spec_zscore)
         self.window_ms = float(window_ms)
         self.smooth = bool(smooth)
 
@@ -998,6 +1009,12 @@ class Downer2025Dataset(AudioNeuralDataset):
                 spec = spec.pow(1.0 / 3.0)
             elif self.compression == "log1p":
                 spec = torch.log1p(spec)
+            if self.spec_zscore:
+                # Per-stim, per-band z-score over the time axis -- matches
+                # Ahmed 2025 utils.normalize(). spec is (1, F, T_spec).
+                mean = spec.mean(dim=-1, keepdim=True)
+                std = spec.std(dim=-1, unbiased=False, keepdim=True).clamp(min=1e-9)
+                spec = (spec - mean) / std
             T_canon = int(round(entry["duration_s"] * 1000.0 / self.dt))
             T_by_stim[s_idx] = T_canon
             T_spec = spec.shape[-1]

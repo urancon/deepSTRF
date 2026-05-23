@@ -25,7 +25,7 @@ Threshold-crossing **multi-unit activity (MUA)** from 1718 recording channels ac
 - Different sessions presented different voc subsets → **~7 % sparse** (37 572 / 520 554 cells are `(1, 1)` NaN sentinels).
 - `mvoc` `stim_meta` carries an extra `n_reps_in_wav` key so users can sub-filter beyond the binary test/estimation split.
 
-By default both stim classes go through the same mel-spectrogram pipeline (`audio_fs=16 000`, `n_mels=32`, `fmax=8 000`, cubic-root compression) so two instances are concat-compatible. The 8 kHz cap matches Ahmed 2025's STRF baseline cochleagram (`50–8000 Hz`, p8).
+By default both stim classes go through the same mel-spectrogram pipeline (`audio_fs=16 000`, `n_mels=80`, `fmax=8 000`, `window_ms=25`, `compression='log1p'`, `spec_zscore=True`) so two instances are concat-compatible. These defaults match Ahmed 2025's Kaldi-fbank convention as closely as the deepSTRF mel pipeline allows: 80 mel bands, log compression, per-band per-stim z-score, ~25 ms FFT window. The 8 kHz cap matches Ahmed 2025's STRF baseline cochleagram (`50–8000 Hz`, p8).
 
 ## Setup
 

@@ -181,7 +181,7 @@ def ds_timit_one_session():
 
 def test_timit_shape_invariants(ds_timit_one_session):
     ds = ds_timit_one_session
-    assert ds.F == 32
+    assert ds.F == 80                # matches Ahmed 2025 default n_mels
     assert ds.audio_fs == 16000 and ds.fmax == 8000
     assert ds.species == "squirrel monkey"
     assert ds.N_neurons == 16  # session 180413 has 16 channels
@@ -248,7 +248,7 @@ def ds_mvocs_one_session():
 
 def test_mvocs_shape_invariants(ds_mvocs_one_session):
     ds = ds_mvocs_one_session
-    assert ds.F == 32 and ds.audio_fs == 16000 and ds.fmax == 8000
+    assert ds.F == 80 and ds.audio_fs == 16000 and ds.fmax == 8000
     assert ds.N_neurons == 16
     assert len(ds.stim_meta) == 303
     # NaN-sentinel discipline
