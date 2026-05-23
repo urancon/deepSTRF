@@ -17,12 +17,28 @@ release = '0.0.1'
 
 extensions = ['myst_parser',
               'sphinx.ext.todo',
-              'sphinx.ext.viewcode',
               'sphinx.ext.autodoc',
+              'sphinx.ext.napoleon',  # parse NumPy/Google-style docstrings
               'nbsphinx',
               'sphinx.ext.mathjax',  # Optional, for math support
-              'sphinx.ext.viewcode' # Optional, shows code
+              'sphinx.ext.viewcode'  # Optional, shows source code
               ]
+
+# -- Napoleon (NumPy-style docstrings) ---------------------------------------
+# Public-API docstrings are written in NumPy style; Napoleon translates their
+# ``Parameters`` / ``Returns`` / ``Raises`` / ``Examples`` sections into the
+# reStructuredText that autodoc renders.
+napoleon_google_docstring = False
+napoleon_numpy_docstring = True
+napoleon_include_init_with_doc = False
+napoleon_use_param = True
+napoleon_use_rtype = True
+napoleon_preprocess_types = True
+
+# Render both the class docstring and the ``__init__`` docstring on each
+# class page, so constructor Parameters sections (documented on ``__init__``
+# for the datasets) appear in the API reference.
+autoclass_content = "both"
 
 # Enable LaTeX-style math in MyST markdown: `$...$` (inline) and
 # `$$...$$` (displayed), plus AMS math environments via `amsmath`.

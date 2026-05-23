@@ -10,6 +10,7 @@ Subpackages
    deepSTRF.datasets
    deepSTRF.metrics
    deepSTRF.models
+   deepSTRF.training
    deepSTRF.utils
 
 Module contents

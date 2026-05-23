@@ -37,10 +37,18 @@ deepSTRF.models.prefiltering module
    :show-inheritance:
    :undoc-members:
 
-deepSTRF.models.rrfs module
----------------------------
+deepSTRF.models.readouts module
+-------------------------------
 
-.. automodule:: deepSTRF.models.rrfs
+.. automodule:: deepSTRF.models.readouts
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+deepSTRF.models.activations module
+----------------------------------
+
+.. automodule:: deepSTRF.models.activations
    :members:
    :show-inheritance:
    :undoc-members:

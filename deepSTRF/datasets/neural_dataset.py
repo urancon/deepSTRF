@@ -94,15 +94,35 @@ class NeuralDataset(Dataset, ABC):
         self.S_sel = None
 
     def get_N(self):
-        """Return the total number of selectable neurons."""
+        """Return the total number of selectable neurons.
+
+        Returns
+        -------
+        int
+            ``self.N_neurons`` (the full population size, not the current
+            selection).
+        """
         return self.N_neurons
 
     def get_S(self):
-        """Return the total number of stimuli presented to the whole neural population."""
+        """Return the total number of stimuli in the dataset.
+
+        Returns
+        -------
+        int
+            Number of stimuli presented to the whole neural population.
+        """
         return len(self.stim_meta)
 
     def get_nrn_meta(self):
-        """Retrieve metadata for each currently selected neuron."""
+        """Return metadata for each currently selected neuron.
+
+        Returns
+        -------
+        list of dict
+            The ``nrn_meta`` dicts for the neurons in the current selection
+            ``self.I``.
+        """
         return [self.nrn_meta[i] for i in self.I]
 
     @property
@@ -276,11 +296,25 @@ class NeuralDataset(Dataset, ABC):
 
     # neural population selection API (manual)
     def select_neuron(self, neuron_index: int):
+        """Restrict the selection to a single neuron.
+
+        Parameters
+        ----------
+        neuron_index : int
+            Index into the full population, in ``[0, N_neurons)``.
+        """
         assert isinstance(neuron_index, int) and 0 <= neuron_index < self.N_neurons, \
             f"neuron_index must be in [0, {self.N_neurons})"
         self.I = [neuron_index]
 
     def select_population(self, neuron_indices):
+        """Restrict the selection to the listed neurons.
+
+        Parameters
+        ----------
+        neuron_indices : sequence of int
+            Indices into the full population, each in ``[0, N_neurons)``.
+        """
         for neuron_index in neuron_indices:
             assert isinstance(neuron_index, int) and 0 <= neuron_index < self.N_neurons, \
                 f"neuron_index must be in [0, {self.N_neurons})"
@@ -297,10 +331,24 @@ class NeuralDataset(Dataset, ABC):
         ``select_pop_by_nrn_attr("area", "Field_L")`` on the concatenation
         keeps only AA1 neurons in Field L, with no ``KeyError``).
 
-        TODO:
-         - allow multiple conditions (AND / OR), eg with attribute_name and value as lists
-            ==> additional argument? "and", "or"
+        Parameters
+        ----------
+        attribute_name : str
+            Key looked up in each ``nrn_meta`` dict.
+        value
+            Required value for an exact (``==``) match.
+
+        Returns
+        -------
+        list of int
+            Indices of the selected neurons. Also stored in ``self.I``.
+
+        See Also
+        --------
+        select_pop_by_nrn_predicate : threshold / range / compound queries.
         """
+        # TODO: allow multiple AND/OR conditions (attribute_name + value as
+        #       lists, plus a combine="and"|"or" argument).
         _MISSING = object()
         selected_nrn_indices = []
         for n, nrn_metadata in enumerate(self.nrn_meta):
@@ -316,6 +364,18 @@ class NeuralDataset(Dataset, ABC):
         keeps only neurons whose ``nrn_masks`` is True for at least one of
         them. Stims missing the key are silently skipped (same convention
         as :meth:`select_pop_by_nrn_attr`).
+
+        Parameters
+        ----------
+        attribute_name : str
+            Key looked up in each ``stim_meta`` dict.
+        value
+            Required value for an exact (``==``) match.
+
+        Returns
+        -------
+        list of int
+            Indices of the selected neurons. Also stored in ``self.I``.
         """
         _MISSING = object()
         s_idxs = [s for s, sm in enumerate(self.stim_meta)
@@ -418,13 +478,24 @@ class NeuralDataset(Dataset, ABC):
         Pairs with the bidirectional rule in :meth:`_selected`: cells whose
         only valid responses lie outside the selected stim are auto-hidden
         from ``__getitem__``.
+
+        Parameters
+        ----------
+        stim_index : int
+            Index into the stim space, in ``[0, S)``.
         """
         assert isinstance(stim_index, int) and 0 <= stim_index < len(self.stim_meta), \
             f"stim_index must be in [0, {len(self.stim_meta)})"
         self.S_sel = [stim_index]
 
     def select_stims(self, stim_indices):
-        """Restrict iteration to the listed stimulus indices."""
+        """Restrict iteration to the listed stimulus indices.
+
+        Parameters
+        ----------
+        stim_indices : sequence of int
+            Indices into the stim space, each in ``[0, S)``.
+        """
         for s in stim_indices:
             assert isinstance(s, int) and 0 <= s < len(self.stim_meta), \
                 f"stim_index must be in [0, {len(self.stim_meta)})"
@@ -438,7 +509,17 @@ class NeuralDataset(Dataset, ABC):
         so a single call works on a concatenated dataset whose sources have
         heterogeneous stim metadata schemas.
 
-        Returns the selected stim indices.
+        Parameters
+        ----------
+        attribute_name : str
+            Key looked up in each ``stim_meta`` dict.
+        value
+            Required value for an exact (``==``) match.
+
+        Returns
+        -------
+        list of int
+            Indices of the selected stims. Also stored in ``self.S_sel``.
         """
         _MISSING = object()
         selected = [s for s, sm in enumerate(self.stim_meta)

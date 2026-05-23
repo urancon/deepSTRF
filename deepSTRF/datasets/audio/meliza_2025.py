@@ -1,35 +1,44 @@
-"""
-Le, Bjoring & Meliza (2025) Nat Commun:
-"The zebra finch auditory cortex reconstructs occluded syllables in conspecific song"
-DOI: 10.1038/s41467-025-63182-y
-Data: 10.6084/m9.figshare.29203457
-Code: github.com/melizalab/auditory-restoration
+"""Le, Bjoring & Meliza (2025), *Nature Communications* — zebra finch dataset.
 
-Single-unit extracellular recordings from auditory pallium of anesthetized
-adult zebra finches, in response to 8 natural song motifs (and in cohort 3,
-8 scrambled-syntax pseudo-motifs) presented in up to 7 variants per critical
-interval (CI) to probe the neural correlate of auditory restoration.
+"The zebra finch auditory cortex reconstructs occluded syllables in
+conspecific song." DOI: 10.1038/s41467-025-63182-y. Data:
+10.6084/m9.figshare.29203457. Code: github.com/melizalab/auditory-restoration.
 
-Sub-experiments (one ``experiment=`` per instance; concat for the union)
------------------------------------------------------------------------
-    nat8a    cohorts 1 & 2    natural motifs (8 birds × 2 CIs × {C, G, N, GB, CB})
-                              cohort 1 (alpha) had a familiarity manipulation;
-                              cohort 2 (beta) did not. No masking variants.
-    nat8b    cohort 3         same natural motifs renamed nat8mk0..7, full set
-                              of 7 variants per CI (adds GM, CM).
-    synth8b  cohort 3         8 scrambled-syntax pseudo-motifs, full variant set.
+Single-unit extracellular recordings from the auditory pallium of
+anesthetized adult zebra finches, in response to 8 natural song motifs (and
+in cohort 3, 8 scrambled-syntax pseudo-motifs) presented in up to 7 variants
+per critical interval (CI) to probe the neural correlate of auditory
+restoration.
 
-Per-CI variants
----------------
-    C    Continuous          unmodified motif; shared across both CIs.
-    G    Gap                 CI replaced by silence.
-    N    Noise               CI-duration noise burst in isolation.
-    GB   Gap + Burst         CI replaced by noise within the motif; the
-                              illusion-inducing stimulus.
-    CB   Continuous + Burst  motif unchanged, noise added on top of CI.
-    GM   Gap-Masked          whole motif masked, CI deleted        (nat8b/synth8b only)
-    CM   Continuous-Masked   whole motif masked, CI intact;        (nat8b/synth8b only)
-                              CM is CI-independent so lives once per motif.
+**Sub-experiments** (one ``experiment=`` per instance; concat for the union):
+
+``nat8a``
+    Cohorts 1 & 2 — natural motifs (8 birds × 2 CIs × {C, G, N, GB, CB}).
+    Cohort 1 (alpha) had a familiarity manipulation; cohort 2 (beta) did
+    not. No masking variants.
+``nat8b``
+    Cohort 3 — same natural motifs renamed ``nat8mk0..7``, full set of 7
+    variants per CI (adds GM, CM).
+``synth8b``
+    Cohort 3 — 8 scrambled-syntax pseudo-motifs, full variant set.
+
+**Per-CI variants:**
+
+``C`` (Continuous)
+    Unmodified motif; shared across both CIs.
+``G`` (Gap)
+    CI replaced by silence.
+``N`` (Noise)
+    CI-duration noise burst in isolation.
+``GB`` (Gap + Burst)
+    CI replaced by noise within the motif; the illusion-inducing stimulus.
+``CB`` (Continuous + Burst)
+    Motif unchanged, noise added on top of the CI.
+``GM`` (Gap-Masked)
+    Whole motif masked, CI deleted (``nat8b`` / ``synth8b`` only).
+``CM`` (Continuous-Masked)
+    Whole motif masked, CI intact (``nat8b`` / ``synth8b`` only). CM is
+    CI-independent, so it lives once per motif.
 """
 from __future__ import annotations
 

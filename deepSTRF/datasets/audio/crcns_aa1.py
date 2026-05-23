@@ -101,54 +101,42 @@ def get_stim_ids(data_path):
 
 
 class CRCNSAA1Dataset(AudioNeuralDataset):
-    """
-    A PyTorch dataset for handling neural data from the CRCNS-AA1 dataset.
+    """PyTorch dataset for the CRCNS-AA1 recordings.
 
+    Extracellular, spike-sorted single units of anesthetized male zebra
+    finches: 50 cells in Field L and 50 in MLd, recorded in response to 10
+    clips of conspecific vocalizations and 20 clips of flat ripples (up to
+    5 s each, ~10 trials on average). Data are available at
+    https://crcns.org/data-sets/aa/aa-1/about (free CRCNS account); see the
+    AA1 README in the deepSTRF docs for the full notes.
 
-    =============== SOURCE ================
+    Notes
+    -----
+    Follows the standard deepSTRF data paradigm (see
+    ``docs/_source/md/data_paradigm.md``). AA1-specific metadata:
 
-    See original papers for details:
-     - "Tuning for Spectro-temporal Modulations: a Mechanism for Auditory Discrimination of Natural Sound" by Woolley et al. (2005)
-     - "Modulation and phase spectrum of natural sounds enhance neural discrimination performed by single auditory neurons" by Hsu et al. (2004)
-     - "Modulation spectra of natural sounds and ethological theories of auditory processing" by Singh and Theunissen (2003)
+    - ``stims`` are mel-spectrograms ``(1, F, T_s)``.
+    - ``stim_meta`` dicts hold ``name``, ``type``, ``sample_rate``,
+      ``n_samples`` and ``duration_s``.
+    - ``nrn_meta`` dicts hold ``cell_id``, ``animal_id``, ``area``,
+      ``cell_seq`` and ``rig``. ``cell_seq`` is the sequential cell index
+      parsed from the cell folder name (the n-th cell recorded); ``rig`` is
+      the single-letter rig label when present, else ``None`` (cells "4_A"
+      and "4_B" were recorded simultaneously, possibly in different areas).
 
-    Data available at: https://crcns.org/data-sets/aa/aa-1/about
+    Two cells lack ``conspecific`` responses: ``pipu1018_2_A`` (MLd) and
+    ``pipu1018_2_B`` (Field_L).
 
+    References
+    ----------
+    Woolley et al. (2005). "Tuning for Spectro-temporal Modulations: a
+    Mechanism for Auditory Discrimination of Natural Sound."
 
-    =============== DETAILS ================
+    Hsu et al. (2004). "Modulation and phase spectrum of natural sounds
+    enhance neural discrimination performed by single auditory neurons."
 
-    More details can be found in the dataset source, the dataset-specific README in the deepSTRF docs, or in the original papers.
-    But in a nutshell:
-     - extracellular, spike-sorted single units of anesthetized male zebra finches
-     - 50 cells in field L, 50 in MLd
-     - 10 clips of conspecific vocalizations and 20 clips of flat ripples, up to 5 s duration.
-     - 10 trials on average
-
-
-    =============== STRUCTURE ================
-
-    Follows the standard deepSTRF data paradigm (see docs/_source/md/data_paradigm.md).
-    AA1-specific metadata contents:
-     - self.stims                       list of S tensors (1, F, T_s), mel-spectrograms
-     - self.responses                   list of S lists of N tensors (R_{s,n}, T_s)
-     - self.stim_meta                   list of S dicts {"name", "type",
-                                        "sample_rate", "n_samples", "duration_s"}
-     - self.nrn_meta             list of N dicts {"cell_id", "animal_id",
-                                        "area", "cell_seq", "rig"} — cell_seq is
-                                        the sequential cell index parsed from the
-                                        cell folder name (per AA1 readme PDF: the
-                                        n-th cell recorded); rig is the single-
-                                        letter rig label when present, else None
-                                        (cells "4_A" and "4_B" were recorded
-                                        simultaneously, possibly in different
-                                        brain areas)
-
-
-    =============== REMARKS ================
-
-    only cell 'pipu1018_2_A' in 'MLd' does not have responses to 'conspecific' stims
-    only cell 'pipu1018_2_B' in 'Field_L' does not have responses to 'conspecific' stims
-
+    Singh & Theunissen (2003). "Modulation spectra of natural sounds and
+    ethological theories of auditory processing."
     """
 
     def __init__(self, path: Optional[str] = None, areas=('Field_L', 'MLd'),

@@ -4,26 +4,34 @@ deepSTRF.utils package
 Submodules
 ----------
 
-deepSTRF.utils.dataset\_utils module
+deepSTRF.utils.data module
+--------------------------
+
+.. automodule:: deepSTRF.utils.data
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+deepSTRF.utils.data\_download module
 ------------------------------------
 
-.. automodule:: deepSTRF.utils.dataset_utils
+.. automodule:: deepSTRF.utils.data_download
    :members:
    :show-inheritance:
    :undoc-members:
 
-deepSTRF.utils.training module
+deepSTRF.utils.plotting module
 ------------------------------
 
-.. automodule:: deepSTRF.utils.training
+.. automodule:: deepSTRF.utils.plotting
    :members:
    :show-inheritance:
    :undoc-members:
 
-deepSTRF.utils.training\_pop module
------------------------------------
+deepSTRF.utils.hub module
+-------------------------
 
-.. automodule:: deepSTRF.utils.training_pop
+.. automodule:: deepSTRF.utils.hub
    :members:
    :show-inheritance:
    :undoc-members:

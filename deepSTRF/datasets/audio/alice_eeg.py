@@ -263,108 +263,64 @@ def _gammatone_spectrogram(wav: torch.Tensor, sr: int,
 
 
 class AliceEEGDataset(AudioNeuralDataset):
-    """
-    A PyTorch dataset for handling EEG data from the Alice audiobook listening
-    paradigm, adapted to the deepSTRF data paradigm.
+    """PyTorch dataset for EEG from the Alice audiobook listening paradigm.
 
+    33 human participants listened to the first chapter of *Alice in
+    Wonderland* (~12.4 min) split into 12 audio segments, recorded with 61
+    EEG channels per subject (10-20-like montage). Bad channels and bad
+    artifact windows (marked in the source ``.fif`` metadata) are converted
+    to NaN at the response level. Each subject heard each segment once
+    (``R = 1``). deepSTRF consumes Brodbeck et al. 2023's restructured
+    release (UMd PULFR ``10.13016/pulf-lndn``): per-subject MNE ``.fif``
+    files plus 12 audio segments and a word-onset table. See
+    ``docs/_source/md/README_Alice_EEG.md`` for the full dataset notes.
 
-    =============== SOURCE ================
-
-    See original papers for details:
-     - "The Alice Datasets: fMRI & EEG Observations of Natural Language
-       Comprehension" by Bhattasali et al. (2020), LREC.
-     - "Hierarchical structure guides rapid linguistic predictions during
-       naturalistic listening" by Brennan et al. (2019), PLOS ONE.
-
-    Brodbeck et al. 2023 (eLife T&R, the Eelbrain methods paper) rereleased
-    a restructured / preprocessed copy of the dataset at UMd PULFR
-    (``10.13016/pulf-lndn``). deepSTRF consumes that restructure: per-subject
-    MNE ``.fif`` files plus 12 audio segments and a word-onset table.
-
-
-    =============== DETAILS ================
-
-    More details can be found in the dataset source, the dataset-specific
-    README in the deepSTRF docs (``docs/_source/md/README_Alice_EEG.md``),
-    or in the original papers.
-    But in a nutshell:
-     - 33 human participants listened to the first chapter of *Alice in
-       Wonderland* (~12.4 min) split into 12 audio segments.
-     - 61 EEG channels per subject (10–20-like montage); bad channels and bad
-       artifact windows marked in the source ``.fif`` metadata are converted
-       to NaN at the response level.
-     - R = 1 always (each subject heard each segment once).
-
-
-    =============== STRUCTURE ================
-
-    Follows the standard deepSTRF data paradigm (see
-    ``docs/_source/md/data_paradigm.md``). Alice-specific metadata contents:
-     - self.stims                       list of S=12 tensors ``(1, F, T_s)`` —
-                                        log-power ERB-band spectrogram (a
-                                        gammatone approximation; see
-                                        ``_gammatone_spectrogram``).
-     - self.responses                   list of S lists of N tensors
-                                        ``(R, T_s)``. R depends on
-                                        ``treat_subjects_as`` (see below).
-     - self.stim_meta                   list of S dicts ``{"name", "type",
-                                        "sample_rate", "n_samples",
-                                        "duration_s"}``.
-     - self.nrn_meta             list of N dicts. In ``"neurons"``
-                                        mode each entry is a
-                                        ``(subject, channel)`` pair with
-                                        ``{"channel_id", "subject", "area",
-                                        "xyz"}``. In ``"repeats"`` mode (see
-                                        below) each entry is a channel only.
-
-    Two modes for ``treat_subjects_as``:
+    The ``treat_subjects_as`` argument selects one of two layouts:
 
     - ``"neurons"`` (default): every ``(subject, channel)`` pair becomes a
-      "neuron". ``N = sum_s(n_channels_s)``. ``R = 1`` everywhere. Bad
-      channels carry the structural NaN sentinel per the data paradigm.
-      Standard ``corrcoef`` / ``fve`` are the relevant metrics.
+      "neuron"; ``N = sum_s(n_channels_s)`` and ``R = 1`` everywhere. Bad
+      channels carry the structural NaN sentinel. Use ``corrcoef`` / ``fve``.
+    - ``"repeats"``: subjects are treated as repeats of a shared canonical
+      per-channel EEG response; ``N = n_montage_channels`` (e.g. 61) and
+      ``R = n_subjects``. Bad ``(channel, subject)`` combinations become NaN
+      repeat slabs. Useful for inter-subject reliability (ISC-style) via
+      ``normalized_corrcoef(method='schoppe')`` — but note this is
+      *inter-subject* reliability, not trial reliability, so the iid-trial
+      noise model the Schoppe correction assumes does not strictly hold;
+      treat the resulting ceiling as a group-level sanity check.
 
-    - ``"repeats"``: treats subjects as repeats of a shared canonical EEG
-      response per channel. ``N = n_montage_channels`` (e.g. 61);
-      ``R = n_subjects``. Bad ``(channel, subject)`` combinations become
-      ``NaN`` slabs at the repeat slot. Useful for inter-subject reliability
-      (ISC-style) analyses via ``normalized_corrcoef(method='schoppe')``.
-      **Caveat:** this is *inter-subject reliability*, not trial reliability
-      — the noise model that justifies the Schoppe correction (iid trial
-      noise around a shared deterministic signal) doesn't strictly hold for
-      between-subject variability. Document the interpretive shift when
-      reporting numbers; it remains a useful sanity check and group-level
-      ceiling.
+    Notes
+    -----
+    Follows the standard deepSTRF data paradigm (see
+    ``docs/_source/md/data_paradigm.md``). Alice-specific metadata:
 
+    - ``stims`` are ``S = 12`` log-power ERB-band spectrograms ``(1, F, T_s)``
+      (a gammatone approximation; see ``_gammatone_spectrogram``).
+    - ``stim_meta`` dicts hold ``name``, ``type``, ``sample_rate``,
+      ``n_samples`` and ``duration_s``.
+    - ``nrn_meta`` dicts hold ``channel_id``, ``subject``, ``area`` and
+      ``xyz`` in ``"neurons"`` mode; a channel-only entry in ``"repeats"``
+      mode.
 
-    =============== AUDIT STATUS — SPEC PIPELINE ================
+    The default ``spec_backend='gaussian'`` is a frequency-domain Gaussian
+    approximation of Brodbeck 2023's time-domain gammatone (Heeris)
+    filterbank — spectrally equivalent to first order but with lower dynamic
+    range and less time-localized transients. ``spec_backend='heeris'``
+    selects the paper-faithful bank (requires the optional ``gammatone``
+    package in the ``[eeg]`` extra). The ``window_ms`` / ``fmin`` / ``fmax``
+    constructor knobs control the FFT window and ERB-band edges; their
+    defaults preserve the historical behaviour, so no existing fits change.
 
-    The default ``spec_backend='gaussian'`` is a **frequency-domain
-    Gaussian approximation** of Brodbeck 2023's time-domain gammatone
-    filterbank (Heeris). Spectrally equivalent to first order — matches
-    the band centers / bandwidths shown in the eelbrain Fig 4 panels —
-    but visibly differs from the paper-faithful Heeris bank in
-    side-by-side renderings (see
-    ``untracked/alice_eeg_spec_compare.py``): lower dynamic range, less
-    time-localized transients. Earlier sessions saw lower-than-expected
-    cc_norm on this dataset; whether that's a spec-pipeline issue (as
-    in Downer 2025 — see ``project_downer2025_spec_bug_lessons``) or a
-    model/data issue is the empirical follow-up.
+    References
+    ----------
+    Bhattasali et al. (2020). "The Alice Datasets: fMRI & EEG Observations of
+    Natural Language Comprehension." LREC.
 
-    The audit knobs now exposed at the constructor surface:
+    Brennan et al. (2019). "Hierarchical structure guides rapid linguistic
+    predictions during naturalistic listening." *PLOS ONE*.
 
-    - ``spec_backend='heeris'`` — paper-faithful Heeris time-domain
-      gammatone bank. Requires the optional ``gammatone`` PyPI package
-      (in the ``[eeg]`` extra).
-    - ``window_ms`` — FFT analysis-window length in ms (default
-      preserves legacy ``n_fft=1024``).
-    - ``fmin``, ``fmax`` — ERB-band edges. Default ``80 Hz``-``sr/2``
-      sticks two bands on inaudible-for-speech content; ``fmax=8000``
-      is the speech-focused recommendation.
-
-    Defaults preserve the historical behaviour — no existing fits
-    change.
-
+    Brodbeck et al. (2023). Eelbrain methods paper. *eLife* (Tools &
+    Resources).
     """
 
     def __init__(self, path: Optional[str] = None,

@@ -211,46 +211,37 @@ def get_stim_ids_from_folders(cells_path, verbose=False):
 
 
 class CRCNSAA2Dataset(AudioNeuralDataset):
-    """
-    A PyTorch dataset for handling neural data from the CRCNS-AA2 dataset and its many recording sites (OV, Mld, Field L, CM)
+    """PyTorch dataset for the CRCNS-AA2 recordings (OV, MLd, Field L, CM).
 
+    494 extracellular, spike-sorted single units of male zebra finches,
+    identified in OV, MLd, Field L, L1, L2a, L2b, L3 (and some with
+    unidentified area, ``None``). Three stimulus classes — conspecific songs
+    (72 stims), flat ripples (20) and song ripples (25) — each presented
+    10-20 times, with low trial-to-trial variability. Almost all cells saw
+    conspecific and songrip stimuli; about half saw flatrip. Population
+    fitting-compatible. Data are available at
+    https://crcns.org/data-sets/aa/aa-2/about (free CRCNS account).
 
-    =============== SOURCE ================
+    Notes
+    -----
+    Follows the standard deepSTRF data paradigm (see
+    ``docs/_source/md/data_paradigm.md``). AA2-specific metadata:
 
-    See original papers for details:
-     - "Sound representation methods for spectro-temporal receptive field estimation" by Patrick Gill et al. (2006)
-     - "Role of the Zebra Finch Auditory Thalamus in Generating Complex Representations for Natural Sounds" by Noopur Amin et al. (2010)
+    - ``stims`` are mel-spectrograms ``(1, F, T_s)``.
+    - ``stim_meta`` dicts hold ``name``, ``type``, ``sample_rate``,
+      ``n_samples`` and ``duration_s`` (the last three from
+      ``data/stim_data.csv``).
+    - ``nrn_meta`` dicts hold ``cell_id``, ``animal_id``, ``area``,
+      ``cell_seq`` and ``rig`` (see :class:`~deepSTRF.datasets.audio.crcns_aa1.CRCNSAA1Dataset`
+      for the cell-name format; ``rig`` is often ``None`` in AA2).
 
-    Data available at: https://crcns.org/data-sets/aa/aa-2/about
+    References
+    ----------
+    Gill et al. (2006). "Sound representation methods for spectro-temporal
+    receptive field estimation."
 
-
-    =============== DETAILS ================
-
-    More details can be found in the dataset source, the dataset-specific README in the deepSTRF docs, or in the original papers.
-    But in a nutshell:
-    - 494 extracellular, spike-sorted single units of male zebra finches
-    - neurons identified in OV, MLd, Field L, L1, L2a, L2b, L3, OV. Also neurons with unindentified area (None)
-    - 3 stimulus classes: conspecific songs (72 stims), flat ripples (20), and song ripples (25)
-    - almost all cells were presented conspecific and songrip stimuli, and about half were presented flatrip
-    - stimuli were each presented 10-20 times
-    - low trial-to-trial variability
-    - population fitting-compatible
-
-
-    =============== STRUCTURE ================
-
-    Follows the standard deepSTRF data paradigm (see docs/_source/md/data_paradigm.md).
-    AA2-specific metadata contents:
-     - self.stims                       list of S tensors (1, F, T_s), mel-spectrograms
-     - self.responses                   list of S lists of N tensors (R_{s,n}, T_s)
-     - self.stim_meta                   list of S dicts {"name", "type",
-                                        "sample_rate", "n_samples", "duration_s"}
-                                        (last three from data/stim_data.csv)
-     - self.nrn_meta             list of N dicts {"cell_id", "animal_id",
-                                        "area", "cell_seq", "rig"} — see AA1's
-                                        docstring for the cell-name format
-                                        documentation; rig is often None in AA2
-
+    Amin et al. (2010). "Role of the Zebra Finch Auditory Thalamus in
+    Generating Complex Representations for Natural Sounds."
     """
     def __init__(self, path: Optional[str] = None,
                  areas=('Field_L', 'mld', 'OV', 'CM', 'None'),
