@@ -48,10 +48,17 @@ import numpy as np
 import pandas as pd
 
 
-# Cell ids in Wingert follow ``<site>-<probe-channel>-<unit-on-channel>``,
-# e.g. ``CLT027c-009-1`` (site ``CLT027c``, probe channel 9, unit 1) or
-# ``PRN018b-039-1``. The site prefix is ``<3-letter animal>NNN<letter>``.
-_CELL_ID_RE = re.compile(r"^([A-Za-z]{3})\d+[a-z]?-(\d+)-(\d+)$")
+# Cell ids in Wingert come in two formats:
+#  - 3-segment (the common case): ``<site>-<probe-channel>-<unit>``, e.g.
+#    ``CLT027c-009-1`` → site ``CLT027c``, electrode 9, unit 1.
+#  - 4-segment (only the SLJ032a recording, which used two probes):
+#    ``<site>-<probe-letter>-<probe-channel>-<unit>``, e.g.
+#    ``SLJ032a-A-003-1`` and ``SLJ032a-B-154-1``. In ``cell_list.csv`` the
+#    A-probe cells are assigned ``siteid='SLJ032a'`` and the B-probe cells
+#    ``siteid='SLJ032a-B'``; that csv is the authority for the site field
+#    of ``nrn_meta``.
+_CELL_ID_RE_3SEG = re.compile(r"^([A-Za-z]{3})\d+[a-z]?-(\d+)-(\d+)$")
+_CELL_ID_RE_4SEG = re.compile(r"^([A-Za-z]{3})\d+[a-z]?-[A-Z]-(\d+)-(\d+)$")
 
 
 def parse_wingert_cell_id(cell_id: str) -> dict:
@@ -60,15 +67,15 @@ def parse_wingert_cell_id(cell_id: str) -> dict:
     Returns
     -------
     dict
-        Keys ``site``, ``animal``, ``electrode``, ``unit_in_electrode``.
+        Keys ``animal``, ``electrode``, ``unit_in_electrode``.
         Any field whose source is missing or unparseable is ``None``.
+        The authoritative site for a cell is the ``siteid`` column in
+        ``cell_list.csv``, not derived from the cell id.
     """
-    out = {"site": None, "animal": None, "electrode": None, "unit_in_electrode": None}
-    if not isinstance(cell_id, str) or "-" not in cell_id:
+    out = {"animal": None, "electrode": None, "unit_in_electrode": None}
+    if not isinstance(cell_id, str):
         return out
-    parts = cell_id.split("-")
-    out["site"] = parts[0]
-    m = _CELL_ID_RE.match(cell_id)
+    m = _CELL_ID_RE_3SEG.match(cell_id) or _CELL_ID_RE_4SEG.match(cell_id)
     if m is None:
         return out
     out["animal"] = m.group(1)
