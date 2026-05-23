@@ -126,7 +126,10 @@ def _erb_filterbank(n_bands: int, sr: int, n_fft: int,
 
 def _gammatone_spectrogram(wav: torch.Tensor, sr: int,
                            n_bands: int, dt_ms: float,
-                           n_fft: int = 1024) -> torch.Tensor:
+                           n_fft: Optional[int] = None,
+                           window_ms: Optional[float] = None,
+                           f_min: float = 80.0,
+                           f_max: Optional[float] = None) -> torch.Tensor:
     """Log-power ERB-band spectrogram (gammatone approximation).
 
     Parameters
@@ -139,9 +142,20 @@ def _gammatone_spectrogram(wav: torch.Tensor, sr: int,
         Number of ERB bands.
     dt_ms : float
         Output time-bin width in ms; sets the STFT hop length.
-    n_fft : int
-        FFT length. 1024 is plenty for 80 Hz – sr/2 coverage with reasonable
-        time resolution at the typical audio sample rates here.
+    n_fft : int, optional
+        Explicit FFT length. Overrides ``window_ms`` if both are set.
+        ``None`` falls back to ``window_ms`` (or the legacy default of
+        1024 if ``window_ms`` is also ``None``).
+    window_ms : float, optional
+        FFT analysis-window length in ms. When set, ``n_fft`` is
+        derived as ``round(window_ms * 1e-3 * sr)``, floored at ``hop``
+        so the STFT constraint ``n_fft >= hop_length`` always holds.
+        ``None`` preserves the legacy ``n_fft=1024`` default.
+    f_min, f_max : float, optional
+        ERB-band edges in Hz. Default ``80.0`` and ``sr/2`` — matches
+        Brodbeck 2023 Fig 4's lower edge but lets the upper edge run
+        well past the speech-relevant range. For human-speech work,
+        pass ``f_max=8000`` to drop the inaudible-for-speech bands.
 
     Returns
     -------
@@ -149,10 +163,15 @@ def _gammatone_spectrogram(wav: torch.Tensor, sr: int,
         Log power per band per frame.
     """
     hop = max(1, int(round(sr * dt_ms / 1000.0)))
+    if n_fft is None:
+        if window_ms is not None:
+            n_fft = max(int(round(window_ms * 1e-3 * sr)), hop)
+        else:
+            n_fft = 1024     # legacy default; preserves bit-identical specs
     spec = torchaudio.transforms.Spectrogram(
         n_fft=n_fft, hop_length=hop, power=2.0,
     )(wav)  # (1, n_fft//2+1, T)
-    fb = _erb_filterbank(n_bands, sr, n_fft)              # (n_bands, n_fft//2+1)
+    fb = _erb_filterbank(n_bands, sr, n_fft, f_min=f_min, f_max=f_max)
     out = torch.einsum("bf,cft->cbt", fb, spec)           # (1, n_bands, T)
     return torch.log(out + 1e-8)
 
@@ -236,6 +255,25 @@ class AliceEEGDataset(AudioNeuralDataset):
       reporting numbers; it remains a useful sanity check and group-level
       ceiling.
 
+
+    =============== AUDIT STATUS — SPEC PIPELINE ================
+
+    The stimulus spectrogram pipeline is a **frequency-domain Gaussian
+    approximation** of Brodbeck 2023's time-domain gammatone filterbank
+    (Heeris). Spectrally equivalent to first order — matches the band
+    centers / bandwidths shown in the eelbrain Fig 4 panels — but has
+    not been benchmarked bin-for-bin against the paper's published
+    spectrograms or against a closed-form ridge STRF baseline. Earlier
+    sessions saw lower-than-expected cc_norm on this dataset; whether
+    that's a spec-pipeline issue (as in Downer 2025 — see
+    ``project_downer2025_spec_bug_lessons``) or a model/data issue is
+    still open.
+
+    The spec knobs (``window_ms``, ``fmin``, ``fmax``) are now exposed
+    at the constructor surface so future benchmarking can tune them in
+    one line. Defaults preserve the historical behaviour — no existing
+    fits change.
+
     """
 
     def __init__(self, path: Optional[str] = None,
@@ -245,6 +283,9 @@ class AliceEEGDataset(AudioNeuralDataset):
                  treat_subjects_as: str = "neurons",
                  hp_freq_hz: Optional[float] = 1.0,
                  lp_freq_hz: Optional[float] = None,
+                 window_ms: Optional[float] = None,
+                 fmin: float = 80.0,
+                 fmax: Optional[float] = None,
                  download: bool = False):
         """
         Parameters
@@ -276,6 +317,22 @@ class AliceEEGDataset(AudioNeuralDataset):
             Optional low-pass cutoff. Useful if you want to focus on the
             cortical-tracking band (< 40 Hz) or the envelope-tracking band
             (< 8 Hz).
+        window_ms : float, optional
+            FFT analysis-window length in ms for the stimulus
+            spectrogram. ``None`` preserves the legacy ``n_fft=1024``
+            default — at the audiobook sample rate (16 kHz) this gives
+            a ~64 ms window; at 44.1 kHz, ~23 ms. Pass an explicit
+            ``window_ms`` to override (e.g. ``25.0`` for the Kaldi
+            convention). The spec pipeline is otherwise unchanged from
+            the audit baseline — see the "Audit status" callout below
+            before benchmarking against Brodbeck 2023.
+        fmin, fmax : float, optional
+            Lower and upper ERB-band edges in Hz. Default ``80.0`` and
+            ``sr/2`` (Nyquist). For speech-tracking work, pass
+            ``fmax=8000`` to drop bands above the speech-relevant range
+            (matches Brodbeck 2023's published lower-band figure
+            roughly; not empirically validated against the paper's
+            actual filterbank — see "Audit status").
         download : bool, default False
             If True and the data is missing under ``path``, fetch the four
             zips from the UMd DRUM mirror (~2.5 GiB total; anonymous HTTPS).
@@ -301,6 +358,9 @@ class AliceEEGDataset(AudioNeuralDataset):
         self.F = int(n_frequency_bands)
         self.hp_freq_hz = hp_freq_hz
         self.lp_freq_hz = lp_freq_hz
+        self.window_ms = float(window_ms) if window_ms is not None else None
+        self.fmin = float(fmin)
+        self.fmax = float(fmax) if fmax is not None else None
 
         if treat_subjects_as not in ("neurons", "repeats"):
             raise ValueError(
@@ -372,7 +432,10 @@ class AliceEEGDataset(AudioNeuralDataset):
             if wav.shape[0] > 1:
                 wav = wav.mean(dim=0, keepdim=True)
             n_samples = int(wav.shape[-1])
-            spec = _gammatone_spectrogram(wav, sr, self.F, self.dt)  # (1, F, T)
+            spec = _gammatone_spectrogram(
+                wav, sr, self.F, self.dt,
+                window_ms=self.window_ms, f_min=self.fmin, f_max=self.fmax,
+            )  # (1, F, T)
             stims.append(spec)
             stim_meta.append({
                 "name": os.path.basename(wav_path),
