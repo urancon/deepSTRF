@@ -18,17 +18,22 @@ This module's loader is NEMS-free — see ``_wingert_native.py``.
 
 from __future__ import annotations
 
+import json
 import os
+import tarfile
 import warnings
-from typing import Iterable, List, Optional, Sequence, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
 import torch
+from tqdm.auto import tqdm
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 from deepSTRF.datasets.audio._wingert_native import (
+    load_site_recording,
     parse_wingert_cell_id,
+    rasterize_spike_times,
 )
 from deepSTRF.utils.data_download import (
     default_cache_dir,
@@ -158,6 +163,7 @@ class Wingert2026Dataset(AudioNeuralDataset):
                  subset: str = "all",
                  smooth: bool = False,
                  download: bool = False,
+                 include_unlabeled: bool = False,
                  _enumerate_only: bool = False):
         """
         Parameters
@@ -194,6 +200,15 @@ class Wingert2026Dataset(AudioNeuralDataset):
             Zenodo (record ``18331549``) if missing. The 8 GB
             ``wav.zip`` is NOT fetched (the loader uses the precomputed
             gtgrams in ``stim.h5``).
+        include_unlabeled : bool, default False
+            If True, also include the 131 cells in ``cell_list.csv``
+            that lack an area label (and therefore also lack
+            ``layer`` / ``depth`` / ``narrow`` / ``celltype``). These
+            come from three otherwise-unrepresented PRN sessions
+            (PRN010b, PRN011b, PRN020b) and have ``area=None``,
+            ``layer=None``, ``depth=None``, etc. in ``nrn_meta``.
+            ``goodpred`` is still populated. The default ``False``
+            matches the paper's analysis cohort.
         _enumerate_only : bool, default False
             Internal flag for tests: populate ``nrn_meta`` and
             ``N_neurons`` only, skip the (~1 minute) per-site .tgz read
@@ -237,9 +252,11 @@ class Wingert2026Dataset(AudioNeuralDataset):
 
         # ---- enumerate cells from cell_list.csv (the canonical curated list) ----
         df = pd.read_csv(cell_list_path)
-        # Drop cells with no area label (131 cells, sort-failed).
-        df = df[df["area"].isin(_VALID_AREAS)].reset_index(drop=True)
+        if not include_unlabeled:
+            # Default: drop the 131 cells with area=NaN.
+            df = df[df["area"].isin(_VALID_AREAS)].reset_index(drop=True)
         if areas is not None:
+            # An explicit ``area=`` filter implies labelled cohort only.
             df = df[df["area"].isin(areas)].reset_index(drop=True)
         if sites is not None:
             df = df[df["siteid"].isin(sites)].reset_index(drop=True)
@@ -266,11 +283,219 @@ class Wingert2026Dataset(AudioNeuralDataset):
             # populated. self.validate() would fail (S == 0); callers know.
             return
 
-        # ---- Phase 3: stim + response loading + normalisation + subset filter ----
-        raise NotImplementedError(
-            "Wingert2026Dataset full load is not yet implemented (Phase 3). "
-            "Use _enumerate_only=True for now."
+        # ---- map session_id → .tgz path ----
+        session_to_tgz = _build_session_to_tgz_map(recordings_dir)
+
+        # Group target cells by session for the load loop. Each session is
+        # opened exactly once even when it serves multiple cell_list siteids
+        # (e.g. SLJ032a's two-probe recording feeds 'SLJ032a' and 'SLJ032a-B').
+        cells_by_session: Dict[str, List[int]] = {}
+        for n_idx, meta in enumerate(self.nrn_meta):
+            cells_by_session.setdefault(meta["session"], []).append(n_idx)
+
+        missing_sessions = [s for s in cells_by_session if s not in session_to_tgz]
+        if missing_sessions:
+            raise FileNotFoundError(
+                f"No .tgz found in {recordings_dir!r} for sessions: {missing_sessions}. "
+                f"Re-run with download=True or check the data path."
+            )
+
+        # ---- shared sentinel: one tensor object, referenced everywhere a
+        # (stim, cell) pair is missing. Without this trick the (S, N)
+        # response grid balloons from ~80 MB (pointer cost) to multiple
+        # GB (per-slot fresh torch.full call). See plan §H risk #1. ----
+        NAN = torch.full((1, 1), float("nan"))
+
+        self.stims = []
+        self.stim_meta = []
+        self.responses = []
+
+        # Deterministic session order so concat'd / persisted instances are
+        # bit-stable across runs.
+        for session in tqdm(sorted(cells_by_session.keys()),
+                            desc="Wingert2026 sites"):
+            tgz_path = session_to_tgz[session]
+            rec = load_site_recording(tgz_path)
+            session_cell_idx = {
+                self.nrn_meta[n]["cell_id"]: n for n in cells_by_session[session]
+            }
+
+            # Cells the .tgz contributes but the filter dropped (e.g. probe-A
+            # cells when site='SLJ032a-B'): silently ignored, the rasterizer
+            # never visits their spike trains.
+            in_session = [c for c in rec.cell_ids if c in session_cell_idx]
+
+            for stim_name in sorted(rec.stims.keys()):
+                spec = rec.stims[stim_name]                  # (F, T_s)
+                F_s, T_s = spec.shape
+                assert F_s == self.F, (
+                    f"unexpected F={F_s} for stim {stim_name!r} in session "
+                    f"{session!r}; expected F={self.F}"
+                )
+                s_idx = len(self.stims)
+                self.stims.append(torch.from_numpy(spec).unsqueeze(0).float())
+                self.stim_meta.append({
+                    "name": stim_name,
+                    "subset": "val" if stim_name.startswith("STIM_00") else "est",
+                    "session": session,
+                })
+
+                # Default response row: NaN sentinel everywhere.
+                row: List[torch.Tensor] = [NAN] * self.N_neurons
+
+                # Epoch rows giving R presentation windows for this stim.
+                epoch_rows = rec.epochs[rec.epochs["name"] == stim_name]
+                R = len(epoch_rows)
+                if R == 0 or not in_session:
+                    self.responses.append(row)
+                    continue
+
+                # Rasterize R repeats × T_s per cell.
+                ep_starts = epoch_rows["start"].to_numpy()
+                ep_ends = epoch_rows["end"].to_numpy()
+                for cell_id in in_session:
+                    spikes_s = rec.spike_times[cell_id]
+                    reps = np.zeros((R, T_s), dtype=np.float32)
+                    for r_idx in range(R):
+                        s, e = ep_starts[r_idx], ep_ends[r_idx]
+                        # Spikes in this presentation window, expressed
+                        # relative to the window start.
+                        in_win = (spikes_s >= s) & (spikes_s < e)
+                        rel = spikes_s[in_win] - s
+                        reps[r_idx] = rasterize_spike_times(rel, T_s, rec.fs)
+                    row[session_cell_idx[cell_id]] = torch.from_numpy(reps)
+                self.responses.append(row)
+
+            del rec  # free per-site spike-time / stim memory ASAP
+
+        # ---- per-instance global minmax on stim and on resp ----
+        _normalize_minmax_inplace(self.stims, self.responses)
+
+        # ---- subset filter (drop est / val after the global load) ----
+        if subset != "all":
+            keep = [i for i, m in enumerate(self.stim_meta) if m["subset"] == subset]
+            self.stims = [self.stims[i] for i in keep]
+            self.stim_meta = [self.stim_meta[i] for i in keep]
+            self.responses = [self.responses[i] for i in keep]
+
+        if smooth:
+            self.smooth_responses(window_ms=21.0)
+
+        self.validate()
+
+
+# ---------- module-level helpers ----------
+
+def _build_session_to_tgz_map(recordings_dir: str) -> Dict[str, str]:
+    """Scan ``recordings/`` once and return ``{session_id: tgz_path}``.
+
+    The session id is the first dash-separated segment of any cell id
+    inside the .tgz's ``resp.json`` — i.e. the recording-session label
+    that's invariant under the 3-/4-segment cell-id schism (SLJ032a-A-...
+    and SLJ032a-B-... both belong to session ``'SLJ032a'``).
+
+    Handles two release-side quirks:
+
+    - Three PRN .tgz files have a basename that doesn't match the cells
+      they contain (e.g. ``PRN015b_*.tgz`` holds ``PRN015a-*`` cells).
+      Mapping by cell id rather than filename resolves this.
+    - ``PRN018a_*.tgz`` and ``PRN018b_*.tgz`` contain identical data
+      (same cells, same stims, same spike times). We keep the .tgz
+      whose basename matches the session id (``PRN018a``) and drop the
+      duplicate.
+    """
+    sessions: Dict[str, List[str]] = {}
+    for fname in sorted(os.listdir(recordings_dir)):
+        if not fname.endswith(".tgz"):
+            continue
+        tgz_path = os.path.join(recordings_dir, fname)
+        # Peek at resp.json without unpacking the whole archive.
+        with tarfile.open(tgz_path, "r:*") as tf:
+            resp_json_member = next(
+                (m for m in tf.getmembers() if m.name.endswith(".resp.json")), None,
+            )
+            if resp_json_member is None:
+                continue
+            with tf.extractfile(resp_json_member) as f:
+                resp_meta = json.load(f)
+        cellids = resp_meta.get("chans") or []
+        if not cellids:
+            continue
+        session = cellids[0].split("-", 1)[0]
+        sessions.setdefault(session, []).append(tgz_path)
+
+    out: Dict[str, str] = {}
+    duplicates: List[str] = []
+    for session, tgzs in sessions.items():
+        if len(tgzs) == 1:
+            out[session] = tgzs[0]
+            continue
+        # Prefer the .tgz whose filename starts with the session id; if
+        # several still tie, take the alphabetically first.
+        preferred = sorted(
+            t for t in tgzs
+            if os.path.basename(t).split("_", 1)[0] == session
         )
+        if preferred:
+            chosen = preferred[0]
+            duplicates.extend(t for t in tgzs if t != chosen)
+        else:
+            tgzs_sorted = sorted(tgzs)
+            chosen = tgzs_sorted[0]
+            duplicates.extend(tgzs_sorted[1:])
+        out[session] = chosen
+
+    if duplicates:
+        warnings.warn(
+            "Wingert2026: dropped {} duplicate .tgz file(s) (same session "
+            "id as a kept archive): {}".format(
+                len(duplicates), [os.path.basename(t) for t in duplicates]
+            ),
+            stacklevel=2,
+        )
+    return out
+
+
+def _normalize_minmax_inplace(stims: List[torch.Tensor],
+                              responses: List[List[torch.Tensor]]) -> None:
+    """Per-instance global minmax to [0, 1] on stims and responses, in place.
+
+    Stim normalisation: one (min, max) pair across the concatenation of
+    every (1, F, T) stim tensor. Stims are NaN-free by data-paradigm
+    invariant, so plain min / max suffice.
+
+    Response normalisation: NaN-safe min / max over the (1, 1)-sentinel-
+    or-real response tensors. Sentinels are skipped (their NaN values do
+    not affect the global range), and the sentinel tensor itself is
+    untouched. Real tensors are rescaled in place.
+
+    No log compression is applied — the Wingert gtgrams are already
+    log-compressed by the David-lab preprocessing pipeline.
+    """
+    # --- stims ---
+    s_min = min(float(s.min()) for s in stims)
+    s_max = max(float(s.max()) for s in stims)
+    if s_max > s_min:
+        for s in stims:
+            s.sub_(s_min).div_(s_max - s_min)
+
+    # --- responses ---
+    real: List[torch.Tensor] = []
+    for row in responses:
+        for t in row:
+            # The (1, 1) NaN sentinel is identified by shape AND by being a
+            # shared reference (object identity is not checked here because
+            # the load loop is the only place that assigns the sentinel and
+            # we trust it). Real tensors have shape (R, T_s) with T_s >= 2.
+            if t.numel() > 1:
+                real.append(t)
+    if not real:
+        return
+    r_min = float(min(t.min() for t in real))
+    r_max = float(max(t.max() for t in real))
+    if r_max > r_min:
+        for t in real:
+            t.sub_(r_min).div_(r_max - r_min)
 
 
 def _make_nrn_meta(row: pd.Series) -> dict:
@@ -278,14 +503,17 @@ def _make_nrn_meta(row: pd.Series) -> dict:
 
     Pulls only the fields the public deepSTRF API exposes; published
     CNN / LN / subspace prediction-correlation columns are intentionally
-    omitted.
+    omitted. NaN-valued fields become ``None`` (Python's standard
+    missing-data sentinel) — relevant for the 131 unlabeled cells when
+    ``include_unlabeled=True`` is in play.
     """
     cell_id = str(row["cellid"])
     parsed = parse_wingert_cell_id(cell_id)
     return {
         "cell_id": cell_id,
         "site": str(row["siteid"]),
-        "area": str(row["area"]),
+        "session": cell_id.split("-", 1)[0],
+        "area": str(row["area"]) if not pd.isna(row["area"]) else None,
         # 'layer' is a string in the source csv (e.g. '56', '1-3'); keep as str.
         "layer": str(row["layer"]) if not pd.isna(row["layer"]) else None,
         "depth": float(row["depth"]) if not pd.isna(row["depth"]) else None,
