@@ -54,11 +54,12 @@ _VALID_AREAS = ("A1", "PEG", "AC", "HC")
 def download_wingert2026(dest: Optional[str] = None) -> str:
     """Download the Wingert 2026 release from Zenodo into ``dest``.
 
-    Fetches ``recordings.zip`` (per-site .tgz archives, the only file the
-    loader actually needs) and ``cell_list.csv`` (per-cell metadata).
-    Does NOT fetch the much larger ``wav.zip`` (raw waveforms, not used
-    by the spectrogram-only loader) or ``models.zip`` (published CNN /
-    LN / subspace fits, not used by deepSTRF).
+    Fetches ``recordings.zip`` (~4.35 GB of per-site .tgz archives, the
+    only large file the loader actually needs) and ``cell_list.csv``
+    (~5.4 MB of per-cell metadata). Does NOT fetch the much larger
+    ``wav.zip`` (~3.7 GB of raw waveforms, not used by the spectrogram-
+    only loader) or ``models.zip`` (published CNN / LN / subspace fits,
+    not used by deepSTRF).
 
     Idempotent — skips files / dirs that already exist.
 

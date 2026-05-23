@@ -9,6 +9,7 @@ from .espejo import EspejoDataset
 from .alice_eeg import AliceEEGDataset, download_alice_eeg
 from .meliza_2025 import Meliza2025Dataset
 from .downer2025 import Downer2025Dataset, download_downer2025
+from .wingert2026 import Wingert2026Dataset, download_wingert2026
 
 __all__ = ['AudioNeuralDataset',
            'WehrDataset',
@@ -20,4 +21,5 @@ __all__ = ['AudioNeuralDataset',
            'EspejoDataset',
            'AliceEEGDataset', 'download_alice_eeg',
            'Meliza2025Dataset',
-           'Downer2025Dataset', 'download_downer2025']
+           'Downer2025Dataset', 'download_downer2025',
+           'Wingert2026Dataset', 'download_wingert2026']
