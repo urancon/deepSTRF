@@ -131,6 +131,7 @@ class LinearReadout(nn.Module):
         before the rank is unsqueezed to ``(B, N, 1, T)``. Defaults to
         ``nn.Identity``.
     bias : bool, default True
+        Whether the linear projection(s) include a bias term.
     """
     def __init__(self, in_features: int, out_neurons: int,
                  hidden: int = None, activation: nn.Module = None,
