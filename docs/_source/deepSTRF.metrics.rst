@@ -4,10 +4,10 @@ deepSTRF.metrics package
 Submodules
 ----------
 
-deepSTRF.metrics.loss module
-----------------------------
+deepSTRF.metrics.losses module
+------------------------------
 
-.. automodule:: deepSTRF.metrics.loss
+.. automodule:: deepSTRF.metrics.losses
    :members:
    :show-inheritance:
    :undoc-members:
