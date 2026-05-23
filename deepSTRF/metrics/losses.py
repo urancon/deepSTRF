@@ -28,20 +28,26 @@ def mse_loss(
 
     Parameters
     ----------
-    pred
+    pred : torch.Tensor
         Prediction tensor of shape ``(B, N, 1, T)``.
-    gt
+    gt : torch.Tensor
         Ground-truth tensor of shape ``(B, N, 1, T)`` (PSTH or single-trial
         target) **or** ``(B, N, R, T)`` with ``R > 1`` (raw responses), in
         which case it is collapsed to PSTH via ``nanmean(dim=2, keepdim=True)``
         before the loss is computed. ``gt`` may contain NaN; positions where
         the resulting PSTH is NaN are dropped from the per-neuron mean.
-    mask
-        Optional bool tensor broadcastable to the post-collapse ``gt`` shape
+    mask : torch.Tensor, optional
+        Bool tensor broadcastable to the post-collapse ``gt`` shape
         ``(B, N, 1, T)``. If None, defaults to ``~gt.isnan()``. If provided,
         REPLACES (does not augment) the NaN-derived mask.
-    reduction
-        ``'none'`` → ``(N,)``; ``'mean'``/``'sum'`` → scalar via nanmean/nansum.
+    reduction : {'none', 'mean', 'sum'}, default 'mean'
+        Reduction over the neuron axis. ``'none'`` returns the per-neuron
+        vector; ``'mean'`` / ``'sum'`` reduce it via nanmean / nansum.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape ``(N,)`` if ``reduction='none'``, otherwise a scalar.
     """
     gt = collapse_to_psth_if_needed(gt)
     if pred.shape != gt.shape:
@@ -76,34 +82,58 @@ def poisson_loss(
 ) -> torch.Tensor:
     """Negative Poisson log-likelihood (without the ``log(gt!)`` constant).
 
+    Parameters
+    ----------
+    pred : torch.Tensor
+        Prediction of shape ``(B, N, 1, T)``. Interpreted as the rate ``λ``
+        when ``log_input=False`` and as the log-rate ``η = log(λ)`` when
+        ``log_input=True`` (see Notes).
+    gt : torch.Tensor
+        Ground-truth target. A pre-computed PSTH ``(B, N, 1, T)`` or a raw
+        responses tensor ``(B, N, R, T)`` with ``R > 1``; in the latter case
+        it is collapsed to PSTH via ``nanmean(dim=2, keepdim=True)`` first.
+        May contain NaN.
+    mask : torch.Tensor, optional
+        Bool tensor broadcastable to ``(B, N, 1, T)``. If None, defaults to
+        ``~gt.isnan()``. If provided, REPLACES (does not augment) the
+        NaN-derived mask.
+    reduction : {'none', 'mean', 'sum'}, default 'mean'
+        Reduction over the neuron axis (``'none'`` keeps the ``(N,)`` vector).
+    log_input : bool, default False
+        Selects the prediction parameterisation (see Notes).
+    validate_input : bool, default False
+        When ``log_input=False``, raise on negative ``pred`` at masked-in
+        positions instead of silently clamping inside the log. Costs a
+        per-step CPU sync.
+    eps : float, default 1e-8
+        Floor applied to ``pred`` inside the log when ``log_input=False``.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape ``(N,)`` if ``reduction='none'``, otherwise a scalar.
+
+    Notes
+    -----
     Two parameterisations of the prediction are supported, matching the
     canonical-link logic of generalised linear models:
 
-    - ``log_input=False`` (default): ``pred`` is interpreted as the rate ``λ``.
-      The loss is ``pred − gt · log(pred + eps)`` per element. ``pred`` must
-      be non-negative for the log to be meaningful; the implementation
-      *silently clamps* ``pred`` to ``≥ eps`` inside the ``log`` to avoid NaN
-      propagation (the linear term keeps its sign). For loud failure on
-      negative predictions, pass ``validate_input=True`` — at the cost of a
-      per-step CPU sync.
-
-    - ``log_input=True``: ``pred`` is interpreted as the log-rate ``η = log(λ)``.
-      The loss becomes ``exp(pred) − gt · pred``, which is well-defined for
-      any real-valued ``pred``. This is the standard trick for pairing a
-      Poisson NLL with an unbounded readout (Linear, ParametricSigmoid that
-      is allowed to dip below zero, etc.). See ``metrics_paradigm.md`` §6.2
-      for the GLM-canonical-link derivation.
+    - ``log_input=False`` (default): the loss is ``pred − gt · log(pred + eps)``
+      per element. ``pred`` must be non-negative for the log to be meaningful;
+      the implementation *silently clamps* ``pred`` to ``≥ eps`` inside the
+      ``log`` to avoid NaN propagation (the linear term keeps its sign). Pass
+      ``validate_input=True`` for a loud failure on negative predictions.
+    - ``log_input=True``: the loss becomes ``exp(pred) − gt · pred``, which is
+      well-defined for any real-valued ``pred``. This is the standard trick
+      for pairing a Poisson NLL with an unbounded readout (Linear,
+      sign-permitting ParametricSigmoid, etc.). See ``metrics_paradigm.md``
+      §6.2 for the GLM-canonical-link derivation.
 
     The ``log(gt!)`` Stirling term is *not* added — for non-integer ``gt``
     (e.g. trial-averaged PSTH binned counts) it is meaningless, and for
     integer ``gt`` it is constant in ``pred`` so it does not affect
-    optimisation. Users who want the full likelihood for AIC/BIC can add
-    it themselves.
-
-    ``gt`` may be passed as either a pre-computed PSTH ``(B, N, 1, T)`` or a
-    raw responses tensor ``(B, N, R, T)`` with ``R > 1``; in the latter case
-    it is collapsed to PSTH via ``nanmean(dim=2, keepdim=True)`` before the
-    loss is computed.
+    optimisation. Users who want the full likelihood for AIC/BIC can add it
+    themselves.
     """
     gt = collapse_to_psth_if_needed(gt)
     if pred.shape != gt.shape:
