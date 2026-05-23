@@ -166,6 +166,7 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
     def __init__(self, path: Optional[str] = None, animals='all',
                  stimuli=('song', 'call', 'mlnoise'),
                  dt_ms=1.0, smooth=True, n_mels=32, compression='cubic',
+                 window_ms: float = 10.0,
                  download: bool = False,
                  username: Optional[str] = None,
                  password: Optional[str] = None):
@@ -191,6 +192,16 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
             Number of mel frequency bands of the stimulus spectrogram.
         compression : {'cubic', 'log1p', 'none'}
             Compression applied to the spectrogram (saturation effect of hair cells).
+        window_ms : float, default 10.0
+            FFT analysis-window length in ms. ``n_fft`` is computed
+            per-stim as ``round(window_ms * 1e-3 * sample_rate)`` and is
+            **decoupled from ``hop_length``** so phonemic detail is
+            preserved at any ``dt_ms``. Earlier versions of this dataset
+            hardcoded ``n_fft = hop * 10`` — at ``dt_ms=50`` that gave a
+            500 ms FFT window and over-smoothed every spec frame.
+            Default ``window_ms=10.0`` preserves bit-identical
+            behaviour at ``dt_ms=1`` (n_fft=320 at sr=32 kHz) while
+            fixing the scaling bug at coarser bins.
         download : bool, default False
             If True and an animal's data is missing under ``path``, fetch
             its tarball (~hundreds of MB per animal) from the NERSC mirror
@@ -223,7 +234,13 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
         ###########################################
 
         # hop_length (samples) | dt (ms)   — at sr = stim wav's sr
-        # the wav sample rate varies across animals so hop = sr * dt_ms / 1000
+        # the wav sample rate varies across animals so hop = sr * dt_ms / 1000.
+        # ``n_fft`` is decoupled from ``hop`` and pinned to
+        # ``window_ms * 1e-3 * sr`` (with a floor at ``hop`` so the STFT
+        # constraint ``n_fft >= hop_length`` is satisfied). See the
+        # ``window_ms`` docstring above for the rationale and the
+        # bit-identical-at-default contract.
+        self.window_ms = float(window_ms)
         wav_specs_by_animal = {}
         for animal in self.animals:
             wav_dir = os.path.join(path, animal, 'wavfiles')
@@ -234,7 +251,14 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
                 sid = os.path.splitext(fname)[0]    # e.g. 'stim85'
                 waveform, sr = torchaudio.load(os.path.join(wav_dir, fname))
                 hop = max(1, int(sr * self.dt / 1000))
-                n_fft = hop * 10
+                # Derive n_fft from the (already-truncated) hop via the
+                # ratio ``window_ms / dt_ms``. At the default
+                # ``window_ms = 10 * dt_ms`` this collapses to the legacy
+                # ``hop * 10`` regardless of sr — bit-identical on the
+                # 32 kHz and 44.1 kHz wavs that ship with this dataset.
+                # Floored at ``hop`` so MelSpectrogram's
+                # ``n_fft >= hop_length`` constraint always holds.
+                n_fft = max(int(round((self.window_ms / float(self.dt)) * hop)), hop)
                 mel_tf = torchaudio.transforms.MelSpectrogram(
                     sample_rate=sr, n_mels=self.F, n_fft=n_fft, hop_length=hop,
                 )
