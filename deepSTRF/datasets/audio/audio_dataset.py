@@ -15,7 +15,13 @@ class AudioNeuralDataset(NeuralDataset):
         self.F = -1
 
     def get_F(self):
-        """Return the number of frequency bins in the spectrograms."""
+        """Return the number of frequency bins in the spectrograms.
+
+        Returns
+        -------
+        int
+            ``self.F``, the spectrogram frequency-band count.
+        """
         return self.F
 
     def _concat_check_compat(self, other):

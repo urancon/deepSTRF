@@ -10,11 +10,9 @@ import torch.nn as nn
 
 
 class NeuralModel(nn.Module, ABC):
-    """
-    Base class for encoding models of sensory neural responses (audio,
-    video, ...).
+    """Base class for encoding models of sensory neural responses.
 
-    A four-slot template defines the canonical forward pipeline:
+    A four-slot template defines the canonical forward pipeline::
 
         forward(x):
             x = self.wav2spec(x)        # raw-waveform front-end (future)
@@ -22,23 +20,29 @@ class NeuralModel(nn.Module, ABC):
             f = self.core(x)            # shared feature backbone
             return self.readout(f)      # per-neuron projection (B, N, 1, T)
 
-    Concrete subclasses populate the slots in their ``__init__``. Default
-    values for ``wav2spec``, ``prefiltering``, ``core`` are ``nn.Identity``,
-    so a minimal model only needs to provide a ``readout``. Subclasses
-    may override ``forward`` for architectures that don't fit the
-    four-slot pipeline (e.g. StateNet's recurrent reshape, Transformer's
-    per-frame attention).
+    Concrete subclasses populate the slots in their ``__init__``. The
+    defaults for ``wav2spec``, ``prefiltering`` and ``core`` are
+    ``nn.Identity``, so a minimal model only needs to provide a
+    ``readout``. Subclasses may override :meth:`forward` for architectures
+    that don't fit the four-slot pipeline (e.g. StateNet's recurrent
+    reshape, Transformer's per-frame attention).
 
     See ``docs/_source/md/model_paradigm.md`` for the full contract.
 
-    Pretrained weights
-    ------------------
-    Subclasses inherit a HuggingFace Hub interface for pretrained
+    Parameters
+    ----------
+    out_neurons : int, default 1
+        Number of output neurons ``N`` the model predicts. Stored on
+        ``self.O`` and used by :meth:`validate` and ``STRF_gradmap``.
+
+    Notes
+    -----
+    Subclasses inherit a Hugging Face Hub interface for pretrained
     checkpoints:
 
-    - :meth:`save_pretrained(dir)`        — write config + weights to a folder
-    - :meth:`push_to_hub(repo_id)`        — upload to HF Hub (auth required)
-    - :meth:`from_pretrained(repo_or_dir)` — instantiate + load weights
+    - :meth:`save_pretrained` — write config + weights to a folder.
+    - :meth:`push_to_hub` — upload to the HF Hub (auth required).
+    - :meth:`from_pretrained` — instantiate and load weights.
 
     The init kwargs needed to rebuild the architecture are auto-captured
     on construction (see :meth:`__init_subclass__`), so end-users never
@@ -86,26 +90,58 @@ class NeuralModel(nn.Module, ABC):
         cls.__init__ = wrapped_init
 
     def forward(self, stimulus):
-        """Default template forward: wav2spec → prefiltering → core → readout."""
+        """Run the default template pipeline.
+
+        Applies ``wav2spec`` → ``prefiltering`` → ``core`` → ``readout`` in
+        sequence.
+
+        Parameters
+        ----------
+        stimulus : torch.Tensor
+            Input stimulus batch (shape is modality-dependent; for audio
+            models a spectrogram ``(B, F, T)``).
+
+        Returns
+        -------
+        torch.Tensor
+            Predicted response of shape ``(B, N, 1, T)``.
+        """
         x = self.wav2spec(stimulus)
         x = self.prefiltering(x)
         f = self.core(x)
         return self.readout(f)
 
     def detach(self):
-        """Detach stateful variables and parameters from the computational graph (cf. spikingjelly)."""
+        """Detach stateful variables from the computational graph.
+
+        No-op by default; recurrent subclasses override this to truncate
+        backpropagation-through-time between chunks (cf. spikingjelly).
+        """
         pass
 
     def count_trainable_params(self):
-        """Return the total number of trainable parameters within the model."""
+        """Count the model's trainable parameters.
+
+        Returns
+        -------
+        int
+            Total number of parameters with ``requires_grad=True``.
+        """
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     def validate(self):
-        """
-        Check that the instance is deepSTRF-compatible.
+        """Check that the instance is deepSTRF-compatible.
 
         Subclasses should call ``super().validate()`` and then add their own
-        checks (e.g. :class:`AudioEncodingModel` checks ``F, T > 0``).
+        checks (e.g. :class:`~deepSTRF.models.audio.audio_model.AudioEncodingModel`
+        checks ``F, T > 0``).
+
+        Raises
+        ------
+        AssertionError
+            If ``self.O`` is not a positive int, if ``readout`` is unset or
+            not an :class:`torch.nn.Module`, or if any of the ``wav2spec`` /
+            ``prefiltering`` / ``core`` slots is not an :class:`torch.nn.Module`.
         """
         assert isinstance(self.O, int) and self.O > 0, \
             f"self.O must be a positive int (got {self.O!r})"
@@ -126,6 +162,21 @@ class NeuralModel(nn.Module, ABC):
 
         See :func:`deepSTRF.utils.hub.save_pretrained_to_dir` for the
         full contract.
+
+        Parameters
+        ----------
+        save_dir : str or pathlib.Path
+            Destination folder; created if it does not exist.
+        metadata : dict, optional
+            Extra JSON-serialisable metadata stored alongside the config
+            (e.g. training dataset, val/test scores).
+        model_card : str, optional
+            Markdown content written to ``README.md`` in the folder.
+
+        Returns
+        -------
+        pathlib.Path
+            Path to the written checkpoint folder.
         """
         from deepSTRF.utils.hub import save_pretrained_to_dir
         return save_pretrained_to_dir(self, save_dir, metadata=metadata,
