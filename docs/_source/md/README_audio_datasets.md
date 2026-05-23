@@ -1,6 +1,6 @@
 ## Auditory datasets
 
-Currently, 11 response datasets are available, each with a name for easier communication. Each are more described in their
+Currently, 12 response datasets are available, each with a name for easier communication. Each are more described in their
 respective README, which gives link to their orginal paper / public repository.
 * [NS1](README_NS1.md)
 * [NAT4](README_NAT4.md)
@@ -13,6 +13,7 @@ respective README, which gives link to their orginal paper / public repository.
 * [Alice EEG](README_Alice_EEG.md)
 * [Meliza 2025](README_Meliza_2025.md)
 * [Downer 2025](README_Downer2025.md)
+* [Wingert 2026](README_Wingert2026.md)
 
 
 ```{toctree}
@@ -33,4 +34,5 @@ README_Espejo.md
 README_Alice_EEG.md
 README_Meliza_2025.md
 README_Downer2025.md
+README_Wingert2026.md
 ```
