@@ -352,6 +352,18 @@ class Wingert2026Dataset(AudioNeuralDataset):
                     continue
 
                 # Rasterize R repeats × T_s per cell.
+                #
+                # Convention matches NEMS0's PointProcess.rasterize ->
+                # extract_epoch pipeline exactly: each spike's absolute
+                # bin is ``floor(t * fs)``, and the in-epoch bin is
+                # ``floor(t * fs) - round(epoch_start * fs)``. Computing
+                # ``floor((t - epoch_start) * fs)`` would also be sensible
+                # but disagrees with NEMS0 by ±1 bin at epoch boundaries
+                # whenever ``epoch_start * fs`` is not an integer (which
+                # is the common case in this release -- epoch starts come
+                # from BAPHY trial-onset timestamps, not bin-aligned). The
+                # absolute-floor convention preserves bit-equivalence with
+                # the published David-lab pipeline.
                 ep_starts = epoch_rows["start"].to_numpy()
                 ep_ends = epoch_rows["end"].to_numpy()
                 for cell_id in in_session:
@@ -359,11 +371,13 @@ class Wingert2026Dataset(AudioNeuralDataset):
                     reps = np.zeros((R, T_s), dtype=np.float32)
                     for r_idx in range(R):
                         s, e = ep_starts[r_idx], ep_ends[r_idx]
-                        # Spikes in this presentation window, expressed
-                        # relative to the window start.
+                        start_bin = int(round(s * rec.fs))
                         in_win = (spikes_s >= s) & (spikes_s < e)
-                        rel = spikes_s[in_win] - s
-                        reps[r_idx] = rasterize_spike_times(rel, T_s, rec.fs)
+                        abs_bin = np.floor(spikes_s[in_win] * rec.fs).astype(np.int64)
+                        rel_bin = abs_bin - start_bin
+                        rel_bin = rel_bin[(rel_bin >= 0) & (rel_bin < T_s)]
+                        if rel_bin.size:
+                            np.add.at(reps[r_idx], rel_bin, 1.0)
                     row[session_cell_idx[cell_id]] = torch.from_numpy(reps)
                 self.responses.append(row)
 
