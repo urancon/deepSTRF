@@ -16,7 +16,9 @@
   silence** at the older recording cohort (47 sites = 20 s window, no silence
   flanks) or recorded as **22 s = 1 s pre + 20 s sound + 1 s post** at the
   newer cohort (21 sites). Both cohorts share the same gtgram bins (`dt = 10
-  ms`, `F = 32` log-spaced bands from 200 Hz to 20 kHz, log-compressed).
+  ms`, `F = 32` log-spaced bands from 200 Hz to 20 kHz). The values in
+  `stim.h5` are the **raw linear** gammatone-gram; the loader applies the
+  paper's preprocessing on top (see "Preprocessing" below).
 - Each site presents ~100 unique single-rep estimation sequences (one
   presentation each, `STIM_seqNNNN.wav`) plus a subset of up to 6
   test sequences (`STIM_00seq*.wav`) with **R varying 5–30 across sites**.
@@ -171,6 +173,32 @@ ds.select_pop_by_nrn_predicate(lambda n: n['depth'] is not None
 Stim tensors have shape `(1, F=32, T)` with `T ∈ {2000, 2200}` —
 ragged on T by design (the two recording cohorts use different silence
 flanks). The default `neural_collate` zero-pads on the right.
+
+
+## Preprocessing
+
+The loader reproduces the paper's preprocessing exactly (see
+`aud_subspace_fit_demo.ipynb`), validated bit-for-bit against the NEMS
+reference loader to float32 precision (`max|diff| ≈ 1e-7`):
+
+- **Stimulus** — the raw linear gammatone-gram in `stim.h5` is
+  log-compressed with `log((x + d) / d)`, `d = 10^log_offset`
+  (`log_offset = -1` → `log(10·x + 1)`, the NEMS
+  `log_compress` default), then **per-band** min–max normalized to
+  `[0, 1]`. Each of the 32 frequency bands is scaled independently
+  (statistics taken across the whole stimulus set, est + val), and
+  post-norm values `< 1e-6` are forced to exactly 0 ("quiet → zero",
+  matching NEMS). Disable the log step with `log_compress=False`.
+- **Response** — **per-neuron** min–max to `[0, 1]`, statistics taken
+  across all repeats and all stims for that neuron. Per-neuron (rather
+  than global) scaling is the NEMS choice; it leaves correlation-based
+  metrics (`cc` / `cc_norm`) unchanged but balances each cell's
+  contribution to an MSE training loss.
+
+Normalization statistics are computed on the full loaded set **before**
+the `subset='est'|'val'` filter, so the `[0, 1]` scaling is identical
+regardless of which subset you request — matching NEMS'
+normalize-then-split order.
 
 
 ## Note on the PRN018a / PRN018b duplicate

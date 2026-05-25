@@ -276,6 +276,62 @@ def test_normalization_yields_unit_range(clt027c_dataset):
 
 
 @skip_if_no_data
+def test_stim_normalization_is_per_band(clt027c_dataset):
+    """Each frequency band is independently scaled to [0, 1] (NEMS minmax),
+    not a single global scale. Concatenate all stims and check that every
+    band's min is ~0 and its max is ~1."""
+    import torch
+    ds = clt027c_dataset
+    F = ds.F
+    allstim = torch.cat([s[0] for s in ds.stims], dim=1)   # (F, sum_T)
+    band_min = allstim.amin(dim=1)
+    band_max = allstim.amax(dim=1)
+    # Every band must reach exactly 0 (its min) and 1 (its max) — the
+    # signature of per-band normalization. A global scale would leave most
+    # bands with max < 1.
+    assert torch.allclose(band_min, torch.zeros(F), atol=1e-6)
+    assert torch.allclose(band_max, torch.ones(F), atol=1e-5)
+
+
+@skip_if_no_data
+def test_resp_normalization_is_per_neuron(clt027c_dataset):
+    """Each neuron is independently scaled so its own max is ~1 — the
+    per-neuron NEMS minmax. A global scale would leave low-rate cells with
+    max well below 1."""
+    import torch
+    ds = clt027c_dataset
+    for n in range(ds.N_neurons):
+        chunks = [ds.responses[s][n].flatten()
+                  for s in range(len(ds.stim_meta))
+                  if ds.responses[s][n].numel() > 1]
+        if not chunks:
+            continue
+        cat = torch.cat(chunks)
+        assert cat.max().item() == pytest.approx(1.0, abs=1e-5), (
+            f"neuron {n} max = {cat.max().item():.4f}, expected ~1 (per-neuron norm)"
+        )
+
+
+@skip_if_no_data
+def test_log_compress_can_be_disabled():
+    """log_compress=False feeds the raw linear gtgram (still per-band
+    normalized). The two should differ — proving log compression is real."""
+    import torch
+    from deepSTRF.datasets.audio import Wingert2026Dataset
+    ds_log = Wingert2026Dataset(path=WINGERT_LOCAL, site="CLT027c", log_compress=True)
+    ds_raw = Wingert2026Dataset(path=WINGERT_LOCAL, site="CLT027c", log_compress=False)
+    # Same stim, same band-normalized range, but different distribution
+    # because one is log(10x+1) and the other linear.
+    a = ds_log.stims[0][0]
+    b = ds_raw.stims[0][0]
+    assert a.shape == b.shape
+    assert not torch.allclose(a, b, atol=1e-3), (
+        "log_compress=True and False produced identical stims — "
+        "log compression is not being applied"
+    )
+
+
+@skip_if_no_data
 def test_subset_est_filter():
     from deepSTRF.datasets.audio import Wingert2026Dataset
     ds = Wingert2026Dataset(path=WINGERT_LOCAL, site="CLT027c", subset="est")

@@ -115,7 +115,13 @@ class Wingert2026Dataset(AudioNeuralDataset):
 
     The release ships gammatone-gram spectrograms ("cochleagrams")
     precomputed at fs = 100 Hz (10 ms bins), F = 32 log-spaced bands from
-    200 Hz to 20 kHz, log-compressed by the David-lab gtgram pipeline.
+    200 Hz to 20 kHz. The values in ``stim.h5`` are the **raw (linear)**
+    gammatone-gram; the loader reproduces the paper's preprocessing on
+    top of them — log compression ``log(10·x + 1)`` then per-band minmax
+    to ``[0, 1]`` (see ``log_compress`` argument). Responses are
+    per-neuron minmax-normalised. This matches
+    ``aud_subspace_fit_demo.ipynb`` (NEMS ``log_compress`` +
+    ``normalize('minmax')``) to float32 precision.
     Two stim-duration cohorts coexist in the released data:
 
     - 47 sites at ``T = 2000`` bins (20 s, no silence flanks);
@@ -163,6 +169,8 @@ class Wingert2026Dataset(AudioNeuralDataset):
                  dt_ms: float = 10.0,
                  subset: str = "all",
                  smooth: bool = False,
+                 log_compress: bool = True,
+                 log_offset: float = -1.0,
                  download: bool = False,
                  include_unlabeled: bool = False,
                  _enumerate_only: bool = False):
@@ -196,6 +204,16 @@ class Wingert2026Dataset(AudioNeuralDataset):
         smooth : bool, default False
             If True, smooth PSTHs with a 21 ms Hanning window via
             ``self.smooth_responses(window_ms=21.0)``.
+        log_compress : bool, default True
+            If True, apply the David-lab log compression
+            ``log((x + d) / d)`` with ``d = 10**log_offset`` to the raw
+            (linear) gammatone-gram before normalisation, reproducing the
+            ``nems.preprocessing.normalization.log_compress`` step in the
+            paper's pipeline. Set False to feed the raw linear gtgram.
+        log_offset : float, default -1.0
+            Offset exponent for ``log_compress`` (``d = 10**log_offset``).
+            The paper uses ``-1`` (i.e. ``d = 0.1``, so the transform is
+            ``log(10·x + 1)``). Ignored when ``log_compress=False``.
         download : bool, default False
             If True, fetch ``recordings.zip`` + ``cell_list.csv`` from
             Zenodo (record ``18331549``) if missing. The 8 GB
@@ -383,8 +401,16 @@ class Wingert2026Dataset(AudioNeuralDataset):
 
             del rec  # free per-site spike-time / stim memory ASAP
 
-        # ---- per-instance global minmax on stim and on resp ----
-        _normalize_minmax_inplace(self.stims, self.responses)
+        # ---- preprocessing: log-compress + per-channel minmax ----
+        # Reproduces the paper's pipeline (see aud_subspace_fit_demo.ipynb):
+        #   stim: rasterize -> log_compress -> normalize('minmax')
+        #   resp: rasterize -> normalize('minmax')
+        # where NEMS' 'minmax' is PER-CHANNEL (per-band for stim, per-neuron
+        # for resp), not global.
+        _preprocess_inplace(
+            self.stims, self.responses,
+            log_compress=log_compress, log_offset=log_offset,
+        )
 
         # ---- subset filter (drop est / val after the global load) ----
         if subset != "all":
@@ -471,46 +497,86 @@ def _build_session_to_tgz_map(recordings_dir: str) -> Dict[str, str]:
     return out
 
 
-def _normalize_minmax_inplace(stims: List[torch.Tensor],
-                              responses: List[List[torch.Tensor]]) -> None:
-    """Per-instance global minmax to [0, 1] on stims and responses, in place.
+def _log_compress(x: torch.Tensor, offset: float) -> torch.Tensor:
+    """Port of ``nems.preprocessing.normalization.log_compress``.
 
-    Stim normalisation: one (min, max) pair across the concatenation of
-    every (1, F, T) stim tensor. Stims are NaN-free by data-paradigm
-    invariant, so plain min / max suffice.
-
-    Response normalisation: NaN-safe min / max over the (1, 1)-sentinel-
-    or-real response tensors. Sentinels are skipped (their NaN values do
-    not affect the global range), and the sentinel tensor itself is
-    untouched. Real tensors are rescaled in place.
-
-    No log compression is applied — the Wingert gtgrams are already
-    log-compressed by the David-lab preprocessing pipeline.
+    Returns ``log((x + d) / d)`` with ``d = 10**offset``. The paper uses
+    ``offset = -1`` → ``d = 0.1`` → ``log(10·x + 1)``. NEMS softens
+    extreme offsets (``|offset| > 2``) by a factor of 50; we replicate
+    that branch for exactness though the default never triggers it.
     """
-    # --- stims ---
-    s_min = min(float(s.min()) for s in stims)
-    s_max = max(float(s.max()) for s in stims)
-    if s_max > s_min:
-        for s in stims:
-            s.sub_(s_min).div_(s_max - s_min)
+    inflect = 2.0
+    adj = offset
+    if offset > inflect:
+        adj = inflect + (offset - inflect) / 50.0
+    elif offset < -inflect:
+        adj = -inflect + (offset + inflect) / 50.0
+    d = 10.0 ** adj
+    return torch.log((x + d) / d)
 
-    # --- responses ---
-    real: List[torch.Tensor] = []
-    for row in responses:
-        for t in row:
-            # The (1, 1) NaN sentinel is identified by shape AND by being a
-            # shared reference (object identity is not checked here because
-            # the load loop is the only place that assigns the sentinel and
-            # we trust it). Real tensors have shape (R, T_s) with T_s >= 2.
-            if t.numel() > 1:
-                real.append(t)
-    if not real:
+
+def _preprocess_inplace(stims: List[torch.Tensor],
+                        responses: List[List[torch.Tensor]],
+                        *,
+                        log_compress: bool = True,
+                        log_offset: float = -1.0) -> None:
+    """Reproduce the paper's stim/resp preprocessing in place.
+
+    Mirrors ``aud_subspace_fit_demo.ipynb`` exactly:
+
+    - **stim** — optional ``log_compress`` of the raw (linear) gtgram,
+      then **per-band** minmax to ``[0, 1]``. The per-band min/max is
+      taken across the concatenation of every stim (all of est+val),
+      matching NEMS' ``RasterizedSignal.normalize('minmax')`` which
+      computes statistics per channel over the full time axis. NEMS also
+      forces post-norm values ``< 1e-6`` to exactly ``0`` ("quiet" stim →
+      true zero); we replicate that.
+    - **resp** — **per-neuron** minmax to ``[0, 1]``, statistics taken
+      across all repeats and all stims for that neuron. The ``(1, 1)``
+      NaN sentinels (shared object) are skipped and left untouched.
+
+    Per-channel (not global) is the deliberate NEMS choice — the global
+    branch is commented out in ``nems0.signal._normalize_data``. For the
+    response, per-neuron vs global rescaling is invariant under
+    correlation-based metrics (cc / cc_norm), but per-neuron balances the
+    per-cell contribution to an MSE training loss.
+    """
+    if not stims:
         return
-    r_min = float(min(t.min() for t in real))
-    r_max = float(max(t.max() for t in real))
-    if r_max > r_min:
-        for t in real:
-            t.sub_(r_min).div_(r_max - r_min)
+    F = stims[0].shape[1]
+
+    # ---- STIM: optional log compression ----
+    if log_compress:
+        for s in stims:
+            s.copy_(_log_compress(s, log_offset))
+
+    # ---- STIM: per-band minmax across all stims ----
+    band_min = torch.full((F,), float("inf"))
+    band_max = torch.full((F,), float("-inf"))
+    for s in stims:
+        sq = s[0]                                  # (F, T)
+        band_min = torch.minimum(band_min, sq.amin(dim=1))
+        band_max = torch.maximum(band_max, sq.amax(dim=1))
+    band_rng = band_max - band_min
+    band_rng[band_rng == 0] = 1.0                  # avoid divide-by-zero
+    for s in stims:
+        s.sub_(band_min.view(1, F, 1)).div_(band_rng.view(1, F, 1))
+        s[s < 1e-6] = 0.0                          # NEMS "quiet → zero"
+
+    # ---- RESP: per-neuron minmax across all reps + stims ----
+    N = len(responses[0]) if responses else 0
+    n_min = [float("inf")] * N
+    n_max = [float("-inf")] * N
+    for row in responses:
+        for n, t in enumerate(row):
+            if t.numel() > 1:                      # skip (1,1) NaN sentinels
+                n_min[n] = min(n_min[n], float(t.min()))
+                n_max[n] = max(n_max[n], float(t.max()))
+    for row in responses:
+        for n, t in enumerate(row):
+            if t.numel() > 1 and n_max[n] > n_min[n]:
+                t.sub_(n_min[n]).div_(n_max[n] - n_min[n])
+                t[t < 1e-6] = 0.0                  # mirror NEMS clamp (no-op when min=0)
 
 
 def _make_nrn_meta(row: pd.Series) -> dict:
