@@ -1,11 +1,10 @@
 ## Auditory datasets
 
-Currently, 12 response datasets are available, each with a name for easier communication. Each are more described in their
+Currently, 11 response datasets are available, each with a name for easier communication. Each are more described in their
 respective README, which gives link to their orginal paper / public repository.
 * [NS1](README_NS1.md)
 * [NAT4](README_NAT4.md)
-* [CRCNS AC1 (Wehr)](README_CRCNS_AC1_Wehr.md)
-* [CRCNS AC1 (Asari)](README_CRCNS_AC1_Asari.md)
+* [CRCNS AC1 (Wehr + Asari)](README_CRCNS_AC1.md)
 * [CRCNS AA1](README_CRCNS_AA1.md)
 * [CRCNS AA2](README_CRCNS_AA2.md)
 * [CRCNS AA4](README_CRCNS_AA4.md)
@@ -25,8 +24,7 @@ caption: Datasets
 
 README_NS1.md
 README_NAT4.md
-README_CRCNS_AC1_Wehr.md
-README_CRCNS_AC1_Asari.md
+README_CRCNS_AC1.md
 README_CRCNS_AA1.md
 README_CRCNS_AA2.md
 README_CRCNS_AA4.md

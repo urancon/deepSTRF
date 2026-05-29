@@ -160,20 +160,31 @@ def medgauss_detrend(
     return x - baseline
 
 
-def _repeat_jump_fraction(x: np.ndarray, *, jump_z: float = 10.0) -> float:
-    """Fraction of samples whose first-difference exceeds ``jump_z`` MAD.
+def _repeat_step_fraction(
+    x: np.ndarray,
+    sf: float,
+    *,
+    step_mv: float = 30.0,
+    step_min_ms: float = 5.0,
+) -> float:
+    """Fraction of samples sitting on a sustained baseline step ≥ ``step_mv``.
 
-    Robust to slow drift (we work on the diff, not the raw trace) and to
-    a few extreme spikes (we use MAD, not std, in the denominator). On
-    clean Vm trials this fraction is well under 1e-4; a movement-induced
-    jump pushes it above 1e-3.
+    Defined as samples that, after a ``step_min_ms`` median-smoothing,
+    still sit > ``step_mv`` away from the trace median. This catches
+    motion / dropout artifacts (large baseline shifts that persist
+    for tens of ms) while ignoring spikes (brief excursions that the
+    median filter clips). On clean detrended Vm trials this fraction
+    is well under 1e-3.
     """
     if x.size < 3:
         return 0.0
-    dx = np.diff(x)
-    med = np.median(dx)
-    mad = np.median(np.abs(dx - med)) * 1.4826 + 1e-12  # σ-scaled MAD
-    return float((np.abs(dx - med) > jump_z * mad).mean())
+    clip_size = max(1, int(round(step_min_ms * sf / 1000.0)))
+    if clip_size > 1 and x.size >= clip_size:
+        smooth = median_filter(x, size=clip_size, mode="reflect")
+    else:
+        smooth = x
+    deviation = np.abs(smooth - np.median(smooth))
+    return float((deviation > step_mv).mean())
 
 
 def _repeat_dynamic_range_ok(x: np.ndarray, *, abs_mv_max: float = 200.0) -> bool:
@@ -214,12 +225,30 @@ def _crosstrial_consistency(traces: np.ndarray) -> np.ndarray:
 
 @dataclass
 class RepeatGating:
-    """Tunable thresholds for per-repeat artifact gating."""
-    jump_z: float = 10.0          # threshold on |diff - median| / MAD
-    max_jump_frac: float = 1e-3   # repeat dropped if more than 0.1% of samples jump
-    abs_mv_max: float = 200.0     # repeat dropped if |trace| ever exceeds this
-    min_xcorr: float = 0.0        # repeat dropped if cross-trial r below this
-                                   # (default 0 = off; bump to 0.05 for stricter)
+    """Tunable thresholds for per-repeat artifact gating.
+
+    Three independent tests run on the detrended trace:
+
+    1. **Dynamic range** — any sample with ``|Vm| > abs_mv_max`` flags
+       the repeat. Catches amplifier saturation / hard clipping.
+    2. **Sustained step** — fraction of samples sitting on a median-
+       smoothed baseline shifted by ``> step_mv`` from the trace median;
+       repeat dropped if this fraction exceeds ``max_step_frac``. Catches
+       movement / dropout artifacts that survive the MedGauss detrend
+       because they're sharper than the 100 ms baseline.
+    3. **Cross-trial consistency** — per-repeat Pearson r against the
+       leave-one-out median across other repeats; drop if r below
+       ``min_xcorr``. The principled test for "this repeat disagrees
+       with its peers". Requires R ≥ 3 to be informative.
+
+    Defaults are calibrated against the CRCNS-AC1 traces: clean repeats
+    score ``abs_mv_max ≪ 150 mV``, ``step_frac < 1e-4``, ``r > 0.2``;
+    bad repeats fail at least one.
+    """
+    abs_mv_max: float = 150.0     # |trace| ceiling after detrending
+    step_mv: float = 30.0         # baseline-step amplitude (mV) considered an artifact
+    max_step_frac: float = 5e-3   # repeat dropped if >0.5% of samples sit on the step
+    min_xcorr: float = 0.05       # cross-trial Pearson r floor (R>=3 only)
 
 
 def prepare_repeats(
@@ -282,11 +311,12 @@ def prepare_repeats(
     kept: List[np.ndarray] = []
     reasons: List[str] = []
     for i, t in enumerate(cleaned):
-        if _repeat_jump_fraction(t, jump_z=gating.jump_z) > gating.max_jump_frac:
-            reasons.append("jump")
-            continue
         if not _repeat_dynamic_range_ok(t, abs_mv_max=gating.abs_mv_max):
             reasons.append("range")
+            continue
+        if _repeat_step_fraction(t, sf,
+                                 step_mv=gating.step_mv) > gating.max_step_frac:
+            reasons.append("step")
             continue
         if xcorr_r[i] < gating.min_xcorr:
             reasons.append("xcorr")
@@ -664,32 +694,25 @@ def _build_asari_stim_filemap(param_struct) -> Dict[int, str]:
     return out
 
 
-def _splice_asari_sequence(
-    segment_indices: Sequence[int],
-    file_map: Dict[int, str],
+def _splice_asari_sequence_by_paths(
+    rel_paths: Sequence[str],
     stims_root: str,
     *,
     segment_ramp_ms: float = 5.0,
 ) -> Tuple[np.ndarray, float]:
     """Reconstruct an Asari sequence waveform by concatenating segments.
 
-    Each segment receives a 5 ms cosine-squared ramp at onset + offset
-    (matches the Asari 2009 Methods: "a 5-ms cosine-squared ramp was
-    applied to the onset and termination of each segment, even with no
-    interstimulus interval"). All segments share the same sampling rate
-    (the archive guarantees this: every Stimuli/class<N>/<file>.mat
-    ships at 97656 Hz). Segment indices that are missing from
-    ``file_map`` raise — this points at a session/file mismatch.
+    Each segment is identified by its ``Stimuli/`` relative path (e.g.
+    ``'class6/3.mat'``) — the canonical identity the Asari pipeline
+    uses internally. A 5 ms cosine-squared ramp is applied to the
+    onset + offset of each segment (Asari 2009 Methods: ramps are
+    applied at every segment boundary, even with no interstimulus
+    interval). All segments share the same sampling rate in the
+    released archive (97656 Hz).
     """
     pieces = []
     sf_common = None
-    for seg_idx in segment_indices:
-        rel_path = file_map.get(int(seg_idx))
-        if rel_path is None:
-            raise KeyError(
-                f"Asari sequence references stim index {seg_idx}, but "
-                f"param.stimulus only defines indices {sorted(file_map.keys())}."
-            )
+    for rel_path in rel_paths:
         wav, sf = _load_asari_stim_by_relpath(stims_root, rel_path)
         if sf_common is None:
             sf_common = sf
@@ -747,14 +770,19 @@ def iterate_asari_cells(
             date, animal_id, penet = parts[0], parts[1], parts[2]
 
             # Walk recording files; gather natural-sound triggers grouped
-            # by canonicalised sequence string. We extract the response
+            # by the resolved (segment-files tuple). We extract the response
             # slice IMMEDIATELY (so the full mat dict can be GC'd before
             # moving to the next file) — Asari recordings are ~10 MB each
             # and accumulating them would easily OOM a 32 GB box.
-            # ``filemap_per_class`` is the per-class lookup ``{seg_idx:
-            # rel_path_under_Stimuli}`` extracted from ``param.stimulus``.
-            sequence_groups: Dict[Tuple[int, str], List[Tuple[np.ndarray, float, float]]] = {}
-            filemap_per_class: Dict[int, Dict[int, str]] = {}
+            #
+            # The lookup ``param.stimulus[i].file`` gives the canonical
+            # stimulus identity (e.g. ``'class6/3.mat'``); the trigger's
+            # description provides the integer ordering. We resolve the
+            # full filename tuple per-trigger and key the group on that —
+            # NOT on the ``param.ID.description`` class<N> tag, which is
+            # missing for most A1 sessions (only ~10 of 51 sessions
+            # actually populate that field).
+            sequence_groups: Dict[Tuple[str, ...], List[Tuple[np.ndarray, float, float, Sequence[int]]]] = {}
             cell_site: Optional[str] = None
             rec_type: Optional[str] = None
 
@@ -770,24 +798,12 @@ def iterate_asari_cells(
                 param = _unstruct(m.get("param"))
                 if param is None:
                     continue
-                if not hasattr(param, "ID"):
-                    continue
-                idstruct = _unstruct(param.ID)
-                if not hasattr(idstruct, "description"):
-                    continue
-                rec_descr = str(_scalar(idstruct.description))
-                clsmatch = _RX_CLASS.search(rec_descr)
-                if not clsmatch:
-                    continue
-                class_n = int(clsmatch.group(1))
 
-                # Record's stim-index → file-path lookup (e.g. {1: 'class6/3.mat',
-                # 2: 'class6/5.mat', ...}). Keep the *first* mapping we see per
-                # class within a session — repeats of the same class share the
-                # same param.stimulus list.
+                # Build the per-recording stim-index → file-path lookup table.
+                # No filemap → can't decode sequences → skip the file.
                 file_map = _build_asari_stim_filemap(param)
-                if file_map and class_n not in filemap_per_class:
-                    filemap_per_class[class_n] = file_map
+                if not file_map:
+                    continue
 
                 # Site classification: 'cortex' substring in recording.site → A1,
                 # else MGB. (Matches the legacy asari.py heuristic.)
@@ -825,7 +841,19 @@ def iterate_asari_cells(
                     segments = _asari_seq_segments(seq_descr)
                     if segments is None:
                         continue
-                    canon_descr = " ".join(seq_descr.split())
+                    # Resolve segments → file paths via the filemap. Some
+                    # triggers reference indices that aren't in this
+                    # recording's filemap (rare; usually indicates a
+                    # mid-session config change). Skip those triggers.
+                    try:
+                        resolved = tuple(file_map[int(s)] for s in segments)
+                    except KeyError:
+                        warnings.warn(
+                            f"{session}/{fname}: trigger references stim idx not in "
+                            f"this recording's param.stimulus; skipping.",
+                            RuntimeWarning,
+                        )
+                        continue
                     trig_time = int(_scalar(t.time)) - 1
                     trig_dur_ms = float(_scalar(pstruct.duration))
                     n_samples = int(round(trig_dur_ms * sf_resp / 1000.0))
@@ -834,8 +862,8 @@ def iterate_asari_cells(
                     # IMPORTANT: copy() so we don't keep a view that pins the
                     # full trace alive across iterations.
                     resp_slice = trace_mv[lo:hi].copy()
-                    sequence_groups.setdefault((class_n, canon_descr), []).append(
-                        (resp_slice, sf_resp, trig_dur_ms)
+                    sequence_groups.setdefault(resolved, []).append(
+                        (resp_slice, sf_resp, trig_dur_ms, tuple(segments))
                     )
                 del m, trace_mv  # explicit hint for the GC between files
 
@@ -856,39 +884,33 @@ def iterate_asari_cells(
             }
 
             stim_records: List[StimRecord] = []
-            for (class_n, canon_descr), occurrences in sequence_groups.items():
-                segments = _asari_seq_segments(canon_descr)
-                file_map = filemap_per_class.get(class_n, {})
-                if not file_map:
-                    warnings.warn(
-                        f"{session}: no param.stimulus filemap available for class{class_n}; "
-                        f"skipping sequence {canon_descr!r}.",
-                        RuntimeWarning,
-                    )
-                    continue
+            for resolved_files, occurrences in sequence_groups.items():
+                # Splice the actual waveform from the resolved file paths.
                 try:
-                    waveform, sf_stim = _splice_asari_sequence(
-                        segments, file_map, stims_guess,
+                    waveform, sf_stim = _splice_asari_sequence_by_paths(
+                        resolved_files, stims_guess,
                     )
                 except (KeyError, FileNotFoundError) as exc:
                     warnings.warn(
-                        f"{session}: cannot splice {canon_descr!r}: {exc}",
+                        f"{session}: cannot splice {resolved_files!r}: {exc}",
                         RuntimeWarning,
                     )
                     continue
 
-                # Bake the resolved per-segment filenames into stim_meta so the
-                # dedup key downstream can reflect the actual waveform identity,
-                # not just the session-local index list (the same int list
-                # might mean different waveforms in different sessions if the
-                # param.stimulus order differs — though in practice it doesn't).
-                resolved_files = tuple(file_map[i] for i in segments)
-                raw_repeats = [resp_slice for (resp_slice, _sf, _dur) in occurrences]
+                # Derive class_n from the file paths (e.g. 'class6/3.mat' → 6).
+                # Mixed-class sequences are rare; use the first segment's class.
+                class_n: Optional[int] = None
+                if resolved_files:
+                    m_cls = re.match(r"class(\d+)/", resolved_files[0])
+                    if m_cls:
+                        class_n = int(m_cls.group(1))
+                raw_repeats = [r for (r, _sf, _dur, _seg) in occurrences]
                 sf_resp_common = occurrences[0][1]
                 duration_ms = occurrences[0][2]
+                segments_int = occurrences[0][3]  # the segment-int list (1-indexed)
 
                 stim_records.append(StimRecord(
-                    key=("asari", class_n, resolved_files),
+                    key=("asari", resolved_files),
                     waveform=waveform,
                     sf_stim=sf_stim,
                     duration_ms=duration_ms,
@@ -896,12 +918,11 @@ def iterate_asari_cells(
                     sf_resp=sf_resp_common,
                     meta={
                         "experimenter": "asari",
-                        "category": f"class{class_n}",
+                        "category": f"class{class_n}" if class_n is not None else "mixed",
                         "class_n": class_n,
-                        "segments": tuple(segments),
+                        "segments": tuple(segments_int),
                         "segment_files": resolved_files,
-                        "sequence": canon_descr,
-                        "description": canon_descr,
+                        "description": " ".join(resolved_files),
                         "duration_s": duration_ms / 1000.0,
                     },
                 ))
