@@ -382,16 +382,21 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         # --- pass 2: compute spectrograms + assemble (S, N) response grid ---
         S = len(stim_specs)
 
+        # First, for each stim, find the shortest binned response T across the
+        # cells that heard it. T_canon_s is then min(this, T_spec, T_dur), so
+        # responses are truncated rather than NaN-padded (NaN-padding would
+        # falsely tag the cell as "missing" via the base class mask logic).
+        shortest_resp_T: List[int] = [10**9] * S
+        for (s_idx, _n_idx, tens) in buffer:
+            t_r = int(tens.shape[1])
+            if t_r < shortest_resp_T[s_idx]:
+                shortest_resp_T[s_idx] = t_r
+
         NAN = torch.full((1, 1), float("nan"))
         self.stims = []
         self.stim_meta = []
-        # Pre-fill responses with NaN sentinels.
         self.responses = [[NAN for _ in range(self.N_neurons)] for _ in range(S)]
 
-        # Spectrogram each unique stim at the target dt_ms.
-        # Length convention: the spectrogram output has T = ceil(L_wave / hop)
-        # frames; the binned response also has T_resp = L_resp // block frames.
-        # We truncate both to the smaller length for a clean per-stim T.
         stim_T_out: List[int] = []
         for s_idx, spec in enumerate(stim_specs):
             S_db, _freqs = logspectrogram(
@@ -402,28 +407,19 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
             )
             T_spec = int(S_db.shape[1])
             T_dur = int(round(spec["duration_ms"] / self.dt))
-            # Use the duration-implied T as the canonical T (matches the
-            # response binning), but clip to whatever the spectrogram has.
-            T_canon = min(T_dur, T_spec) if T_dur > 0 else T_spec
+            T_resp_min = shortest_resp_T[s_idx]
+            T_canon = min(t for t in (T_dur or 10**9, T_spec, T_resp_min) if t > 0)
             stim_T_out.append(T_canon)
 
             self.stims.append(
-                torch.from_numpy(S_db[:, :T_canon]).unsqueeze(0).float()  # (1, F, T)
+                torch.from_numpy(S_db[:, :T_canon]).unsqueeze(0).float()
             )
             self.stim_meta.append(spec["meta"])
 
-        # Place buffered responses into the (S, N) grid, length-aligning to
-        # the canonical T per stim.
         for (s_idx, n_idx, tens) in buffer:
             T_canon = stim_T_out[s_idx]
-            # tens is (R, T_resp); truncate to T_canon (or pad with NaN if too
-            # short — should be rare since both came from the same duration_ms).
-            T_resp = int(tens.shape[1])
-            if T_resp >= T_canon:
-                aligned = tens[:, :T_canon]
-            else:
-                pad = torch.full((tens.shape[0], T_canon - T_resp), float("nan"))
-                aligned = torch.cat([tens, pad], dim=1)
-            self.responses[s_idx][n_idx] = aligned
+            # Truncate (never pad with NaN — that would break the paradigm's
+            # mask derivation since NaN means "this cell is missing here").
+            self.responses[s_idx][n_idx] = tens[:, :T_canon]
 
         self.validate()
