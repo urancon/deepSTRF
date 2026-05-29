@@ -478,22 +478,18 @@ class CellRecord:
     stims: List[StimRecord] = field(default_factory=list)
 
 
-def iterate_wehr_cells(
-    wehr_root: str,
-    *,
-    drop_neuron12_artifact: bool = True,
-) -> Iterator[CellRecord]:
+def iterate_wehr_cells(wehr_root: str) -> Iterator[CellRecord]:
     """Yield one ``CellRecord`` per Wehr session directory.
 
     Each session = one cell. Within a session, trial files are grouped
     by ``trigger.param.description``; multiple trials with the same
     description become a per-stim repeat axis.
 
-    ``drop_neuron12_artifact`` reproduces the existing carve-out from
-    the legacy wehr.py: at neuron index 12, response #11 is dropped (out
-    of distribution, suspected recording problem) and the second half
-    of response #10 is truncated (mid-trace drift). Kept on by default
-    for backward compat with Rançon 2024/2025 reports.
+    The dataset-specific artifacts the legacy ``wehr.py`` hand-coded for
+    cell index 12 (out-of-distribution response #11, mid-trace drift on
+    response #10) are now caught by the artifact gating in
+    :func:`prepare_repeats` — see ``RepeatGating`` — and don't need a
+    hand-rolled carve-out anymore.
     """
     results_dir = os.path.join(wehr_root, "Results")
     stims_dir = os.path.join(wehr_root, "Stimuli")
@@ -586,15 +582,6 @@ def iterate_wehr_cells(
                     sf_resp = sf
                     duration_ms = trig_dur_ms
 
-            # Reproduce legacy neuron-12 artifact removal
-            if drop_neuron12_artifact and cell_idx == 12 and descr in stim_groups:
-                # The legacy carve-out targets ordinal indices 10/11 in the
-                # per-cell stim list, which corresponds to file order. The
-                # cleanest reproduction is on the final per-stim list, not
-                # here. Skip at this stage; apply below after stim_records
-                # is assembled.
-                pass
-
             waveform, sf_stim = _load_wehr_stim_waveform(stim_index[descr])
             stim_records.append(StimRecord(
                 key=("wehr", cat, idx),
@@ -611,21 +598,6 @@ def iterate_wehr_cells(
                     "duration_s": (duration_ms or 0.0) / 1000.0,
                 },
             ))
-
-        # Apply neuron-12 artifact carve-out at the per-stim level.
-        if drop_neuron12_artifact and cell_idx == 12 and len(stim_records) > 10:
-            # response #11 (0-indexed 10? legacy code used 10 / 11 on a
-            # per-cell list); be defensive — clip last-half of stim #10
-            # and drop stim #11 if they exist.
-            try:
-                clip = stim_records[10]
-                for rep in clip.raw_repeats:
-                    pass  # in-place edit below
-                clip.raw_repeats = [r[: r.size // 2] for r in clip.raw_repeats]
-            except IndexError:
-                pass
-            if len(stim_records) > 11:
-                stim_records.pop(11)
 
         yield CellRecord(meta=cell_meta, stims=stim_records)
 

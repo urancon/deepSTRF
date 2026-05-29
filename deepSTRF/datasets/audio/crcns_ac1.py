@@ -202,10 +202,6 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
     username, password : str, optional
         CRCNS credentials. Default to ``$CRCNS_USERNAME`` /
         ``$CRCNS_PASSWORD`` env vars.
-    drop_neuron12_artifact : bool, default True
-        Reproduce the legacy Wehr neuron-12 carve-out: drop response
-        #11 (recording dropout) and truncate the second half of
-        response #10 (drift). Match Rançon 2024/2025 numbers.
 
     Notes
     -----
@@ -243,7 +239,6 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         download: bool = False,
         username: Optional[str] = None,
         password: Optional[str] = None,
-        drop_neuron12_artifact: bool = True,
     ):
         experimenters = _coerce(experimenter) or ("wehr", "asari")
         sites_t = _coerce(sites) or ("A1", "MGB")
@@ -278,7 +273,6 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         self.bins_per_octave = int(bins_per_octave)
         self.window_ms = window_ms
         self.gating = gating or RepeatGating()
-        self.drop_neuron12_artifact = bool(drop_neuron12_artifact)
 
         self.F = n_bands_for(self.fmin, self.fmax, self.bins_per_octave)
 
@@ -355,10 +349,7 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
 
         # ----- iterate Wehr -----
         if "wehr" in experimenters and "A1" in sites_t:
-            for cell in iterate_wehr_cells(
-                wehr_dir,
-                drop_neuron12_artifact=self.drop_neuron12_artifact,
-            ):
+            for cell in iterate_wehr_cells(wehr_dir):
                 process_cell(cell)
 
         # ----- iterate Asari -----
