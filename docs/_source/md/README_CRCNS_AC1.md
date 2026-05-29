@@ -136,6 +136,13 @@ ds.select_pop_by_nrn_predicate(
 )
 ```
 
+Per-cell single-unit fits over this cohort reproduce the published Wehr
+numbers: **StateNet-GRU ≈ 0.31** and **Linear STRF ≈ 0.21** mean test
+``cc_norm`` (Rançon et al. 2025, Table 1). For the Linear model use
+``temporal_window_size ≈ 20–40`` at ``dt_ms=5.0`` (a 100–200 ms window) —
+a stateless STRF needs the long window to reach that score, whereas the
+GRU gets its temporal context from recurrence (``T=1`` input).
+
 ## Spectrogram defaults
 
 Both subsets share the same Goertzel STFT layout: 53 log-spaced bands
