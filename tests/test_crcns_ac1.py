@@ -152,6 +152,24 @@ def test_asari_sequence_regex_handles_variable_whitespace():
     assert _asari_seq_segments("Tuning curve") is None
 
 
+def test_detect_spikes_defaults_and_nonnegative():
+    """Spike PSTH default window is the paper-intended 10 ms (not the legacy
+    1 ms bug), and the output is non-negative with a peak at an injected spike."""
+    import inspect
+    from deepSTRF.datasets.audio._crcns_ac1_native import detect_spikes_psth
+
+    assert inspect.signature(detect_spikes_psth).parameters["spk_clip_med_ms"].default == 10.0
+
+    sf = 10000.0
+    x = 0.05 * np.random.randn(int(sf))          # 1 s of small noise
+    x[5000:5010] += 8.0                           # one sharp ~1 ms spike at 0.5 s
+    psth = detect_spikes_psth(x, sf)
+    assert (psth >= 0).all()                      # spike rate is non-negative
+    # the smoothed rate should peak near the injected spike (within 30 ms)
+    peak_t = psth.argmax() / sf
+    assert abs(peak_t - 0.5) < 0.03
+
+
 # ============================================================
 # Structural / end-to-end (require local data)
 # ============================================================
@@ -179,6 +197,13 @@ def test_wehr_loads_and_validates():
         assert meta["site"] == "A1"
         assert meta["animal_id"] == "mw"
         assert "_wehr_cell_idx" in meta
+    # Wehr is whole-cell -> subthreshold (signed) signal, auto-derived
+    assert ds.signal_type == "subthresh"
+    assert all(m["signal_type"] == "subthresh" for m in ds.nrn_meta)
+    # at least one real response carries negative values (signed Vm)
+    s0, n0 = next((s, n) for s in range(len(ds.stims))
+                  for n in range(ds.N_neurons) if ds.nrn_masks[s, n])
+    assert (ds.responses[s0][n0] < 0).any(), "subthreshold Vm should be signed"
 
 
 @pytest.mark.skipif(not HAS_DATA, reason="CRCNS-AC1 local archive missing")
@@ -197,6 +222,45 @@ def test_asari_a1_loads_and_validates():
         # Asari stims carry the spliced segment paths for provenance
         assert "segment_files" in sm
         assert len(sm["segments"]) == len(sm["segment_files"])
+    # Asari A1 is whole-cell -> subthreshold, like Wehr
+    assert ds.signal_type == "subthresh"
+    assert all(m["signal_type"] == "subthresh" for m in ds.nrn_meta)
+
+
+@pytest.mark.skipif(not HAS_DATA, reason="CRCNS-AC1 local archive missing")
+def test_asari_mgb_is_spikes_nonnegative():
+    """Cell-attached MGB auto-derives to a spike-rate signal (non-negative)."""
+    from deepSTRF.datasets.audio import CRCNSAC1Dataset
+
+    ds = CRCNSAC1Dataset(
+        path=CRCNS_AC1_LOCAL, experimenter="asari", sites="MGB", dt_ms=5.0,
+    )
+    assert ds.N_neurons > 0
+    assert ds.signal_type == "spikes"
+    for meta in ds.nrn_meta:
+        assert meta["site"] == "MGB"
+        assert meta["signal_type"] == "spikes"
+        assert "attached" in meta["recording_type"].lower()
+    # every real response must be non-negative (spike-rate PSTH)
+    for s in range(len(ds.stims)):
+        for n in range(ds.N_neurons):
+            if ds.nrn_masks[s, n]:
+                assert (ds.responses[s][n] >= -1e-6).all(), "spike rate must be >= 0"
+
+
+@pytest.mark.skipif(not HAS_DATA, reason="CRCNS-AC1 local archive missing")
+def test_mixed_load_flags_signal_type():
+    """Loading A1 + MGB together yields signal_type='mixed' + a warning."""
+    from deepSTRF.datasets.audio import CRCNSAC1Dataset
+
+    with pytest.warns(RuntimeWarning, match="mix of whole-cell"):
+        ds = CRCNSAC1Dataset(
+            path=CRCNS_AC1_LOCAL, experimenter="asari",
+            sites=("A1", "MGB"), dt_ms=5.0,
+        )
+    assert ds.signal_type == "mixed"
+    types = {m["signal_type"] for m in ds.nrn_meta}
+    assert types == {"subthresh", "spikes"}
 
 
 @pytest.mark.skipif(not HAS_DATA, reason="CRCNS-AC1 local archive missing")

@@ -333,17 +333,29 @@ def detect_spikes_psth(
     *,
     detrend_med_ms: float = 100.0,
     detrend_gauss_ms: float = 10.0,
-    spk_clip_med_ms: float = 1.0,
+    spk_clip_med_ms: float = 10.0,
     threshold_sigma: float = 2.5,
     smooth_ms: float = 21.0,
 ) -> np.ndarray:
-    """Convert a Vm trace into a Hann-smoothed PSTH proxy.
+    """Extract a spike-rate PSTH from a cell-attached voltage trace.
 
-    Faithful to the Asari 2009 + Rançon 2025 ``signal_type='spikes'``
-    recipe: high-pass detrend (MedGauss subtract) → median-filter spike
-    clip → threshold at ``threshold_sigma × σ`` → Hann smooth at
-    ``smooth_ms``. Output is in arbitrary units proportional to spike
-    rate (not a calibrated firing rate).
+    Intended for **cell-attached** recordings (CRCNS-AC1 MGB), where the
+    trace is dominated by real, sharp (~1 ms) action potentials. The
+    recipe follows Asari 2009: drift-detrend (MedGauss subtract) →
+    high-pass by subtracting a ``spk_clip_med_ms`` median (isolates the
+    fast spikes from slower fluctuations) → threshold at
+    ``threshold_sigma × σ`` → Hann smooth at ``smooth_ms``. Output is in
+    arbitrary units proportional to spike rate.
+
+    The ``spk_clip_med_ms`` default is **10 ms** — the value stated in
+    the Asari 2009 methods. (The legacy ``asari.py`` passed
+    ``median_filter(resp, 10)`` = 10 *samples* = 1 ms at the 10 kHz
+    Asari rate, a units bug that erased the spikes; we use the
+    paper-intended 10 ms, which reproduces the paper's ~11 Hz evoked MGB
+    rate.) Do **not** apply this to whole-cell recordings: with action
+    potentials blocked (Wehr) or simply not the signal of interest
+    (Asari A1), there are no spikes and the threshold chases noise — use
+    the subthreshold Vm instead.
     """
     y = medgauss_detrend(np.asarray(x, dtype=np.float64), sf,
                          med_ms=detrend_med_ms, gauss_ms=detrend_gauss_ms)

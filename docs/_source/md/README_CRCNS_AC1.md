@@ -32,8 +32,8 @@ filters Asari's A1 vs MGB recordings (Wehr is all A1).
 
 See the **[inspect_crcns_ac1 notebook](../ipynb/inspect_crcns_ac1.ipynb)**
 for a guided tour: subthreshold Vm vs spike counts, trial-to-trial
-variability, Wehr fragments vs Asari sequences, the ``signal_type`` API,
-and the under-the-hood MedGauss detrend + artifact gating.
+variability, Wehr fragments vs Asari sequences, how the recording mode sets
+the signal type, and the under-the-hood MedGauss detrend + artifact gating.
 
 ```python
 from deepSTRF.datasets.audio import CRCNSAC1Dataset
@@ -42,11 +42,29 @@ ds = CRCNSAC1Dataset(
     path="~/Documents/NRFdatasets/Audio/CRCNS_AC1",
     experimenter=("wehr", "asari"),   # default both; tuple or single str
     sites=("A1", "MGB"),              # default both
-    signal_type="subthresh",          # alt: 'spikes' for Hann-smoothed PSTH proxy
     dt_ms=5.0,                        # matches Rançon 2025 Fig 2 settings
     download=False,                   # True needs $CRCNS_USERNAME / $CRCNS_PASSWORD
 )
 ```
+
+### Signal type is set by the recording mode (not a user choice)
+
+The response signal is **determined by how each cell was recorded**, because
+the recording mode dictates what signal physically exists:
+
+| recording mode | subset | `nrn_meta['signal_type']` | sign | pair with |
+|----------------|--------|---------------------------|------|-----------|
+| whole-cell | Wehr, Asari A1 | `'subthresh'` (MedGauss-detrended Vm) | signed | `mse_loss` |
+| cell-attached | Asari MGB | `'spikes'` (Hann-smoothed rate) | ≥ 0 | `poisson_loss` |
+
+Cell-attached recordings have no intracellular Vm; whole-cell recordings have
+no spikes (blocked in Wehr, not analysed in Asari A1 per the paper). The
+loader derives the type per cell from `recording_type`, stores it in
+`nrn_meta['signal_type']`, and exposes the cohort-level `ds.signal_type`
+(`'subthresh'`, `'spikes'`, or `'mixed'`). Loading A1 + MGB together yields a
+`'mixed'` cohort (signed-mV and spike-rate neurons side by side) and emits a
+warning — filter by site / `signal_type` before training one model across
+both.
 
 ## Subset summary
 
@@ -93,6 +111,11 @@ The loader is fully Python (no MATLAB runtime). Each instantiation:
    (``hop = round(dt_ms × sf_stim / 1000)``) — no two-step
    compute-then-downsample as the legacy MATLAB pipeline did.
 
+For the **cell-attached MGB** cohort, the subthreshold step is replaced by
+spike extraction: drift-detrend → high-pass (subtract a **10 ms** median, the
+Asari 2009 value) → threshold at 2.5 σ → 21 ms Hann smooth. On a sample MGB
+cell this yields ~12 Hz evoked rate, matching the paper's 11.4 ± 16.9 Hz.
+
 ## Reproducibility constants
 
 For Rançon 2024/2025 numbers, the loader exports two constants:
@@ -134,6 +157,13 @@ the noise floor for them and are harmless. To recover the Wehr 2024
   but the response cleanup pipeline differs in detail (we run
   artifact gating that the MATLAB pipeline did not). Expect model
   ``cc_norm`` within seed-level noise of the published numbers.
+- **MGB spike window vs the prior pipeline.** The legacy ``asari.py``
+  high-passed with ``median_filter(resp, 10)`` — 10 *samples* = 1 ms at
+  10 kHz, a units bug (its own comment cited "10 ms (cf. Asari et al.)")
+  that erased the ~1 ms spikes and left the threshold chasing noise. We
+  use the paper-intended **10 ms**, which recovers the published MGB
+  firing rate. So MGB spike-rate numbers here will differ from a
+  pipeline that reproduced the 1 ms bug.
 - **Tone tuning curves and synthetic stimuli are not loaded in v1.**
   Only ``naturalsound`` (Wehr) / ``naturalsound`` sequences (Asari) are
   ingested. Adding tones is a future extension; gated by a

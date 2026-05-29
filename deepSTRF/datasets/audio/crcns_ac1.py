@@ -170,13 +170,24 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
     sites : str or iterable of str, optional
         ``'A1'`` and/or ``'MGB'``. Default loads both. Wehr is all-A1;
         Asari has both areas.
-    signal_type : {'subthresh', 'spikes'}, default ``'subthresh'``
-        ``'subthresh'`` (default): MedGauss-detrended Vm in mV-relative
-        units. Matches the Machens 2004 / Asari 2009 / Rançon 2025
-        modelling target. Pair with MSE loss.
-        ``'spikes'``: high-pass detrend → threshold → 21 ms Hann smooth.
-        Matches the legacy Asari ``'psth'`` path; an opt-in alternative
-        for callers who want a firing-rate-like target.
+
+        The **signal type is not a free choice** — it is determined by
+        each cell's recording mode, because the recording mode dictates
+        what signal physically exists:
+
+        - **whole-cell** (Wehr A1, Asari A1) → ``'subthresh'``:
+          MedGauss-detrended membrane potential in mV (signed). Action
+          potentials were blocked (Wehr) or not analysed (Asari A1, per
+          the paper); the synaptic input *is* the signal. Pair with MSE.
+        - **cell-attached** (Asari MGB) → ``'spikes'``: a Hann-smoothed
+          spike-rate PSTH (non-negative). There is no intracellular Vm
+          in cell-attached mode. Pair with Poisson.
+
+        Each cell carries its resolved type in ``nrn_meta['signal_type']``;
+        ``self.signal_type`` is that type if the loaded cohort is
+        homogeneous, else ``'mixed'`` (loading A1 + MGB together mixes
+        signed-mV and spike-rate neurons — filter by site / signal_type
+        before training one model across them).
     dt_ms : float, default 5.0
         Output time-bin width in ms. The Goertzel STFT is parametrised
         to produce its frames at exactly this resolution (no two-step
@@ -224,9 +235,10 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
       ``description``, ``duration_s``.
     - ``nrn_meta`` dicts hold ``experimenter``, ``session``,
       ``animal_id``, ``penetration``, ``date``, ``site``,
-      ``recording_type``, ``species``, plus ``_wehr_cell_idx`` for
-      Wehr cells (used with ``WEHR_VALID_NEURONS`` /
-      ``WEHR_NEURONS_SPLIT_NATURAL`` for Rançon-paper reproducibility).
+      ``recording_type``, ``signal_type`` (``'subthresh'`` /
+      ``'spikes'``, derived from the recording mode), ``species``, plus
+      ``_wehr_cell_idx`` for Wehr cells (used with ``WEHR_VALID_NEURONS``
+      / ``WEHR_NEURONS_SPLIT_NATURAL`` for Rançon-paper reproducibility).
 
     References
     ----------
@@ -240,7 +252,6 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         path: Optional[str] = None,
         experimenter: Union[None, str, Iterable[str]] = ("wehr", "asari"),
         sites: Union[None, str, Iterable[str]] = ("A1", "MGB"),
-        signal_type: str = "subthresh",
         dt_ms: float = 5.0,
         fmin: float = 100.0,
         fmax: float = 45000.0,
@@ -263,9 +274,6 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
             assert s in ("A1", "MGB"), (
                 f"sites must be 'A1' and/or 'MGB' (got {s!r})"
             )
-        assert signal_type in ("subthresh", "spikes"), (
-            f"signal_type must be 'subthresh' or 'spikes' (got {signal_type!r})"
-        )
         assert dt_ms > 0, f"dt_ms must be positive (got {dt_ms})"
         assert fmax > fmin > 0, f"need 0 < fmin < fmax (got {fmin}, {fmax})"
         assert bins_per_octave >= 1, f"bins_per_octave >= 1 (got {bins_per_octave})"
@@ -280,7 +288,6 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         self.species = "rat"
         self.experimenters = experimenters
         self.sites = sites_t
-        self.signal_type = signal_type
         self.fmin = float(fmin)
         self.fmax = float(fmax)
         self.bins_per_octave = int(bins_per_octave)
@@ -314,15 +321,22 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
                 return
             n_idx = len(nrn_meta)
             cell_added = False
+            # Signal type is dictated by the recording mode: cell-attached
+            # has spikes (no intracellular Vm); whole-cell has subthreshold
+            # Vm (no spikes — blocked in Wehr, not analysed in Asari A1).
+            cell_signal = (
+                "spikes" if "attached" in cell.meta.get("recording_type", "").lower()
+                else "subthresh"
+            )
             for stim in cell.stims:
                 # ---- clean + bin response ----
-                if signal_type == "subthresh":
+                if cell_signal == "subthresh":
                     cleaned, reasons = prepare_repeats(
                         stim.raw_repeats, stim.sf_resp, gating=self.gating,
                         detrend_med_ms=self.detrend_med_ms,
                         detrend_gauss_ms=self.detrend_gauss_ms,
                     )
-                else:  # 'spikes'
+                else:  # 'spikes' — cell-attached MGB only
                     # MedGauss is baked into detect_spikes_psth; we still gate
                     # via prepare_repeats first to drop motion artifacts.
                     cleaned_v, reasons = prepare_repeats(
@@ -366,7 +380,9 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
                 cell_added = True
 
             if cell_added:
-                nrn_meta.append(dict(cell.meta))
+                meta = dict(cell.meta)
+                meta["signal_type"] = cell_signal
+                nrn_meta.append(meta)
             else:
                 nonlocal cell_count_dropped_for_zero_stims
                 cell_count_dropped_for_zero_stims += 1
@@ -393,6 +409,22 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         self.N_neurons = len(self.nrn_meta)
         self._rejection_counter = rejection_counter
         self._dropped_cells_empty = cell_count_dropped_for_zero_stims
+
+        # Dataset-level signal type: the single type if homogeneous, else
+        # 'mixed'. A mixed cohort (whole-cell A1 + cell-attached MGB) holds
+        # signed-mV and spike-rate neurons side by side — warn so callers
+        # don't train one model across both without filtering.
+        present = {m["signal_type"] for m in self.nrn_meta}
+        self.signal_type = present.pop() if len(present) == 1 else "mixed"
+        if self.signal_type == "mixed":
+            warnings.warn(
+                "CRCNSAC1Dataset loaded a mix of whole-cell (subthresh, signed mV) "
+                "and cell-attached (spikes, non-negative) neurons. Their responses "
+                "are in different units; filter by nrn_meta['signal_type'] (or by "
+                "site) before training a single model. Set sites='A1' for "
+                "subthreshold only, or sites='MGB' for spikes only.",
+                RuntimeWarning,
+            )
 
         # --- pass 2: compute spectrograms + assemble (S, N) response grid ---
         S = len(stim_specs)
