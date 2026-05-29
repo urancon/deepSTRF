@@ -45,11 +45,15 @@ ds = CRCNSAC1Dataset(
 
 ## Subset summary
 
-|        | Recording        | sf       | Subjects   | Stimuli                           |
-|--------|------------------|----------|------------|-----------------------------------|
-| Wehr   | whole-cell A1    | 4 kHz    | anaesth. rat | 15-s natural-sound fragments  |
-| Asari A1 | whole-cell A1  | 10 kHz   | anaesth. rat | spliced *sequences* of segments |
-| Asari MGB | cell-attached MGB | 10 kHz | anaesth. rat | same as Asari A1 (subset)     |
+|        | Recording        | sf       | Subjects   | Stimuli                           | N (loader) |
+|--------|------------------|----------|------------|-----------------------------------|------------|
+| Wehr   | whole-cell A1    | 4 kHz    | anaesth. rat | 15-s natural-sound fragments  | 25         |
+| Asari A1 | whole-cell A1  | 10 kHz   | anaesth. rat | spliced *sequences* of segments | 39         |
+| Asari MGB | cell-attached MGB | 10 kHz | anaesth. rat | same as Asari A1 (subset)     | 14         |
+
+(The "N (loader)" numbers reproduce the Asari 2009 paper counts —
+39 A1 + 14 MGB cells tested with natural-sound ensembles, plus the 25
+Wehr sessions used by Rançon 2024/2025.)
 
 Wehr stimuli are documented by their fragment name (``humpback whale``,
 ``jaguar mating call``, etc.) and live under
