@@ -192,6 +192,17 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
     window_ms : float, optional
         STFT analysis-window length in ms. Defaults to ``2 * dt_ms``
         (legacy MATLAB ``overlap=2``).
+    detrend_med_ms : float, default 100.0
+        Median-filter window (ms) for the MedGauss baseline subtracted
+        from each Vm trace. Larger windows remove only slow drift and
+        preserve more low-frequency response dynamics; smaller windows
+        detrend more aggressively. The 100 ms default matches the
+        Rançon 2024/2025 pipeline; the choice is robust (residuals
+        barely change between 100 and 1000 ms because the response is
+        dominated by fast PSP transients).
+    detrend_gauss_ms : float, default 10.0
+        Gaussian-smoothing σ (ms) applied to the median-filtered
+        baseline before subtraction.
     gating : RepeatGating, optional
         Per-repeat artifact-rejection thresholds. Default values gate
         out repeats with derivative-MAD jumps and excessive dynamic
@@ -235,6 +246,8 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         fmax: float = 45000.0,
         bins_per_octave: int = 6,
         window_ms: Optional[float] = None,
+        detrend_med_ms: float = 100.0,
+        detrend_gauss_ms: float = 10.0,
         gating: Optional[RepeatGating] = None,
         download: bool = False,
         username: Optional[str] = None,
@@ -272,6 +285,8 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         self.fmax = float(fmax)
         self.bins_per_octave = int(bins_per_octave)
         self.window_ms = window_ms
+        self.detrend_med_ms = float(detrend_med_ms)
+        self.detrend_gauss_ms = float(detrend_gauss_ms)
         self.gating = gating or RepeatGating()
 
         self.F = n_bands_for(self.fmin, self.fmax, self.bins_per_octave)
@@ -304,14 +319,23 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
                 if signal_type == "subthresh":
                     cleaned, reasons = prepare_repeats(
                         stim.raw_repeats, stim.sf_resp, gating=self.gating,
+                        detrend_med_ms=self.detrend_med_ms,
+                        detrend_gauss_ms=self.detrend_gauss_ms,
                     )
                 else:  # 'spikes'
                     # MedGauss is baked into detect_spikes_psth; we still gate
                     # via prepare_repeats first to drop motion artifacts.
                     cleaned_v, reasons = prepare_repeats(
                         stim.raw_repeats, stim.sf_resp, gating=self.gating,
+                        detrend_med_ms=self.detrend_med_ms,
+                        detrend_gauss_ms=self.detrend_gauss_ms,
                     )
-                    cleaned = [detect_spikes_psth(r, stim.sf_resp) for r in cleaned_v]
+                    cleaned = [
+                        detect_spikes_psth(r, stim.sf_resp,
+                                           detrend_med_ms=self.detrend_med_ms,
+                                           detrend_gauss_ms=self.detrend_gauss_ms)
+                        for r in cleaned_v
+                    ]
                 for r in reasons:
                     rejection_counter[r] = rejection_counter.get(r, 0) + 1
                 if not cleaned:

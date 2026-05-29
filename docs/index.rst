@@ -141,6 +141,7 @@ welcome to add yours.
 
    _source/ipynb/crcns_aa_tutorial.ipynb
    _source/ipynb/aa4_inspection.ipynb
+   _source/ipynb/inspect_crcns_ac1.ipynb
    _source/ipynb/explore_nat4.ipynb
    _source/ipynb/explore_downer2025.ipynb
    _source/ipynb/explore_wingert2026.ipynb

@@ -834,8 +834,9 @@ def iterate_asari_cells(
                     # IMPORTANT: copy() so we don't keep a view that pins the
                     # full trace alive across iterations.
                     resp_slice = trace_mv[lo:hi].copy()
+                    canon_descr = " ".join(seq_descr.split())
                     sequence_groups.setdefault(resolved, []).append(
-                        (resp_slice, sf_resp, trig_dur_ms, tuple(segments))
+                        (resp_slice, sf_resp, trig_dur_ms, tuple(segments), canon_descr)
                     )
                 del m, trace_mv  # explicit hint for the GC between files
 
@@ -876,10 +877,11 @@ def iterate_asari_cells(
                     m_cls = re.match(r"class(\d+)/", resolved_files[0])
                     if m_cls:
                         class_n = int(m_cls.group(1))
-                raw_repeats = [r for (r, _sf, _dur, _seg) in occurrences]
+                raw_repeats = [r for (r, _sf, _dur, _seg, _d) in occurrences]
                 sf_resp_common = occurrences[0][1]
                 duration_ms = occurrences[0][2]
                 segments_int = occurrences[0][3]  # the segment-int list (1-indexed)
+                sequence_descr = occurrences[0][4]  # 'Sequence N: a b c d e'
 
                 stim_records.append(StimRecord(
                     key=("asari", resolved_files),
@@ -894,7 +896,8 @@ def iterate_asari_cells(
                         "class_n": class_n,
                         "segments": tuple(segments_int),
                         "segment_files": resolved_files,
-                        "description": " ".join(resolved_files),
+                        "sequence": sequence_descr,
+                        "description": sequence_descr,
                         "duration_s": duration_ms / 1000.0,
                     },
                 ))

@@ -30,6 +30,11 @@ historical subsets through the modern deepSTRF data paradigm
 ``experimenter`` argument filters between the two subsets; ``sites``
 filters Asari's A1 vs MGB recordings (Wehr is all A1).
 
+See the **[inspect_crcns_ac1 notebook](../ipynb/inspect_crcns_ac1.ipynb)**
+for a guided tour: subthreshold Vm vs spike counts, trial-to-trial
+variability, Wehr fragments vs Asari sequences, the ``signal_type`` API,
+and the under-the-hood MedGauss detrend + artifact gating.
+
 ```python
 from deepSTRF.datasets.audio import CRCNSAC1Dataset
 
