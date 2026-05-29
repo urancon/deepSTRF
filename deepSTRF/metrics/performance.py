@@ -654,7 +654,7 @@ def coherence(
 
 
 # -----------------------------------------------------------------------------
-# Internal helpers (importable for callers like WehrDataset)
+# Internal helpers (importable from audio loaders)
 # -----------------------------------------------------------------------------
 
 
@@ -665,7 +665,9 @@ def compute_CCmax(
 ) -> torch.Tensor:
     """CCmax (Hsu / Spearman-Brown) per ``(B,)`` cell.
 
-    Internal helper kept for backward compatibility with ``WehrDataset``.
+    Internal helper kept importable for the audio loaders (legacy CCmax /
+    TTRC pipeline). Prefer :func:`compute_neuron_quality` on the dataset
+    itself.
 
     Parameters
     ----------
@@ -724,7 +726,9 @@ def compute_CCmax(
 def compute_TTRC(responses: torch.Tensor) -> torch.Tensor:
     """Trial-to-trial response correlation per ``(B,)`` cell.
 
-    Internal helper kept for backward compatibility with ``WehrDataset``.
+    Internal helper kept importable for the audio loaders (legacy CCmax /
+    TTRC pipeline). Prefer :func:`compute_neuron_quality` on the dataset
+    itself.
 
     Parameters
     ----------

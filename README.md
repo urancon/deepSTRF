@@ -137,7 +137,7 @@ Current top model on each dataset. Want to claim the podium? Open a PR with a re
 
 deepSTRF wraps publicly available recordings — please cite the original authors when you use them. See each dataset page on the [docs](https://deepstrf.readthedocs.io/) for details and download instructions.
 
-- **Auditory:** [NS1](docs/_source/md/README_NS1.md), [NAT4](docs/_source/md/README_NAT4.md), [CRCNS AA1](docs/_source/md/README_CRCNS_AA1.md), [CRCNS AA2](docs/_source/md/README_CRCNS_AA2.md), [CRCNS AA4](docs/_source/md/README_CRCNS_AA4.md), [CRCNS AC1 – Wehr](docs/_source/md/README_CRCNS_AC1_Wehr.md), [CRCNS AC1 – Asari](docs/_source/md/README_CRCNS_AC1_Asari.md), [Espejo 2019](docs/_source/md/README_Espejo.md), [Alice EEG (Brodbeck 2023)](docs/_source/md/README_Alice_EEG.md), [Meliza 2025](docs/_source/md/README_Meliza_2025.md), [Wingert 2026](docs/_source/md/README_Wingert2026.md).
+- **Auditory:** [NS1](docs/_source/md/README_NS1.md), [NAT4](docs/_source/md/README_NAT4.md), [CRCNS AA1](docs/_source/md/README_CRCNS_AA1.md), [CRCNS AA2](docs/_source/md/README_CRCNS_AA2.md), [CRCNS AA4](docs/_source/md/README_CRCNS_AA4.md), [CRCNS AC1 (Wehr + Asari)](docs/_source/md/README_CRCNS_AC1.md), [Espejo 2019](docs/_source/md/README_Espejo.md), [Alice EEG (Brodbeck 2023)](docs/_source/md/README_Alice_EEG.md), [Meliza 2025](docs/_source/md/README_Meliza_2025.md), [Wingert 2026](docs/_source/md/README_Wingert2026.md).
 - **Visual:** under construction — see [Status](#-status--audio-first) below.
 
 ----
