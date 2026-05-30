@@ -37,9 +37,11 @@ def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
 
     Parameters
     ----------
-    kind : {'mel', 'gammatone', 'sincnet'}
+    kind : {'mel', 'gammatone', 'sincnet', 'leaf'}
         Which front-end to build. ``'mel'`` and ``'gammatone'`` are
-        non-learnable cochleagrams; ``'sincnet'`` has learnable filter cutoffs.
+        non-learnable cochleagrams; ``'sincnet'`` has learnable filter cutoffs;
+        ``'leaf'`` is the fully-learnable LEAF frontend (Gabor + pooling +
+        sPCEN).
     audio_fs : int
         Audio sample rate (Hz). Must match the dataset's ``audio_fs``.
     dt_ms : float

@@ -93,6 +93,7 @@ underlying class constructor. The shipped kinds:
 | `'mel'`       | `CausalMelSpectrogram` | no         |
 | `'gammatone'` | `CausalGammatone`      | no         |
 | `'sincnet'`   | `SincNet`              | yes (filter cutoffs) |
+| `'leaf'`      | `CausalLEAF`           | yes (Gabor + pooling + sPCEN) |
 
 Both classes are also directly importable from
 `deepSTRF.models.wav2spec` if you prefer to instantiate by hand
@@ -178,7 +179,30 @@ m = SincNet(audio_fs=48000, n_filters=34, kernel_size=753,
              env_window_ms=10.0)
 ```
 
-### 4.4 ICNet's encoder — internal to `deepSTRF.models.audio.ICNet`
+### 4.4 `CausalLEAF` — fully-learnable frontend (Zeghidour et al. 2021)
+
+LEAF learns the *entire* cochleagram in three learnable stages: a complex
+**Gabor** filterbank (learnable per-channel centre frequency + bandwidth) whose
+complex magnitude is a smooth envelope; a learnable **Gaussian** lowpass
+pooling (per-channel width); and learnable per-channel **sPCEN** (PCEN with
+learnable α, δ, root and smoother). The strictly-causal variant uses left-only
+padding for the Gabor and pooling convolutions, a one-sided (recent-weighted)
+pooling Gaussian, and the standard forward-IIR sPCEN smoother (computed with
+`torchaudio.lfilter`).
+
+Unlike `SincNet`, LEAF's filters genuinely move during NS1 training (Gabor
+centre frequencies drift 10–20%). On NS1 (`Linear`, `T=9`) LEAF reaches test
+`cc_norm` ≈ 0.71, well above mel (0.573) — but note this is **more than a pure
+front-end swap**: LEAF adds ~6 learnable parameters per channel of feature
+extraction, so `LEAF + Linear` is effectively a shallow nonlinear model.
+
+```python
+from deepSTRF.models.wav2spec import CausalLEAF
+leaf = CausalLEAF(audio_fs=48000, n_filters=34, hop_ms=5.0,
+                   f_min=60.0, f_max=22627.0)   # match audio_fs/hop_ms to the dataset
+```
+
+### 4.5 ICNet's encoder — internal to `deepSTRF.models.audio.ICNet`
 
 [ICNet](https://doi.org/10.1038/s42256-025-01104-9) (Drakopoulos et al.
 Nat. Mach. Intell. 2025) has its own SincNet-and-conv-stack front-end:
