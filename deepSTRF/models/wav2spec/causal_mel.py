@@ -139,6 +139,14 @@ class CausalMelSpectrogram(nn.Module):
             raise ValueError(
                 f"CausalMelSpectrogram expects (B, 1, T_audio); got {tuple(x.shape)}"
             )
+        if x.shape[-1] % self.hop != 0:
+            raise ValueError(
+                f"CausalMelSpectrogram: input length T_audio={x.shape[-1]} is not "
+                f"a multiple of hop={self.hop}. This usually means the wav2spec's "
+                f"audio_fs/dt_ms disagree with the dataset's — construct it with "
+                f"audio_fs=dataset.audio_fs and hop_ms=dataset.dt (or via "
+                f"make_wav2spec(..., audio_fs=ds.audio_fs, dt_ms=ds.dt))."
+            )
         # left-pad so that, with center=False, output frame t ends at audio
         # sample (t+1)*hop - 1 of the original waveform.
         if self.left_pad > 0:

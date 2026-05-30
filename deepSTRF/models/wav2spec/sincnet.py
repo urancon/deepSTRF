@@ -221,6 +221,14 @@ class SincNet(nn.Module):
             raise ValueError(
                 f"SincNet expects (B, 1, T_audio); got {tuple(x.shape)}"
             )
+        if x.shape[-1] % self.hop != 0:
+            raise ValueError(
+                f"SincNet: input length T_audio={x.shape[-1]} is not a multiple "
+                f"of hop={self.hop}. This usually means the wav2spec's "
+                f"audio_fs/dt_ms disagree with the dataset's — construct it with "
+                f"audio_fs=dataset.audio_fs and hop_ms=dataset.dt (or via "
+                f"make_wav2spec(..., audio_fs=ds.audio_fs, dt_ms=ds.dt))."
+            )
         if self.left_pad > 0:
             x = F.pad(x, (self.left_pad, 0))
         kernels = self._build_filters()
