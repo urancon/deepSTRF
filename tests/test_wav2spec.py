@@ -22,6 +22,11 @@ WAV2SPEC_CASES = [
     ("CausalMelSpectrogram-16kHz-5ms-10ms",
      lambda: __import__("deepSTRF.models.wav2spec", fromlist=["CausalMelSpectrogram"])
              .CausalMelSpectrogram(audio_fs=16000, n_mels=34, hop_ms=5.0, win_ms=10.0)),
+    ("CausalMelSpectrogram-32kHz-1ms-cubic-power",   # CRCNS-AA-style cochleagram
+     lambda: __import__("deepSTRF.models.wav2spec", fromlist=["CausalMelSpectrogram"])
+             .CausalMelSpectrogram(audio_fs=32000, n_mels=32, hop_ms=1.0, win_ms=10.0,
+                                   f_min=0.0, f_max=None, magnitude="power",
+                                   compression="cubic")),
     ("SincNet-16kHz-5ms-K251-mel-symlog",
      lambda: __import__("deepSTRF.models.wav2spec", fromlist=["SincNet"])
              .SincNet(audio_fs=16000, n_filters=34, kernel_size=251, hop_ms=5.0,

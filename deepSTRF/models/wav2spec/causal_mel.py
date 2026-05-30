@@ -58,11 +58,18 @@ class CausalMelSpectrogram(nn.Module):
     magnitude : {'amplitude', 'power'}, default 'amplitude'
         Whether the STFT output is squared (power) or kept as magnitude
         (amplitude) before mel-weighting. Rahman 2019 uses amplitude.
+    compression : {'log', 'cubic', 'log1p', 'none'}, default 'log'
+        Output nonlinearity on the mel energies. ``'log'`` (default) is the
+        Rahman threshold-clipped / offset log; ``'cubic'`` is the power-law
+        ``mel**(1/3)`` used by the CRCNS-AA datasets (pair with
+        ``magnitude='power'`` to reproduce their cochleagram causally);
+        ``'log1p'`` is ``log(1+mel)``; ``'none'`` is the raw mel energy. The
+        ``log_floor`` / ``log_offset`` knobs apply only to ``'log'``.
     log_floor : float, default 1e-4
         Pre-log threshold: values below this are clamped up to this floor
         before the ``log``. Matches the "values below a low threshold were
         set to the threshold" step in Rahman 2019. Ignored when
-        ``log_offset`` is not None.
+        ``log_offset`` is not None or ``compression != 'log'``.
     log_offset : float, optional
         Legacy log shape: ``log(mel + log_offset)``. When None (default),
         the Rahman threshold-clip form ``log(max(mel, log_floor))`` is
@@ -78,6 +85,7 @@ class CausalMelSpectrogram(nn.Module):
                  hop_ms: float = 5.0, win_ms: float = 10.0,
                  f_min: float = 500.0, f_max: Optional[float] = 22627.0,
                  magnitude: str = "amplitude",
+                 compression: str = "log",
                  log_floor: float = 1e-4,
                  log_offset: Optional[float] = None,
                  mel_scale: str = "htk"):
@@ -90,6 +98,11 @@ class CausalMelSpectrogram(nn.Module):
             raise ValueError(
                 f"magnitude must be 'amplitude' or 'power' (got {magnitude!r})"
             )
+        if compression not in ("log", "cubic", "log1p", "none"):
+            raise ValueError(
+                f"compression must be 'log', 'cubic', 'log1p' or 'none' "
+                f"(got {compression!r})"
+            )
 
         self.audio_fs = int(audio_fs)
         self.n_mels = int(n_mels)
@@ -100,6 +113,7 @@ class CausalMelSpectrogram(nn.Module):
         # region exactly (see the causality note in the class docstring).
         self.n_fft = self.win
         self.magnitude = magnitude
+        self.compression = compression
         self.log_floor = float(log_floor)
         self.log_offset = float(log_offset) if log_offset is not None else None
         self.f_min = float(f_min)
@@ -127,11 +141,15 @@ class CausalMelSpectrogram(nn.Module):
         self.register_buffer("_mel_fb", fb)
 
     def extra_repr(self) -> str:
-        log_part = (f"log_offset={self.log_offset}" if self.log_offset is not None
-                    else f"log_floor={self.log_floor}")
+        if self.compression == "log":
+            log_part = (f", log_offset={self.log_offset}" if self.log_offset is not None
+                        else f", log_floor={self.log_floor}")
+        else:
+            log_part = ""
         return (f"audio_fs={self.audio_fs}, n_mels={self.n_mels}, hop={self.hop}, "
                 f"win={self.win}, n_fft={self.n_fft}, magnitude={self.magnitude!r}, "
-                f"f_range=({self.f_min}, {self.f_max}), {log_part}")
+                f"f_range=({self.f_min}, {self.f_max}), "
+                f"compression={self.compression!r}{log_part}")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, 1, T_audio)
@@ -164,8 +182,15 @@ class CausalMelSpectrogram(nn.Module):
         else:  # 'power'
             spec = power
         mel = self._mel_fb.transpose(0, 1) @ spec     # (B, n_mels, T_neural)
-        if self.log_offset is not None:
-            log_mel = torch.log(mel + self.log_offset)
-        else:
-            log_mel = torch.log(mel.clamp(min=self.log_floor))
-        return log_mel.unsqueeze(1)  # (B, 1, n_mels, T_neural) — explicit C_in axis
+        if self.compression == "log":
+            if self.log_offset is not None:
+                out = torch.log(mel + self.log_offset)
+            else:
+                out = torch.log(mel.clamp(min=self.log_floor))
+        elif self.compression == "cubic":
+            out = mel.clamp(min=0.0) ** (1.0 / 3.0)   # matches CRCNS-AA's spec**(1/3)
+        elif self.compression == "log1p":
+            out = torch.log1p(mel.clamp(min=0.0))
+        else:  # 'none'
+            out = mel
+        return out.unsqueeze(1)  # (B, 1, n_mels, T_neural) — explicit C_in axis
