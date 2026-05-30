@@ -147,6 +147,7 @@ welcome to add yours.
    _source/ipynb/dataset_concatenation.ipynb
    _source/ipynb/fit_ns1_statenet.ipynb
    _source/ipynb/fit_ns1_linear_from_waveform.ipynb
+   _source/ipynb/learnable_frontend_ns1.ipynb
    _source/ipynb/load_pretrained_statenet_ns1.ipynb
    _source/ipynb/alice_eeg_tutorial.ipynb
    _source/ipynb/meliza_2025_baseline.ipynb
