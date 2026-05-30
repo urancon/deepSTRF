@@ -88,10 +88,11 @@ The factory mirrors `make_prefiltering` — it dispatches a string `kind`
 against the shipped registry and forwards remaining kwargs to the
 underlying class constructor. The shipped kinds:
 
-| `kind`      | Class                  | Learnable? |
-|-------------|------------------------|------------|
-| `'mel'`     | `CausalMelSpectrogram` | no         |
-| `'sincnet'` | `SincNet`              | yes (filter cutoffs) |
+| `kind`        | Class                  | Learnable? |
+|---------------|------------------------|------------|
+| `'mel'`       | `CausalMelSpectrogram` | no         |
+| `'gammatone'` | `CausalGammatone`      | no         |
+| `'sincnet'`   | `SincNet`              | yes (filter cutoffs) |
 
 Both classes are also directly importable from
 `deepSTRF.models.wav2spec` if you prefer to instantiate by hand
@@ -117,7 +118,37 @@ from deepSTRF.models.wav2spec import CausalMelSpectrogram
 m = CausalMelSpectrogram(audio_fs=48000, n_mels=34)
 ```
 
-### 4.2 `SincNet` — parametric bandpass (Ravanelli & Bengio 2018)
+### 4.2 `CausalGammatone` — non-learnable cochlear filterbank
+
+The standard auditory-neuroscience filterbank (Patterson et al. 1992): a
+bank of fixed gammatone bandpass filters on an ERB-rate centre-frequency
+ladder, each followed by rectification, a causal envelope pool, and
+compression. The gammatone impulse response is one-sided (zero for
+`t < 0`), so the bank is causal by construction; the filters are *fixed*,
+so it cannot suffer the frozen-cutoff failure mode `SincNet` shows on small
+datasets.
+
+The compression mode is the key knob for neural prediction:
+
+- `'log'` (default) / `'cuberoot'` — static compression. On NS1 (`Linear`,
+  `T=9`) this plateaus around test `cc_norm` 0.46, below the mel baseline.
+- `'pcen'` — causal Per-Channel Energy Normalization (Wang et al. 2017): an
+  adaptive automatic-gain-control that divides each channel by a causal
+  running-mean (a first-order IIR via `torchaudio.lfilter`) of its own
+  energy before root compression, emphasising onsets. This **closes the gap
+  to the spectrogram baseline** — gammatone + PCEN reaches test `cc_norm`
+  ≈ 0.55–0.57 on NS1, matching the precomputed spec (0.548) and approaching
+  the causal-mel front-end (0.573). The gap was the static compression, not
+  the filterbank.
+
+```python
+from deepSTRF.models.wav2spec import CausalGammatone
+# fixed cochleagram; match audio_fs / hop_ms to the dataset (ds.audio_fs / ds.dt).
+g = CausalGammatone(audio_fs=48000, n_filters=34, hop_ms=5.0,
+                     f_min=500.0, f_max=22627.0, compression="pcen")
+```
+
+### 4.3 `SincNet` — parametric bandpass (Ravanelli & Bengio 2018)
 
 Each of the `n_filters` channels is a bandpass `Conv1d` filter with two
 learnable parameters (low cutoff `f1`, high cutoff `f2`). The
@@ -147,7 +178,7 @@ m = SincNet(audio_fs=48000, n_filters=34, kernel_size=753,
              env_window_ms=10.0)
 ```
 
-### 4.3 ICNet's encoder — internal to `deepSTRF.models.audio.ICNet`
+### 4.4 ICNet's encoder — internal to `deepSTRF.models.audio.ICNet`
 
 [ICNet](https://doi.org/10.1038/s42256-025-01104-9) (Drakopoulos et al.
 Nat. Mach. Intell. 2025) has its own SincNet-and-conv-stack front-end:
