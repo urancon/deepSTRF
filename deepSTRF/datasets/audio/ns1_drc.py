@@ -254,6 +254,10 @@ class NS1Dataset(AudioNeuralDataset):
         )
 
         self.species = "ferret"
+        # Informational only (not enforced): ferret behavioural audiogram spans
+        # roughly 200 Hz – 40 kHz. Lets tooling/notebooks display the range and
+        # users optionally clamp a wav2spec's frequency limits.
+        self.hearing_range_hz = (200.0, 40000.0)
 
         # ----------- 1. load the precomputed spectrograms -----------
         # X_nfht: (S=20, F=34, 1, T=999) at dt=5 ms
