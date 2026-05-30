@@ -158,17 +158,18 @@ class CausalLEAF(nn.Module):
         return F.conv1d(env, kernel, stride=self.hop, groups=self.n_filters)
 
     def _spcen(self, E: torch.Tensor) -> torch.Tensor:
-        """Causal per-channel learnable sPCEN on E of shape (B, F, T)."""
-        s = torch.sigmoid(self.pcen_s_logit).view(1, -1, 1)       # (1,F,1) in (0,1)
-        # forward EMA M(t) = (1-s) M(t-1) + s E(t), per channel (causal IIR).
-        T = E.shape[-1]
-        m = E[..., 0]
-        Ms = [m]
-        s_ = s.squeeze(-1)                                        # (1,F)
-        for t in range(1, T):
-            m = (1 - s_) * m + s_ * E[..., t]
-            Ms.append(m)
-        M = torch.stack(Ms, dim=-1)                              # (B,F,T)
+        """Causal per-channel learnable sPCEN on E of shape (B, F, T).
+
+        The forward EMA ``M(t) = (1-s) M(t-1) + s E(t)`` (per-channel learnable
+        ``s``) is a first-order causal IIR; computed with batched
+        ``torchaudio.lfilter`` (per-channel coeffs) for speed. lfilter uses a
+        zero initial state, so ``M(0) = s·E(0)`` — a negligible transient at the
+        first frame."""
+        import torchaudio.functional as taF
+        s = torch.sigmoid(self.pcen_s_logit)                      # (F,) in (0,1)
+        a = torch.stack([torch.ones_like(s), -(1.0 - s)], dim=1)  # (F, 2)
+        b = torch.stack([s, torch.zeros_like(s)], dim=1)          # (F, 2)
+        M = taF.lfilter(E, a, b, clamp=False)                     # (B, F, T)
         alpha = F.softplus(self.pcen_alpha_raw).view(1, -1, 1)
         delta = F.softplus(self.pcen_delta_raw).view(1, -1, 1)
         root = F.softplus(self.pcen_root_raw).view(1, -1, 1).clamp(min=1e-3)
