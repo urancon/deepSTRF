@@ -79,18 +79,76 @@ along the repeat dimension up to `R_max`.
 ### 3.4 Raw-waveform inputs (audio only)
 
 Audio datasets may expose an opt-in waveform-input mode (e.g.
-`NS1Dataset(return_waveform=True, audio_fs=16000)`). In this mode:
+`NS1Dataset(return_waveform=True, audio_fs=48000)`). The spectrogram transform
+that would otherwise be baked into the dataset moves *into the model*, as the
+first slot of the canonical pipeline (`wav2spec → prefiltering → core →
+readout`), so it can be **learned** (SincNet, ICNet) rather than fixed.
 
-- `self.stims[s]` is a `(1, T_stim)` mono float32 tensor at `self.audio_fs` Hz,
-  cropped / zero-padded so `T_stim = T_neural · audio_fs · dt_ms / 1000`.
+In this mode:
+
+- `self.stims[s]` is a `(1, T_audio)` mono float32 tensor at `self.audio_fs` Hz.
 - `self.responses[s][n]` is unchanged — still `(R, T_neural)` at the dataset's
   `dt_ms`.
-- The model is responsible for the rate change. Pair the waveform stim with a
-  model whose `wav2spec` slot is a non-`Identity()` module (see
-  `deepSTRF.models.wav2spec`); the slot maps `(B, 1, T_stim) → (B, 1, F, T_neural)`
-  and the rest of the canonical `prefiltering → core → readout` pipeline
-  operates as in spectrogram mode.
-- Datasets without a waveform branch leave `self.audio_fs = None`.
+- The model owns the rate change: pair the waveform stim with a model whose
+  `wav2spec` slot is a non-`Identity()` module (see `deepSTRF.models.wav2spec`).
+  The slot maps `(B, 1, T_audio) → (B, 1, F, T_neural)` and the rest of the
+  pipeline runs exactly as in spectrogram mode.
+
+**Strict causality factors into three composable pieces.** deepSTRF's hard
+requirement — model output at response bin `t` depends only on stimulus up to
+wall-clock time `(t+1)·dt` — is preserved because:
+
+1. **Grid lock (dataset).** `hop = audio_fs · dt_ms / 1000` is an integer and
+   `T_audio = T_neural · hop`, pinning audio sample `j` to response bin
+   `j // hop`.
+2. **Per-frame causality (wav2spec).** Output frame `t` sees only audio samples
+   `[0, (t+1)·hop)` — enforced by the Jacobian probe in
+   `tests/test_wav2spec.py`.
+3. **Downstream causality (rest of the pipeline).** Once wav2spec emits a
+   frame-aligned causal spectrogram at the neural rate, the existing spec-domain
+   contract (`tests/test_audio_models.py`) takes over unchanged.
+
+Compose (1) and (2): frame `t` sees exactly the audio of bins `0…t` and nothing
+later. The wav2spec is effectively a *causal resampler* from audio rate to neural
+rate, and `hop` is the bridge between the two grids.
+
+**Conventions for a dataset's waveform branch:**
+
+- **C1 — grid lock.** `audio_fs · dt_ms / 1000` must be a positive integer, and
+  each waveform must be cropped / padded to exactly `T_resp_s · hop` samples.
+  Enforced for every audio dataset by `AudioNeuralDataset.validate()` (and
+  surfaced as `self.hop`).
+- **C2 — right-pad.** Variable-length waveforms are zero-padded on the *end*
+  (append), mirroring the response NaN-padding, so bin-0 alignment is preserved.
+  `neural_collate` does this automatically — one unified collate serves both
+  modes (stims zero-padded, responses NaN-padded), so users never swap collate.
+- **C3 — mono.** Waveforms are `(1, T_audio)`, downmixed to mono.
+- **C4 — opt-in.** `return_waveform=True` is implemented only where genuine
+  source audio exists. Synthetic-spectrogram-only stimuli (e.g. some DRC) stay
+  spec-mode; a dataset with no source audio raises `NotImplementedError`.
+
+**Matching a `wav2spec` to its dataset.** A front-end's `audio_fs` and `hop` must
+agree with the dataset's, or frames won't align with response bins. The simple,
+explicit path is to read them off the dataset:
+
+```python
+w = SincNet(audio_fs=ds.audio_fs, hop_ms=ds.dt, n_filters=ds.F)
+# or:  w = make_wav2spec("sincnet", audio_fs=ds.audio_fs, dt_ms=ds.dt, ...)
+```
+
+A gross mismatch (non-`hop`-divisible `T_audio`) raises in the wav2spec's
+`forward`; a subtler one (matching `audio_fs`, wrong `hop`) surfaces as a
+prediction-vs-response shape error at the loss. There is no dataset↔model
+auto-binding by design — the model holds no dataset reference, and the explicit
+path above keeps things simple.
+
+- **`hearing_range_hz` (informational).** Audio datasets may set an optional
+  `(low, high)` Hz bound on the species' canonical hearing range (e.g.
+  `(200.0, 40000.0)` for ferret). Purely advisory — nothing is enforced against
+  it; tooling can display it and users may choose to clamp a wav2spec's
+  frequency limits. `None` when unknown.
+- Datasets without a waveform branch leave `self.audio_fs = None` (and `self.hop`
+  is then `None`).
 
 ## 4. Why NaN-as-sentinel
 
@@ -204,6 +262,10 @@ handling, eval-only metrics): see
    no longer needed — `nrn_masks` is a `@property` derived from responses).
 7. **`__len__` and `__getitem__` honour the current selection — bidirectionally.**
    See §8 below — the contract deserves its own section.
+8. **Waveform mode obeys the grid lock.** When `self.audio_fs` is set, every
+   stim is `(1, T_audio)` with `T_audio = T_resp_s · hop` and integer
+   `hop = audio_fs · dt_ms / 1000` (§3.4, conventions C1–C4). Enforced by
+   `AudioNeuralDataset.validate()`.
 
 ## 8. Iteration honours the current selection (bidirectional)
 

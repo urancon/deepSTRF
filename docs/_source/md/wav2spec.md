@@ -36,6 +36,31 @@ with `AdapTrans`, for example). The `out_channels = F` constraint is
 enforced at model-construction time by `AudioEncodingModel.__init__`,
 which raises if `wav2spec.out_channels != n_frequency_bands`.
 
+### Matching a `wav2spec` to its dataset
+
+A front-end's `audio_fs` and `hop` must agree with the dataset's, or the
+output frames won't align with the response bins (the audio→neural grid lock
+— see [`data_paradigm.md`](data_paradigm.md) §3.4). The simple, explicit path
+is to read both off the dataset:
+
+```python
+w = SincNet(audio_fs=ds.audio_fs, hop_ms=ds.dt, n_filters=ds.F)
+# or:  w = make_wav2spec("sincnet", audio_fs=ds.audio_fs, dt_ms=ds.dt, ...)
+```
+
+There is **no** dataset↔model auto-binding (the model holds no dataset
+reference — keeping the API simple). Instead, two guards catch a mismatch:
+
+- a **gross** mismatch (an input length that is not a multiple of `hop`, e.g.
+  the wrong `dt_ms`) raises in the front-end's `forward`;
+- a **subtle** one (correct `audio_fs` but the wrong `hop` magnitude → the
+  wrong `T_neural`) surfaces as a prediction-vs-response shape error at the
+  loss step.
+
+Datasets may also advertise an informational `hearing_range_hz` `(low, high)`
+tuple (e.g. `(200.0, 40000.0)` for ferret); it is purely advisory — nothing
+clamps a wav2spec's `f_min` / `f_max` against it.
+
 ## 2. Strict causality
 
 **Every `wav2spec` module shipped in deepSTRF satisfies strict causality:**
