@@ -34,6 +34,16 @@ WAV2SPEC_CASES = [
      lambda: __import__("deepSTRF.models.wav2spec", fromlist=["SincNet"])
              .SincNet(audio_fs=16000, n_filters=34, kernel_size=251, hop_ms=5.0,
                       init="mel", activation="logabs", envelope=True)),
+    ("CausalGammatone-16kHz-5ms-log-halfwave",
+     lambda: __import__("deepSTRF.models.wav2spec", fromlist=["CausalGammatone"])
+             .CausalGammatone(audio_fs=16000, n_filters=34, hop_ms=5.0,
+                              f_min=300.0, f_max=7000.0, kernel_ms=20.0)),
+    ("CausalGammatone-16kHz-5ms-cuberoot-full",
+     lambda: __import__("deepSTRF.models.wav2spec", fromlist=["CausalGammatone"])
+             .CausalGammatone(audio_fs=16000, n_filters=24, hop_ms=5.0,
+                              f_min=300.0, f_max=7000.0, kernel_ms=15.0,
+                              rectify="full", compression="cuberoot",
+                              env_window_ms=10.0)),
 ]
 
 
@@ -60,6 +70,13 @@ def test_factory_dispatch():
     assert s.hop == 80
     assert s.out_channels == 48
     assert s.kernel_size == 64
+
+    from deepSTRF.models.wav2spec import CausalGammatone
+    g = make_wav2spec("gammatone", audio_fs=16000, dt_ms=5.0, n_filters=24)
+    assert isinstance(g, CausalGammatone)
+    assert g.audio_fs == 16000
+    assert g.hop == 80
+    assert g.out_channels == 24
 
     with pytest.raises(ValueError):
         make_wav2spec("not-a-real-frontend", audio_fs=16000, dt_ms=5.0)

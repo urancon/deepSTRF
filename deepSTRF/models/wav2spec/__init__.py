@@ -23,10 +23,11 @@ Modules expose:
 """
 
 from .causal_mel import CausalMelSpectrogram
+from .gammatone import CausalGammatone
 from .sincnet import SincNet
 
 
-__all__ = ["CausalMelSpectrogram", "SincNet", "make_wav2spec"]
+__all__ = ["CausalMelSpectrogram", "CausalGammatone", "SincNet", "make_wav2spec"]
 
 
 def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
@@ -34,10 +35,9 @@ def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
 
     Parameters
     ----------
-    kind : {'mel'}
-        Which front-end to build. Currently only the non-learnable causal
-        mel spectrogram is shipped; learnable front-ends (``'sincnet'``,
-        ``'icnet'``) will register here in later phases.
+    kind : {'mel', 'gammatone', 'sincnet'}
+        Which front-end to build. ``'mel'`` and ``'gammatone'`` are
+        non-learnable cochleagrams; ``'sincnet'`` has learnable filter cutoffs.
     audio_fs : int
         Audio sample rate (Hz). Must match the dataset's ``audio_fs``.
     dt_ms : float
@@ -57,9 +57,11 @@ def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
     kind = kind.lower()
     if kind == "mel":
         return CausalMelSpectrogram(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
+    if kind == "gammatone":
+        return CausalGammatone(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
     if kind == "sincnet":
         return SincNet(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
     raise ValueError(
         f"Unknown wav2spec kind {kind!r}. Currently supported: "
-        f"'mel', 'sincnet'. More learnable front-ends to follow."
+        f"'mel', 'gammatone', 'sincnet'."
     )
