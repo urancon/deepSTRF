@@ -85,3 +85,53 @@ extraction stage.
 
 Torch class: `ConvNet2D(...)`;  Original paper: [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110)
 
+
+### Recurrent / state-space network (StateNet)
+
+*A per-timestep spectral encoder feeding a recurrent backbone (GRU / LSTM / Mamba
+/ S4 / LMU). It captures long-range temporal dependencies through the recurrent
+state and is the strongest model in the zoo on NS1.*
+
+Torch class: `StateNet(...)`; Original paper: [Rançon et al. (2025)](https://doi.org/10.1038/s42003-025-08858-3)
+
+
+### Transformer
+
+*Patch-embedding + sinusoidal positional encoding + a per-forward causal
+self-attention mask, so it generalizes to any sequence length. An optional
+finite `context_window` makes attention band-causal.*
+
+Torch class: `Transformer(...)`
+
+
+### ICNet
+
+*A deep, waveform-native model: a SincNet + strided-conv encoder + bottleneck
+feeding a per-neuron readout with a Poisson (softplus) head. It consumes raw
+audio directly (no precomputed spectrogram). Designed for midbrain (IC)
+recordings; it ports cleanly into deepSTRF but is oversized for small cortical
+datasets like NS1.*
+
+Torch class: `ICNet(...)`; Original paper: [Drakopoulos et al. (2025)](https://doi.org/10.1038/s42256-025-01104-9)
+
+---
+
+## Waveform front-ends (`wav2spec`)
+
+Every audio model defaults to consuming a precomputed spectrogram, but can
+instead take a **raw waveform** through its `wav2spec` slot — a front-end that
+maps audio to a neural-rate spectrogram and that can itself be **learned**
+end-to-end with the model. Shipped front-ends:
+
+| Front-end | Learnable | Notes |
+|---|---|---|
+| `CausalMelSpectrogram` | no | strictly-causal log-mel (Rahman 2019 defaults) |
+| `CausalGammatone` | no | ERB gammatone filterbank; optional causal PCEN |
+| `SincNet` | filter cutoffs | parametric bandpass (Ravanelli & Bengio 2018) |
+| `CausalLEAF` | full | learnable Gabor + Gaussian pooling + sPCEN (Zeghidour 2021) |
+
+All are strictly causal. See the dedicated [`wav2spec`](wav2spec.md) page for the
+slot contract, the `make_wav2spec` factory, and the NS1 benchmarks. Waveform-native
+models additionally expose `waveform_gradmap(...)`, a listenable **time-domain**
+receptive field (the waveform analogue of `STRF_gradmap`).
+
