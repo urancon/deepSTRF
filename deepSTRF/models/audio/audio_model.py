@@ -150,7 +150,7 @@ class AudioEncodingModel(NeuralModel):
 
         return stim_opt.grad
 
-    def waveform_gradmap(self, stimulus, neuron=None, reduce='sum'):
+    def waveform_gradmap(self, stimulus, neuron=None, reduce='last'):
         """Gradient of a neuron's response w.r.t. the input **waveform**.
 
         The waveform-domain analogue of :meth:`STRF_gradmap`: instead of
@@ -169,16 +169,25 @@ class AudioEncodingModel(NeuralModel):
         neuron : int, optional
             Which output neuron. ``None`` (default) sums over all neurons
             (a population gradmap).
-        reduce : {'sum', 'last', 'peak'}, default 'sum'
-            How to reduce the neuron's response over time before backprop:
-            time-integrate (``'sum'``), last timestep (``'last'``, matching
-            :meth:`STRF_gradmap`), or the peak-response timestep (``'peak'``).
+        reduce : {'last', 'peak', 'sum'}, default 'last'
+            How to reduce the neuron's response over time before backprop.
+            ``'last'`` (default, matching :meth:`STRF_gradmap`) maximizes the
+            activation at the **last timestep**, so the gradient is supported
+            only within the receptive field before it — it reveals the RF and
+            decays to ~zero further into the past. ``'peak'`` does the same at
+            the peak-response timestep. ``'sum'`` time-integrates over *all*
+            output timesteps, which makes the gradient non-zero almost
+            everywhere by construction (a whole-stimulus saliency map, **not**
+            a receptive field).
 
         Returns
         -------
         torch.Tensor, shape ``(T_audio,)``
             Per-audio-sample gradient — the waveform-domain receptive field.
             Computed in ``eval`` mode (the strictly-causal inference regime).
+            With ``reduce='last'`` the support is the RF length (e.g. ~45 ms
+            for a T=9 STRF on a mel front-end; longer for adaptive front-ends
+            like LEAF, whose PCEN smoother adds a decaying temporal memory).
         """
         if isinstance(self.wav2spec, nn.Identity):
             raise RuntimeError(
