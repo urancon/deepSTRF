@@ -49,6 +49,10 @@ WAV2SPEC_CASES = [
              .CausalGammatone(audio_fs=16000, n_filters=24, hop_ms=5.0,
                               f_min=300.0, f_max=7000.0, kernel_ms=15.0,
                               compression="pcen")),
+    ("CausalLEAF-16kHz-5ms",
+     lambda: __import__("deepSTRF.models.wav2spec", fromlist=["CausalLEAF"])
+             .CausalLEAF(audio_fs=16000, n_filters=24, hop_ms=5.0,
+                         f_min=60.0, f_max=7000.0, kernel_ms=12.0)),
 ]
 
 
@@ -109,6 +113,20 @@ def test_sincnet_gradient_flow_through_cutoffs():
     assert sn.band_hz_.grad is not None
     assert sn.low_hz_.grad.abs().sum().item() > 0
     assert sn.band_hz_.grad.abs().sum().item() > 0
+
+
+def test_leaf_gradient_flow_all_stages():
+    """Backprop populates ``.grad`` on every learnable LEAF stage — Gabor
+    (centre freq + sigma), Gaussian pooling, and sPCEN (alpha/delta/root/s)."""
+    from deepSTRF.models.wav2spec import CausalLEAF
+
+    leaf = CausalLEAF(audio_fs=16000, n_filters=16, hop_ms=5.0,
+                      f_min=60.0, f_max=7000.0, kernel_ms=12.0)
+    y = leaf(torch.randn(1, 1, 80 * leaf.hop) * 0.1)
+    y.pow(2).mean().backward()
+    for name, p in leaf.named_parameters():
+        assert p.grad is not None and p.grad.abs().sum().item() > 0, \
+            f"no gradient reached LEAF parameter {name!r}"
 
 
 def test_sincnet_cutoff_clamps():

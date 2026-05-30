@@ -24,10 +24,12 @@ Modules expose:
 
 from .causal_mel import CausalMelSpectrogram
 from .gammatone import CausalGammatone
+from .leaf import CausalLEAF
 from .sincnet import SincNet
 
 
-__all__ = ["CausalMelSpectrogram", "CausalGammatone", "SincNet", "make_wav2spec"]
+__all__ = ["CausalMelSpectrogram", "CausalGammatone", "CausalLEAF", "SincNet",
+           "make_wav2spec"]
 
 
 def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
@@ -61,7 +63,9 @@ def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
         return CausalGammatone(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
     if kind == "sincnet":
         return SincNet(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
+    if kind == "leaf":
+        return CausalLEAF(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
     raise ValueError(
         f"Unknown wav2spec kind {kind!r}. Currently supported: "
-        f"'mel', 'gammatone', 'sincnet'."
+        f"'mel', 'gammatone', 'sincnet', 'leaf'."
     )
