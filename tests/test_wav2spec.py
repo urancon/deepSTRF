@@ -44,6 +44,11 @@ WAV2SPEC_CASES = [
                               f_min=300.0, f_max=7000.0, kernel_ms=15.0,
                               rectify="full", compression="cuberoot",
                               env_window_ms=10.0)),
+    ("CausalGammatone-16kHz-5ms-pcen",
+     lambda: __import__("deepSTRF.models.wav2spec", fromlist=["CausalGammatone"])
+             .CausalGammatone(audio_fs=16000, n_filters=24, hop_ms=5.0,
+                              f_min=300.0, f_max=7000.0, kernel_ms=15.0,
+                              compression="pcen")),
 ]
 
 

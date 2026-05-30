@@ -61,12 +61,22 @@ class CausalGammatone(nn.Module):
         Width of the causal averaging window that turns the rectified bandpass
         into an envelope. ``None`` → ``2·hop_ms`` (light smoothing). Must be
         ``>= hop_ms``.
-    compression : {'log', 'cuberoot', 'none'}, default 'log'
+    compression : {'log', 'cuberoot', 'pcen', 'none'}, default 'log'
         Output nonlinearity. ``'log'`` matches the mel baseline
         (``log(max(env, log_floor))``); ``'cuberoot'`` is the classic
-        loudness power-law ``env**(1/3)``.
+        loudness power-law ``env**(1/3)``; ``'pcen'`` is causal Per-Channel
+        Energy Normalization (Wang et al. 2017), an adaptive automatic-gain
+        control that divides each channel by a causal running-mean of its own
+        energy before root compression — emphasises onsets / transients.
     log_floor : float, default 1e-4
         Pre-log clamp for ``compression='log'`` (Rahman threshold-clip form).
+    pcen_s, pcen_alpha, pcen_delta, pcen_r, pcen_eps : float
+        PCEN parameters (only used when ``compression='pcen'``). Defaults are
+        the standard fixed values: ``s=0.025`` (smoother coeff), ``alpha=0.98``
+        (gain-normalisation strength), ``delta=2.0``, ``r=0.5`` (root), and
+        ``eps=1e-6``. ``PCEN = (E / (eps + M)**alpha + delta)**r - delta**r``
+        with ``M(t) = (1-s) M(t-1) + s E(t)`` (causal IIR, run at the neural
+        rate on the pooled envelope).
     """
 
     def __init__(self, audio_fs: int, n_filters: int = 34, hop_ms: float = 5.0,
@@ -74,16 +84,25 @@ class CausalGammatone(nn.Module):
                  order: int = 4, b_factor: float = 1.019,
                  kernel_ms: float = 20.0, rectify: str = "halfwave",
                  env_window_ms: Optional[float] = None,
-                 compression: str = "log", log_floor: float = 1e-4):
+                 compression: str = "log", log_floor: float = 1e-4,
+                 pcen_s: float = 0.025, pcen_alpha: float = 0.98,
+                 pcen_delta: float = 2.0, pcen_r: float = 0.5,
+                 pcen_eps: float = 1e-6):
         super().__init__()
         if audio_fs <= 0:
             raise ValueError(f"audio_fs must be positive (got {audio_fs})")
         if rectify not in ("halfwave", "full"):
             raise ValueError(f"rectify must be 'halfwave' or 'full' (got {rectify!r})")
-        if compression not in ("log", "cuberoot", "none"):
+        if compression not in ("log", "cuberoot", "pcen", "none"):
             raise ValueError(
-                f"compression must be 'log', 'cuberoot', or 'none' (got {compression!r})"
+                f"compression must be 'log', 'cuberoot', 'pcen', or 'none' "
+                f"(got {compression!r})"
             )
+        self.pcen_s = float(pcen_s)
+        self.pcen_alpha = float(pcen_alpha)
+        self.pcen_delta = float(pcen_delta)
+        self.pcen_r = float(pcen_r)
+        self.pcen_eps = float(pcen_eps)
 
         self.audio_fs = int(audio_fs)
         self.n_filters = int(n_filters)
@@ -165,5 +184,22 @@ class CausalGammatone(nn.Module):
             y = torch.log(y.clamp(min=self.log_floor))
         elif self.compression == "cuberoot":
             y = y.clamp(min=0.0) ** (1.0 / 3.0)
+        elif self.compression == "pcen":
+            y = self._pcen(y.clamp(min=0.0))
         # 'none' -> identity
         return y.unsqueeze(1)  # (B, 1, F, T_neural)
+
+    def _pcen(self, E: torch.Tensor) -> torch.Tensor:
+        """Causal Per-Channel Energy Normalization on ``E`` of shape
+        ``(B, F, T_neural)``. The smoother ``M(t) = (1-s) M(t-1) + s E(t)`` is a
+        first-order IIR run forward in time (uses only past + present), so the
+        whole transform is strictly causal. Computed with
+        ``torchaudio.functional.lfilter`` (zero initial state) for speed."""
+        import torchaudio.functional as taF
+        s = self.pcen_s
+        B, F, T = E.shape
+        a = torch.tensor([1.0, -(1.0 - s)], dtype=E.dtype, device=E.device)
+        b = torch.tensor([s, 0.0], dtype=E.dtype, device=E.device)
+        M = taF.lfilter(E.reshape(B * F, T), a, b, clamp=False).reshape(B, F, T)
+        smooth = (self.pcen_eps + M) ** self.pcen_alpha
+        return (E / smooth + self.pcen_delta) ** self.pcen_r - self.pcen_delta ** self.pcen_r
