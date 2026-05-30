@@ -197,3 +197,111 @@ def test_ns1_wav_stim_mapping_via_mel_correlation():
         f"NS1 wav→stim mapping may be wrong. Diagonal corrs: "
         f"{[float(corr[i, i]) for i in range(20)]}"
     )
+
+
+# --------------------------------------------------------------------------- #
+#  Waveform grid-lock (base-class AudioNeuralDataset.validate) — these run     #
+#  without any on-disk data via a minimal in-memory subclass.                  #
+# --------------------------------------------------------------------------- #
+
+from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
+
+
+class _ToyAudioWav(AudioNeuralDataset):
+    """Minimal in-memory ``AudioNeuralDataset`` for exercising the base-class
+    waveform grid-lock validation without any on-disk assets.
+
+    Builds a clean ``T_audio = T_neural * hop`` grid by default; tests mutate
+    ``self.stims`` / ``self.responses`` afterwards to inject violations and then
+    call ``validate()`` explicitly.
+    """
+
+    def __init__(self, audio_fs=48000, dt_ms=5.0, n_stims=3, T_neural=10, N=2,
+                 hearing_range_hz=(200.0, 40000.0)):
+        super().__init__(path="toy", dt_ms=dt_ms)
+        self.F = 34
+        self.audio_fs = audio_fs
+        self.hearing_range_hz = hearing_range_hz
+        hop = int(round(audio_fs * dt_ms / 1000)) if audio_fs else 1
+        self.stims = [torch.zeros(1, T_neural * hop) for _ in range(n_stims)]
+        self.responses = [[torch.zeros(3, T_neural) for _ in range(N)]
+                          for _ in range(n_stims)]
+        self.stim_meta = [{"name": f"s{i}"} for i in range(n_stims)]
+        self.nrn_meta = [{"id": j} for j in range(N)]
+        self.N_neurons = N
+
+
+def test_audio_grid_lock_accepts_clean_toy():
+    ds = _ToyAudioWav(audio_fs=48000, dt_ms=5.0, T_neural=10)
+    ds.validate()  # must not raise
+    assert ds.hop == 240
+    assert ds.hearing_range_hz == (200.0, 40000.0)
+
+
+def test_audio_hop_none_in_spec_mode():
+    ds = _ToyAudioWav(audio_fs=None)
+    assert ds.hop is None
+    ds.validate()  # grid-lock skipped entirely when audio_fs is None
+
+
+def test_audio_grid_lock_rejects_bad_pad():
+    """T_audio not a multiple of hop → reject."""
+    ds = _ToyAudioWav(T_neural=10)
+    ds.stims[1] = torch.zeros(1, 10 * ds.hop + 1)  # off by one sample
+    with pytest.raises(AssertionError, match="multiple of"):
+        ds.validate()
+
+
+def test_audio_grid_lock_rejects_wrong_frame_count():
+    """T_audio a multiple of hop but T_audio // hop != T_resp → reject."""
+    ds = _ToyAudioWav(T_neural=10)
+    ds.stims[2] = torch.zeros(1, 11 * ds.hop)  # 11 frames vs 10 response bins
+    with pytest.raises(AssertionError, match="neural"):
+        ds.validate()
+
+
+def test_audio_grid_lock_rejects_spec_shaped_stim():
+    """A (1, F, T) spec tensor handed in while audio_fs is set → reject."""
+    ds = _ToyAudioWav(T_neural=10)
+    ds.stims[0] = torch.zeros(1, 34, 10)  # rank-3, wrong for waveform mode
+    with pytest.raises(AssertionError, match=r"\(1, T_audio\)"):
+        ds.validate()
+
+
+def test_audio_grid_lock_rejects_noninteger_hop():
+    """audio_fs * dt_ms / 1000 not integer → reject before per-stim checks."""
+    ds = _ToyAudioWav(audio_fs=44100, dt_ms=5.0, T_neural=10)  # 220.5 samples/bin
+    with pytest.raises(AssertionError, match="integer number of samples"):
+        ds.validate()
+
+
+def test_audio_grid_lock_skips_allsentinel_stim():
+    """A stim no neuron heard (all (1,1)-NaN sentinels) can't be aligned, so
+    its waveform length is not checked against a response length."""
+    ds = _ToyAudioWav(T_neural=10)
+    nan = torch.full((1, 1), float("nan"))
+    ds.responses[0] = [nan, nan]                 # nobody heard stim 0
+    ds.stims[0] = torch.zeros(1, 7 * ds.hop)     # "wrong" length, but unanchored
+    ds.validate()  # must not raise
+
+
+def test_audio_hearing_range_validation():
+    ds = _ToyAudioWav(hearing_range_hz=(40000.0, 200.0))  # decreasing → invalid
+    with pytest.raises(AssertionError, match="hearing_range_hz"):
+        ds.validate()
+
+
+@skip_no_data
+def test_ns1_waveform_validate_and_attrs():
+    """The real NS1 waveform dataset passes the new grid-lock validation and
+    advertises hop / hearing_range_hz; spec mode leaves hop None."""
+    from deepSTRF.datasets.audio.ns1_drc import NS1Dataset
+
+    ds = NS1Dataset(return_waveform=True)
+    ds.validate()  # exercised at construction too, but be explicit
+    assert ds.hop == 240
+    assert ds.hearing_range_hz == (200.0, 40000.0)
+
+    ds_spec = NS1Dataset()
+    assert ds_spec.hop is None
+    assert ds_spec.hearing_range_hz == (200.0, 40000.0)  # set regardless of mode

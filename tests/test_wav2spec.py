@@ -162,3 +162,12 @@ def test_wav2spec_input_validation(wav2spec):
         wav2spec(torch.randn(2, 10 * wav2spec.hop))   # missing channel dim
     with pytest.raises(ValueError):
         wav2spec(torch.randn(2, 2, 10 * wav2spec.hop))  # stereo
+
+
+def test_wav2spec_rejects_nonhop_divisible_length(wav2spec):
+    """Input length not a multiple of hop → clear ValueError. This is the
+    guard that surfaces an audio_fs/dt_ms mismatch between the wav2spec and
+    its dataset (e.g. SincNet(audio_fs=16000) against a 48 kHz dataset)."""
+    x = torch.randn(2, 1, 50 * wav2spec.hop + 1)
+    with pytest.raises(ValueError, match="multiple of hop"):
+        wav2spec(x)
