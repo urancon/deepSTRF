@@ -199,6 +199,49 @@ def test_ns1_wav_stim_mapping_via_mel_correlation():
     )
 
 
+@skip_no_data
+def test_causal_mel_matches_groundtruth_spectrogram():
+    """Spec-fallback equivalence (Phase-B arm a): the shipped strictly-causal
+    CausalMelSpectrogram, run on the waveform branch, produces a spectrogram
+    that best-matches its *own* stim's precomputed ``X_nfht`` for (almost)
+    every stim.
+
+    Absolute per-stim correlation has a high-frequency tail (the htk-mel vs
+    voicebox toolchain gap — mean ≈ 0.66, with the 'insect' stim as low as
+    ~0.04), so we assert the robust best-match *diagonal*, not a per-stim
+    magnitude. This is the spectrogram-level equivalence; the task-level
+    equivalence (cc_norm parity) lives in the examples notebook. Currently
+    20/20.
+    """
+    import torch
+    from deepSTRF.datasets.audio.ns1_drc import NS1Dataset
+    from deepSTRF.models.wav2spec import CausalMelSpectrogram
+
+    ds_wav = NS1Dataset(return_waveform=True)
+    ds_spec = NS1Dataset()
+    mel = CausalMelSpectrogram(audio_fs=ds_wav.audio_fs, n_mels=ds_wav.F,
+                               hop_ms=ds_wav.dt)
+    mel.eval()
+    S = ds_wav.get_S()
+    specs, X = [], []
+    with torch.no_grad():
+        for s in range(S):
+            specs.append(mel(ds_wav.stims[s].unsqueeze(0)).squeeze().numpy())
+            X.append(ds_spec.stims[s].squeeze().numpy())
+    corr = np.zeros((S, S))
+    for i in range(S):
+        for j in range(S):
+            T = min(specs[i].shape[-1], X[j].shape[-1])
+            corr[i, j] = np.corrcoef(specs[i][..., :T].ravel(),
+                                     X[j][..., :T].ravel())[0, 1]
+    hits = int((corr.argmax(axis=1) == np.arange(S)).sum())
+    assert hits >= 18, (
+        f"CausalMel best-match diagonal only {hits}/{S} — the model-side "
+        f"causal mel no longer reproduces the dataset-side spectrogram. "
+        f"diag corrs: {[round(float(corr[i, i]), 2) for i in range(S)]}"
+    )
+
+
 # --------------------------------------------------------------------------- #
 #  Waveform grid-lock (base-class AudioNeuralDataset.validate) — these run     #
 #  without any on-disk data via a minimal in-memory subclass.                  #
