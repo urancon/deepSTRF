@@ -169,6 +169,32 @@ def _make_wav_model(kind):
     raise ValueError(kind)
 
 
+@pytest.mark.parametrize("reduce", ['sum', 'last', 'peak'])
+def test_waveform_gradmap(reduce):
+    """waveform_gradmap returns a (T_audio,) gradient for a wav-native model
+    and raises for a spectrogram-input (Identity wav2spec) model."""
+    _seed()
+    from deepSTRF.models.audio import Linear
+    from deepSTRF.models.wav2spec import CausalMelSpectrogram
+
+    mel = CausalMelSpectrogram(audio_fs=16000, n_mels=F, hop_ms=5.0, win_ms=25.0)
+    m = Linear(n_frequency_bands=F, temporal_window_size=9, out_neurons=N, wav2spec=mel)
+    T_audio = 100 * mel.hop
+    x = torch.randn(T_audio) * 0.1
+    g = m.waveform_gradmap(x, neuron=0, reduce=reduce)
+    assert g.shape == (T_audio,)
+    assert torch.isfinite(g).all() and g.abs().sum().item() > 0
+
+    # population gradmap (neuron=None) also works
+    g_all = m.waveform_gradmap(x, neuron=None, reduce=reduce)
+    assert g_all.shape == (T_audio,)
+
+    # spectrogram-input model has no waveform front-end -> raises
+    m_spec = Linear(n_frequency_bands=F, temporal_window_size=9, out_neurons=N)
+    with pytest.raises(RuntimeError):
+        m_spec.waveform_gradmap(torch.randn(F, 50))
+
+
 @pytest.mark.parametrize("kind", ['Linear', 'StateNet', 'Transformer'])
 def test_bitwise_causality_through_wav2spec(kind):
     """End-to-end causality contract for a model with a non-Identity

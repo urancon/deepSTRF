@@ -149,3 +149,69 @@ class AudioEncodingModel(NeuralModel):
         loss.backward()
 
         return stim_opt.grad
+
+    def waveform_gradmap(self, stimulus, neuron=None, reduce='sum'):
+        """Gradient of a neuron's response w.r.t. the input **waveform**.
+
+        The waveform-domain analogue of :meth:`STRF_gradmap`: instead of
+        probing the *spectrogram* input, backprop a neuron's response all the
+        way through the (learnable) ``wav2spec`` front-end to the raw audio
+        samples. The returned gradient is itself a waveform — a listenable,
+        time-domain receptive field — only defined for wav-native models (a
+        non-``Identity`` ``wav2spec``).
+
+        Parameters
+        ----------
+        stimulus : array-like, shape (T_audio,), (1, T_audio) or (1, 1, T_audio)
+            Audio to compute the gradmap around (e.g. a real stimulus). A real
+            stimulus is recommended over silence — adaptive front-ends (PCEN)
+            are ill-conditioned at zero energy.
+        neuron : int, optional
+            Which output neuron. ``None`` (default) sums over all neurons
+            (a population gradmap).
+        reduce : {'sum', 'last', 'peak'}, default 'sum'
+            How to reduce the neuron's response over time before backprop:
+            time-integrate (``'sum'``), last timestep (``'last'``, matching
+            :meth:`STRF_gradmap`), or the peak-response timestep (``'peak'``).
+
+        Returns
+        -------
+        torch.Tensor, shape ``(T_audio,)``
+            Per-audio-sample gradient — the waveform-domain receptive field.
+            Computed in ``eval`` mode (the strictly-causal inference regime).
+        """
+        if isinstance(self.wav2spec, nn.Identity):
+            raise RuntimeError(
+                "waveform_gradmap requires a waveform front-end (a non-Identity "
+                "wav2spec); for spectrogram-input models use STRF_gradmap.")
+
+        device = next(self.parameters()).device
+        x = torch.as_tensor(stimulus, dtype=torch.float32, device=device)
+        while x.dim() < 3:
+            x = x.unsqueeze(0)                       # -> (1, 1, T_audio)
+        if x.dim() != 3 or tuple(x.shape[:2]) != (1, 1):
+            raise ValueError(
+                "stimulus must be (T_audio,), (1, T_audio) or (1, 1, T_audio); "
+                f"got {tuple(x.shape)}")
+        x = x.detach().clone().requires_grad_(True)
+
+        was_training = self.training
+        self.eval()
+        try:
+            y = self.forward(x)                      # (1, N, 1, T)
+            resp = y[0, :, 0, :] if neuron is None else y[0, neuron:neuron + 1, 0, :]
+            if reduce == 'sum':
+                obj = resp.sum()
+            elif reduce == 'last':
+                obj = resp[..., -1].sum()
+            elif reduce == 'peak':
+                obj = resp.max(dim=-1).values.sum()
+            else:
+                raise ValueError(f"reduce must be 'sum', 'last' or 'peak' (got {reduce!r})")
+            self.zero_grad(set_to_none=True)
+            obj.backward()
+        finally:
+            if was_training:
+                self.train()
+
+        return x.grad.detach().reshape(-1)           # (T_audio,)
