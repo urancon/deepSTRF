@@ -568,7 +568,8 @@ class Transformer(AudioEncodingModel):
                  n_heads: int = 1, n_layers: int = 1,
                  out_neurons: int = 1,
                  output_activation: nn.Module = None,
-                 prefiltering: nn.Module = None):
+                 prefiltering: nn.Module = None,
+                 wav2spec: nn.Module = None):
         # `temporal_window_size` on the base is used by STRF_gradmap to size
         # a null-stim probe; the receptive-field "window" in this model is
         # context_window if set else a sensible default.
@@ -578,6 +579,7 @@ class Transformer(AudioEncodingModel):
             temporal_window_size=gradmap_T,
             out_neurons=out_neurons,
             prefiltering=prefiltering,
+            wav2spec=wav2spec,
         )
 
         # default freq_patch_size: cover the whole frequency axis (one token = one frame slice)
@@ -641,7 +643,8 @@ class Transformer(AudioEncodingModel):
         Overrides the base template because the attention mask must be
         rebuilt at the actual sequence length L of each input.
         """
-        # x: (B, 1, F, L)
+        x = self.wav2spec(x)                    # (B,1,T_audio)->(B,1,F,L) in wav
+        # x: (B, 1, F, L)                       #   mode; nn.Identity in spec mode
         B, _, _, L = x.shape
         y = self.prefiltering(x)                # (B, C_in, F, L)
         y = self.time_pad(y)                    # (B, C_in, F, L + K_T - 1)
@@ -721,12 +724,14 @@ class StateNet(AudioEncodingModel):
                  connectivity: str = 'LC', rnn_type: str = 'GRU',
                  out_neurons: int = 1,
                  output_activation: nn.Module = None,
-                 prefiltering: nn.Module = None):
+                 prefiltering: nn.Module = None,
+                 wav2spec: nn.Module = None):
         super().__init__(
             n_frequency_bands=n_frequency_bands,
             temporal_window_size=temporal_window_size,
             out_neurons=out_neurons,
             prefiltering=prefiltering,
+            wav2spec=wav2spec,
         )
         self.K = kernel_size
         self.S = stride
@@ -804,7 +809,8 @@ class StateNet(AudioEncodingModel):
         layout — these reshapes don't decompose into the canonical core /
         readout slots.
         """
-        # x: (B, 1, F, T)
+        x = self.wav2spec(x)                                    # (B,1,T_audio)->
+        # x: (B, 1, F, T)                                       #   (B,1,F,T) in wav mode; Identity in spec mode
         y = self.prefiltering(x)                                # (B, C_in, F, T)
         y = y.permute(3, 0, 1, 2)                               # (T, B, C_in, F)
         T_, B = y.shape[:2]

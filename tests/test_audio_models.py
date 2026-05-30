@@ -151,23 +151,38 @@ def test_bitwise_causality_in_eval_mode(factory):
         f"{type(m).__name__}: causality violation; max past diff = {diff:.2e}"
 
 
-def test_bitwise_causality_through_wav2spec():
+def _make_wav_model(kind):
+    """Build a model with a non-Identity CausalMel wav2spec slot. Covers the
+    base-template path (Linear) and the two custom-forward models (StateNet,
+    Transformer) that route their own forward through ``self.wav2spec``."""
+    from deepSTRF.models.audio import Linear, StateNet, Transformer
+    from deepSTRF.models.wav2spec import CausalMelSpectrogram
+    mel = CausalMelSpectrogram(audio_fs=16000, n_mels=F, hop_ms=5.0, win_ms=25.0)
+    if kind == 'Linear':
+        return Linear(n_frequency_bands=F, temporal_window_size=9, out_neurons=N, wav2spec=mel)
+    if kind == 'StateNet':
+        return StateNet(n_frequency_bands=F, kernel_size=7, hidden_channels=4,
+                        rnn_type='GRU', out_neurons=N, wav2spec=mel)
+    if kind == 'Transformer':
+        return Transformer(n_frequency_bands=F, embedding_dim=32, n_heads=2,
+                           n_layers=1, out_neurons=N, wav2spec=mel)
+    raise ValueError(kind)
+
+
+@pytest.mark.parametrize("kind", ['Linear', 'StateNet', 'Transformer'])
+def test_bitwise_causality_through_wav2spec(kind):
     """End-to-end causality contract for a model with a non-Identity
     ``wav2spec`` slot: changing future audio samples must not perturb past
     output frames. The wav2spec module is exercised in isolation by
-    ``tests/test_wav2spec.py``; this is the composition with Linear.
+    ``tests/test_wav2spec.py``; this is the composition with the model's
+    forward (including StateNet/Transformer, whose custom forwards must call
+    ``self.wav2spec`` before their own pipeline).
     """
     _seed()
-    from deepSTRF.models.audio import Linear
-    from deepSTRF.models.wav2spec import CausalMelSpectrogram
-
-    audio_fs = 16000
     hop = 80  # 5 ms at 16 kHz
     T_neural = 100
     T_audio = T_neural * hop
-    wav2spec = CausalMelSpectrogram(audio_fs=audio_fs, n_mels=F, hop_ms=5.0, win_ms=25.0)
-    m = Linear(n_frequency_bands=F, temporal_window_size=9, out_neurons=N,
-               wav2spec=wav2spec)
+    m = _make_wav_model(kind)
     m.eval()
 
     cut_neural = T_neural // 2
@@ -181,7 +196,7 @@ def test_bitwise_causality_through_wav2spec():
         y_perturbed = m(x_perturbed)
     diff = (y - y_perturbed)[..., :cut_neural].abs().max().item()
     assert diff < 1e-5, (
-        f"Linear+wav2spec: causality violation; max past diff = {diff:.2e}"
+        f"{kind}+wav2spec: causality violation; max past diff = {diff:.2e}"
     )
 
 
