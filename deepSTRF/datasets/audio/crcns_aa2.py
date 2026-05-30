@@ -257,6 +257,7 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
                  stimuli=('conspecific', 'flatrip', 'songrip'),
                  animals='all', dt_ms=1, smooth=True, n_mels=32,
                  compression='cubic',
+                 return_waveform: bool = False, audio_fs: int = 32000,
                  download: bool = False,
                  username: Optional[str] = None,
                  password: Optional[str] = None):
@@ -277,7 +278,19 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
         n_mels : int
             Number of mel frequency bands.
         compression : str
-            Spectrogram compression ('cubic', 'log1p', 'none').
+            Spectrogram compression ('cubic', 'log1p', 'none'). Ignored when
+            ``return_waveform=True``.
+        return_waveform : bool, default False
+            If True, ``self.stims[s]`` holds the raw audio waveform
+            ``(1, T_audio)`` at ``audio_fs`` Hz (grid-locked to ``T_audio =
+            T_neural * hop``) instead of the in-loader mel spectrogram. Pair
+            with a model whose ``wav2spec`` slot is a waveform front-end;
+            responses are unchanged.
+        audio_fs : int, default 32000
+            Sample rate for waveform mode. Default 32 kHz is the native rate of
+            the AA2 wavs (no resampling); other values resample and must keep
+            ``audio_fs * dt_ms / 1000`` an integer. Ignored unless
+            ``return_waveform=True``.
         download : bool, default False
             If True and the data is missing under ``path``, fetch the
             ~30 MB worth of CRCNS-AA2 archives from the NERSC mirror
@@ -295,6 +308,11 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
         super().__init__(path, dt_ms)
 
         self.species = 'zebra finch'
+        # Informational hearing range (zebra finch behavioural audiogram ≈ 250 Hz – 8 kHz).
+        self.hearing_range_hz = (250.0, 8000.0)
+        # Waveform-input mode: store raw audio instead of the in-loader mel spec.
+        self.return_waveform = bool(return_waveform)
+        self.audio_fs = int(audio_fs) if return_waveform else None
         # hop_length (samples) | dt (ms)
         # 320 | 10
         # 160 | 5
@@ -303,6 +321,8 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
         hl = dt_ms * 32
         transform = torchaudio.transforms.MelSpectrogram(sample_rate=32000, n_fft=10 * hl, hop_length=hl, n_mels=self.F)  # n_fft=800
         self.compression = compression
+        # audio-samples-per-neural-bin for waveform mode (== hl at native 32 kHz).
+        hop = int(round(audio_fs * dt_ms / 1000)) if return_waveform else None
 
         #######################
         # 1. get metadata
@@ -483,8 +503,19 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
             if len(no_data_nrn_idces) == self.N_neurons:
                 continue
 
-            # otherwise keep the stim and its per-neuron responses
-            self.stims.append(spec)
+            # otherwise keep the stim and its per-neuron responses. In waveform
+            # mode store the raw audio (grid-locked to T * hop samples so it
+            # aligns with the T response bins) instead of the in-loader mel spec.
+            if return_waveform:
+                T_audio = T * hop
+                w = wav if audio_fs == sr else torchaudio.functional.resample(wav, sr, audio_fs)
+                if w.shape[-1] < T_audio:
+                    w = torch.nn.functional.pad(w, (0, T_audio - w.shape[-1]))
+                else:
+                    w = w[..., :T_audio]
+                self.stims.append(w.contiguous().float())
+            else:
+                self.stims.append(spec)
             self.responses.append(pop_resps)
             wav_info = STIM_INFO.get(stim_name, {})
             self.stim_meta.append({
