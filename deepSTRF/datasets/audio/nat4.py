@@ -7,6 +7,7 @@ from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import torch
+import torchaudio
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 from deepSTRF.datasets.audio._nat4_native import (
@@ -55,7 +56,7 @@ def _parse_nat4_cell_id(cell_id: str) -> dict:
     return out
 
 
-def download_nat4(area: str, dest: Optional[str] = None) -> str:
+def download_nat4(area: str, dest: Optional[str] = None, wav: bool = False) -> str:
     """Download the NAT4 release from Zenodo into ``dest``.
 
     Fetches the population .tgz, the per-cell auditory CSV, and the per-site
@@ -70,6 +71,11 @@ def download_nat4(area: str, dest: Optional[str] = None) -> str:
     dest : str, optional
         Defaults to ``default_cache_dir('NAT4')`` (overridable via
         ``$DEEPSTRF_DATA_DIR``).
+    wav : bool, default False
+        If True, also fetch and unpack ``wav.zip`` (the 593 source waveforms,
+        44.1 kHz / 1 s each) into ``<dest>/wav/`` for the raw-waveform branch
+        (``NAT4Dataset(return_waveform=True)``). The spectrogram-mode loader
+        does not need it.
     """
     assert area in ("A1", "PEG"), f"area must be 'A1' or 'PEG' (got {area!r})"
     dest_path = str(default_cache_dir("NAT4") if dest is None else dest)
@@ -92,6 +98,14 @@ def download_nat4(area: str, dest: Optional[str] = None) -> str:
         if not os.path.exists(zip_path):
             zenodo_download(NAT4_ZENODO_RECORD, zip_name, zip_path)
         unzip(zip_path, dest_path)
+
+    if wav:
+        wav_dir = os.path.join(dest_path, "wav")
+        if not os.path.isdir(wav_dir):
+            wav_zip = os.path.join(dest_path, "wav.zip")
+            if not os.path.exists(wav_zip):
+                zenodo_download(NAT4_ZENODO_RECORD, "wav.zip", wav_zip)
+            unzip(wav_zip, dest_path)
 
     return dest_path
 
@@ -137,7 +151,10 @@ class NAT4Dataset(AudioNeuralDataset):
 
     Follows the standard deepSTRF data paradigm (see docs/_source/md/data_paradigm.md).
     NAT4-specific metadata contents:
-     - self.stims                       list of S=595 tensors (1, F=18, T=150)
+     - self.stims                       list of S=595 tensors (1, F=18, T=150);
+                                        with ``return_waveform=True`` instead
+                                        ``(1, T_audio=T*hop)`` raw waveforms at
+                                        ``audio_fs`` (hop=441 at 44.1 kHz / 10 ms)
      - self.responses                   list of S lists of N tensors —
                                         est stims have shape (R=1, T=150),
                                         val stims have shape (R=20, T=150);
@@ -169,7 +186,8 @@ class NAT4Dataset(AudioNeuralDataset):
 
     def __init__(self, path: Optional[str] = None, area: str = 'A1',
                  dt_ms: float = 10.0, smooth: bool = False,
-                 download: bool = False, subset: str = 'all'):
+                 download: bool = False, subset: str = 'all',
+                 return_waveform: bool = False, audio_fs: int = 44100):
         """
         Parameters
         ----------
@@ -203,6 +221,22 @@ class NAT4Dataset(AudioNeuralDataset):
             ``ds.select_stims_by_attr('subset', 'val')`` — which leaves the
             full stim bank loaded but applies the bidirectional rule, so
             cells without val data are hidden from ``__getitem__``).
+        return_waveform : bool, default False
+            If True, each stimulus is the raw mono waveform ``(1, T_audio)`` at
+            ``audio_fs`` Hz instead of the precomputed ozgf cochleagram. The
+            593 source .wav files (44.1 kHz, 1 s of sound) are read from
+            ``<path>/wav/`` and embedded in the 1.5 s trial window at the
+            recording's pre-silence offset, then grid-locked to
+            ``T_audio = T_neural * hop`` (``hop = audio_fs * dt_ms / 1000``).
+            Feed it through a model's ``wav2spec`` slot (e.g.
+            ``CausalGammatone`` to reproduce the native ozgf front-end). Pass
+            ``download=True`` to also fetch ``wav.zip`` from Zenodo.
+        audio_fs : int, default 44100
+            Audio sample rate for ``return_waveform=True``. The default 44.1 kHz
+            is the native rate of the NAT4 wavs and gives an exact integer
+            ``hop = 441`` at ``dt_ms = 10`` (no resampling). Choose any rate
+            making ``audio_fs * dt_ms / 1000`` an integer. Ignored unless
+            ``return_waveform=True``.
         """
 
         assert area in ("A1", "PEG"), \
@@ -218,12 +252,19 @@ class NAT4Dataset(AudioNeuralDataset):
         if path is None:
             path = str(default_cache_dir("NAT4"))
         if download:
-            download_nat4(area, path)
+            download_nat4(area, path, wav=return_waveform)
 
         super().__init__(path, dt_ms)
         self.area = area
         self.species = 'ferret'
         self.F = 18
+        self.hearing_range_hz = (200.0, 40000.0)   # ferret (informational)
+
+        # Raw-waveform input mode (opt-in). The native stim is the precomputed
+        # ozgf cochleagram; here we instead hand out the source waveform and let
+        # a model's wav2spec slot build the spectrogram (strictly causally).
+        self.return_waveform = bool(return_waveform)
+        self.audio_fs = int(audio_fs) if return_waveform else None
 
         # =========  LOAD THE POPULATION RECORDING (used for est, R=1)  ===========
 
@@ -253,23 +294,48 @@ class NAT4Dataset(AudioNeuralDataset):
         val_sounds = epoch_names_matching(rec.epochs, "^STIM_00cat")
         est_sounds = epoch_names_matching(rec.epochs, "^STIM_cat")
 
-        # =========  STIM SPECTROGRAMS (est first, then val)  ===========
+        # In waveform mode we read source .wav files from <path>/wav/ and inset
+        # each at the trial's pre-stimulus-silence offset (NAT4 trials are a
+        # 1.5 s window = pre-silence + 1 s sound + post-silence; the wav holds
+        # only the sound). Derive the offset from the epoch table once.
+        if self.return_waveform:
+            self._wav_dir = os.path.join(path, "wav")
+            if not os.path.isdir(self._wav_dir):
+                raise FileNotFoundError(
+                    f"NAT4 waveform mode needs the source wavs at {self._wav_dir!r}. "
+                    f"Pass download=True to fetch wav.zip from Zenodo, or unpack it "
+                    f"manually."
+                )
+            # case-insensitive index: a few epoch names disagree with the on-disk
+            # filename only in letter case (e.g. 'True' vs 'true' inside the name).
+            self._wav_index = {fn.lower(): fn for fn in os.listdir(self._wav_dir)
+                               if fn.lower().endswith(".wav")}
+            sil = rec.epochs[rec.epochs['name'] == 'PreStimSilence']
+            prestim_s = float((sil['end'] - sil['start']).iloc[0]) if len(sil) else 0.0
+            self._pre_samples = int(round(prestim_s * self.audio_fs))
+
+        # =========  STIM SPECTROGRAMS / WAVEFORMS (est first, then val)  ===========
 
         load_est = subset in ("all", "est")
         load_val = subset in ("all", "val")
 
         self.stim_meta = []
         self.stims = []
+
+        def _append_stim(name, subset_label):
+            spec = extract_epoch(rec, 'stim', name)  # (R=1, F, T)
+            if self.return_waveform:
+                self.stims.append(self._load_stim_waveform(name, spec.shape[-1]))
+            else:
+                self.stims.append(torch.from_numpy(spec[0]).unsqueeze(0).float())  # (1, F, T)
+            self.stim_meta.append({'name': name, 'subset': subset_label})
+
         if load_est:
             for est_sound in est_sounds:
-                spec = extract_epoch(rec, 'stim', est_sound)  # (R=1, F, T)
-                self.stims.append(torch.from_numpy(spec[0]).unsqueeze(0).float())  # (1, F, T)
-                self.stim_meta.append({'name': est_sound, 'subset': 'est'})
+                _append_stim(est_sound, 'est')
         if load_val:
             for val_sound in val_sounds:
-                spec = extract_epoch(rec, 'stim', val_sound)
-                self.stims.append(torch.from_numpy(spec[0]).unsqueeze(0).float())
-                self.stim_meta.append({'name': val_sound, 'subset': 'val'})
+                _append_stim(val_sound, 'val')
 
         # =========  NEURON METADATA (auditory flag + parsed cell_id)  ===========
 
@@ -355,3 +421,30 @@ class NAT4Dataset(AudioNeuralDataset):
             self.smooth_responses(window_ms=21.0)
 
         self.validate()
+
+    def _load_stim_waveform(self, epoch_name: str, T_neural: int) -> torch.Tensor:
+        """Reconstruct a stim's ``(1, T_audio)`` waveform from its source .wav.
+
+        The .wav holds only the 1 s sound; we zero-pad it to the trial's
+        pre-silence offset so the audio lines up with the spectrogram frames
+        (= response bins), then crop / pad to exactly ``T_neural * hop`` samples
+        (grid lock C1). The epoch name is ``STIM_<wavfile>``.
+        """
+        fname = epoch_name[len("STIM_"):] if epoch_name.startswith("STIM_") else epoch_name
+        resolved = self._wav_index.get(fname.lower())
+        if resolved is None:
+            raise FileNotFoundError(
+                f"NAT4 waveform mode: no source wav for epoch {epoch_name!r} in "
+                f"{self._wav_dir!r}. Pass download=True to fetch wav.zip from Zenodo."
+            )
+        wav_path = os.path.join(self._wav_dir, resolved)
+        w, sr = torchaudio.load(wav_path)            # (C, T)
+        if w.shape[0] > 1:
+            w = w.mean(dim=0, keepdim=True)          # downmix to mono
+        if sr != self.audio_fs:
+            w = torchaudio.functional.resample(w, sr, self.audio_fs)
+        T_audio = T_neural * self.hop
+        full = torch.zeros(1, T_audio)
+        seg = w[0, : max(0, T_audio - self._pre_samples)]
+        full[0, self._pre_samples: self._pre_samples + seg.shape[0]] = seg
+        return full.contiguous().float()
