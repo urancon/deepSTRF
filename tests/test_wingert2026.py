@@ -475,3 +475,50 @@ def test_rasterize_matches_nems0_convention():
             # consecutive sorted values is constant.
             assert torch.all(r >= 0)
             assert torch.all(r <= 1)
+
+
+# ---- raw-waveform branch ----
+
+_HAS_WAV = HAS_DATA and os.path.isdir(os.path.join(WINGERT_LOCAL, "wav"))
+
+
+@pytest.mark.skipif(
+    not _HAS_WAV,
+    reason=f"Wingert2026 wav/ folder not at {WINGERT_LOCAL!r}; pass download=True (wav.zip).",
+)
+def test_wingert_waveform_branch():
+    """Wingert's waveform branch reads the 44.1 kHz source wavs and insets each
+    at a fixed 1 s pre-silence offset inside the gtgram trial window, grid-locked
+    to ``T_neural * hop`` (hop=441, no resampling). Responses must be identical
+    to spectrogram mode. Skips unless the wav/ folder is present."""
+    from deepSTRF.datasets.audio.wingert2026 import Wingert2026Dataset
+
+    ds_spec = Wingert2026Dataset(path=WINGERT_LOCAL, site="CLT027c", subset="all")
+    ds_wav = Wingert2026Dataset(path=WINGERT_LOCAL, site="CLT027c", subset="all",
+                                return_waveform=True)
+
+    assert ds_wav.get_S() == ds_spec.get_S() and ds_wav.get_N() == ds_spec.get_N()
+    assert ds_spec.audio_fs is None and ds_spec.hop is None
+    assert ds_wav.audio_fs == 44100 and ds_wav.hop == 441
+    assert ds_wav.hearing_range_hz == (200.0, 40000.0)
+    assert ds_wav._pre_samples == 44100   # 1.0 s pre-silence at 44.1 kHz
+
+    # grid-lock holds (also exercised by validate(), called at construction)
+    ds_wav.validate()
+    for s in range(ds_wav.get_S()):
+        stim = ds_wav.stims[s]
+        assert stim.dim() == 2 and stim.shape[0] == 1, \
+            f"Wingert stim {s} must be (1, T_audio); got {tuple(stim.shape)}"
+        assert stim.shape[-1] == ds_spec.stims[s].shape[-1] * ds_wav.hop
+
+    # the inset sound leaves the pre-silence pad at exactly zero energy
+    pre = ds_wav._pre_samples
+    w0 = ds_wav.stims[0][0]
+    assert float((w0[:pre] ** 2).sum()) == 0.0
+    assert float((w0[pre:pre + 44100] ** 2).sum()) > 0.0
+
+    # responses are untouched by the input representation
+    for s in range(ds_wav.get_S()):
+        for n in range(ds_wav.get_N()):
+            assert torch.allclose(ds_spec.responses[s][n], ds_wav.responses[s][n],
+                                  equal_nan=True)

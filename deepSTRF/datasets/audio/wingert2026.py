@@ -27,6 +27,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Union
 import numpy as np
 import pandas as pd
 import torch
+import torchaudio
 from tqdm.auto import tqdm
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
@@ -51,15 +52,13 @@ WINGERT_ZENODO_RECORD = 18331549
 _VALID_AREAS = ("A1", "PEG", "AC", "HC")
 
 
-def download_wingert2026(dest: Optional[str] = None) -> str:
+def download_wingert2026(dest: Optional[str] = None, wav: bool = False) -> str:
     """Download the Wingert 2026 release from Zenodo into ``dest``.
 
     Fetches ``recordings.zip`` (~4.35 GB of per-site .tgz archives, the
-    only large file the loader actually needs) and ``cell_list.csv``
-    (~5.4 MB of per-cell metadata). Does NOT fetch the much larger
-    ``wav.zip`` (~3.7 GB of raw waveforms, not used by the spectrogram-
-    only loader) or ``models.zip`` (published CNN / LN / subspace fits,
-    not used by deepSTRF).
+    only large file the spectrogram loader needs) and ``cell_list.csv``
+    (~5.4 MB of per-cell metadata). Does NOT fetch ``models.zip``
+    (published CNN / LN / subspace fits, not used by deepSTRF).
 
     Idempotent — skips files / dirs that already exist.
 
@@ -68,6 +67,11 @@ def download_wingert2026(dest: Optional[str] = None) -> str:
     dest : str, optional
         Defaults to ``default_cache_dir('Wingert2026')`` (overridable via
         ``$DEEPSTRF_DATA_DIR``).
+    wav : bool, default False
+        If True, also fetch and unpack ``wav.zip`` (~3.7 GB of source
+        waveforms, 44.1 kHz) into ``<dest>/wav/`` for the raw-waveform
+        branch (``Wingert2026Dataset(return_waveform=True)``). The
+        spectrogram-mode loader does not need it.
 
     Returns
     -------
@@ -88,6 +92,14 @@ def download_wingert2026(dest: Optional[str] = None) -> str:
         if not os.path.exists(zip_path):
             zenodo_download(WINGERT_ZENODO_RECORD, "recordings.zip", zip_path)
         unzip(zip_path, dest_path)
+
+    if wav:
+        wav_dir = os.path.join(dest_path, "wav")
+        if not os.path.isdir(wav_dir):
+            wav_zip = os.path.join(dest_path, "wav.zip")
+            if not os.path.exists(wav_zip):
+                zenodo_download(WINGERT_ZENODO_RECORD, "wav.zip", wav_zip)
+            unzip(wav_zip, dest_path)
 
     return dest_path
 
@@ -173,6 +185,9 @@ class Wingert2026Dataset(AudioNeuralDataset):
                  log_offset: float = -1.0,
                  download: bool = False,
                  include_unlabeled: bool = False,
+                 return_waveform: bool = False,
+                 audio_fs: int = 44100,
+                 prestim_ms: float = 1000.0,
                  _enumerate_only: bool = False):
         """
         Parameters
@@ -228,6 +243,29 @@ class Wingert2026Dataset(AudioNeuralDataset):
             ``layer=None``, ``depth=None``, etc. in ``nrn_meta``.
             ``goodpred`` is still populated. The default ``False``
             matches the paper's analysis cohort.
+        return_waveform : bool, default False
+            If True, each stimulus is the raw mono waveform ``(1, T_audio)``
+            at ``audio_fs`` Hz instead of the precomputed gammatone-gram. The
+            source ``seq*.wav`` files (44.1 kHz) are read from ``<path>/wav/``
+            and inset at the recording's ``prestim_ms`` pre-silence offset
+            inside the trial window, then grid-locked to
+            ``T_audio = T_neural * hop`` (``hop = audio_fs * dt_ms / 1000``).
+            Feed it through a model's ``wav2spec`` slot (e.g.
+            ``CausalGammatone`` to reproduce the native front-end). Pass
+            ``download=True`` to also fetch ``wav.zip`` from Zenodo.
+        audio_fs : int, default 44100
+            Audio sample rate for ``return_waveform=True``. The default
+            44.1 kHz is the native rate of the source wavs and gives an exact
+            integer ``hop = 441`` at ``dt_ms = 10`` (no resampling). Choose any
+            rate making ``audio_fs * dt_ms / 1000`` an integer. Ignored unless
+            ``return_waveform=True``.
+        prestim_ms : float, default 1000.0
+            Pre-stimulus silence (ms) before the sound onset in the trial
+            window, used only in ``return_waveform=True`` to inset the wav so
+            it aligns with the gammatone-gram frames (= response bins). The
+            default 1000 ms (= 100 bins at dt=10 ms) was recovered empirically
+            and is constant across all sites (the gtgram's leading silence is
+            not in the epoch table). Ignored unless ``return_waveform=True``.
         _enumerate_only : bool, default False
             Internal flag for tests: populate ``nrn_meta`` and
             ``N_neurons`` only, skip the (~1 minute) per-site .tgz read
@@ -250,7 +288,7 @@ class Wingert2026Dataset(AudioNeuralDataset):
 
         # ---- resolve dataset root ----
         if download:
-            path = download_wingert2026(path)
+            path = download_wingert2026(path, wav=return_waveform)
         elif path is None:
             path = str(default_cache_dir("Wingert2026"))
         cell_list_path = os.path.join(path, "cell_list.csv")
@@ -268,6 +306,29 @@ class Wingert2026Dataset(AudioNeuralDataset):
         self.species = "ferret"
         self.F = 32
         self.subset = subset
+        self.hearing_range_hz = (200.0, 40000.0)   # ferret (informational)
+
+        # Raw-waveform input mode (opt-in). The native stim is the precomputed
+        # gammatone-gram; here we instead hand out the source waveform and let a
+        # model's wav2spec slot build the spectrogram (strictly causally). The
+        # gtgram embeds the 17.79 s sound after a fixed 1 s pre-silence; that
+        # offset is not in the epoch table, so we inset the wav at prestim_ms
+        # (empirically constant across sites) and grid-lock to T_neural * hop.
+        self.return_waveform = bool(return_waveform)
+        self.audio_fs = int(audio_fs) if return_waveform else None
+        if self.return_waveform:
+            self._wav_dir = os.path.join(path, "wav")
+            if not os.path.isdir(self._wav_dir):
+                raise FileNotFoundError(
+                    f"Wingert waveform mode needs the source wavs at "
+                    f"{self._wav_dir!r}. Pass download=True to fetch wav.zip from "
+                    f"Zenodo, or unpack it manually."
+                )
+            self._pre_samples = int(round(prestim_ms / 1000.0 * self.audio_fs))
+            # STIM_<seqfile> -> on-disk filename (case-insensitive, robust to
+            # any stray case mismatch between epoch names and files on disk).
+            self._wav_index = {fn.lower(): fn for fn in os.listdir(self._wav_dir)
+                               if fn.lower().endswith(".wav")}
 
         # ---- enumerate cells from cell_list.csv (the canonical curated list) ----
         df = pd.read_csv(cell_list_path)
@@ -352,7 +413,10 @@ class Wingert2026Dataset(AudioNeuralDataset):
                     f"{session!r}; expected F={self.F}"
                 )
                 s_idx = len(self.stims)
-                self.stims.append(torch.from_numpy(spec).unsqueeze(0).float())
+                if self.return_waveform:
+                    self.stims.append(self._load_stim_waveform(stim_name, T_s))
+                else:
+                    self.stims.append(torch.from_numpy(spec).unsqueeze(0).float())
                 self.stim_meta.append({
                     "name": stim_name,
                     "subset": "val" if stim_name.startswith("STIM_00") else "est",
@@ -410,6 +474,7 @@ class Wingert2026Dataset(AudioNeuralDataset):
         _preprocess_inplace(
             self.stims, self.responses,
             log_compress=log_compress, log_offset=log_offset,
+            normalize_stims=not self.return_waveform,
         )
 
         # ---- subset filter (drop est / val after the global load) ----
@@ -423,6 +488,34 @@ class Wingert2026Dataset(AudioNeuralDataset):
             self.smooth_responses(window_ms=21.0)
 
         self.validate()
+
+    def _load_stim_waveform(self, stim_name: str, T_neural: int) -> torch.Tensor:
+        """Reconstruct a stim's ``(1, T_audio)`` waveform from its source .wav.
+
+        The epoch name is ``STIM_<seqfile>`` (e.g. ``STIM_seq0032.wav`` →
+        ``seq0032.wav``, ``STIM_00seq1.wav`` → ``00seq1.wav``). The source wav
+        holds only the ~17.79 s sound; the gammatone-gram embeds it after a
+        fixed pre-silence (``self._pre_samples``), so we zero-pad to that
+        offset and crop / pad to exactly ``T_neural * hop`` samples (grid lock
+        C1) so audio sample ``j`` maps to response bin ``j // hop``.
+        """
+        fname = stim_name[len("STIM_"):] if stim_name.startswith("STIM_") else stim_name
+        resolved = self._wav_index.get(fname.lower())
+        if resolved is None:
+            raise FileNotFoundError(
+                f"Wingert waveform mode: no source wav for epoch {stim_name!r} in "
+                f"{self._wav_dir!r}. Pass download=True to fetch wav.zip from Zenodo."
+            )
+        w, sr = torchaudio.load(os.path.join(self._wav_dir, resolved))   # (C, T)
+        if w.shape[0] > 1:
+            w = w.mean(dim=0, keepdim=True)                              # mono
+        if sr != self.audio_fs:
+            w = torchaudio.functional.resample(w, sr, self.audio_fs)
+        T_audio = T_neural * self.hop
+        full = torch.zeros(1, T_audio)
+        seg = w[0, : max(0, T_audio - self._pre_samples)]
+        full[0, self._pre_samples: self._pre_samples + seg.shape[0]] = seg
+        return full.contiguous().float()
 
 
 # ---------- module-level helpers ----------
@@ -519,7 +612,8 @@ def _preprocess_inplace(stims: List[torch.Tensor],
                         responses: List[List[torch.Tensor]],
                         *,
                         log_compress: bool = True,
-                        log_offset: float = -1.0) -> None:
+                        log_offset: float = -1.0,
+                        normalize_stims: bool = True) -> None:
     """Reproduce the paper's stim/resp preprocessing in place.
 
     Mirrors ``aud_subspace_fit_demo.ipynb`` exactly:
@@ -543,25 +637,28 @@ def _preprocess_inplace(stims: List[torch.Tensor],
     """
     if not stims:
         return
-    F = stims[0].shape[1]
 
-    # ---- STIM: optional log compression ----
-    if log_compress:
+    # ---- STIM: log compression + per-band minmax (gtgram mode only) ----
+    # Skipped in raw-waveform mode: the stims are (1, T_audio) waveforms, not
+    # (1, F, T) gtgrams, and any spectral normalisation belongs in the model's
+    # wav2spec front-end. Responses are still normalised below, identically to
+    # gtgram mode, so the two modes stay response-for-response equivalent.
+    if normalize_stims:
+        F = stims[0].shape[1]
+        if log_compress:
+            for s in stims:
+                s.copy_(_log_compress(s, log_offset))
+        band_min = torch.full((F,), float("inf"))
+        band_max = torch.full((F,), float("-inf"))
         for s in stims:
-            s.copy_(_log_compress(s, log_offset))
-
-    # ---- STIM: per-band minmax across all stims ----
-    band_min = torch.full((F,), float("inf"))
-    band_max = torch.full((F,), float("-inf"))
-    for s in stims:
-        sq = s[0]                                  # (F, T)
-        band_min = torch.minimum(band_min, sq.amin(dim=1))
-        band_max = torch.maximum(band_max, sq.amax(dim=1))
-    band_rng = band_max - band_min
-    band_rng[band_rng == 0] = 1.0                  # avoid divide-by-zero
-    for s in stims:
-        s.sub_(band_min.view(1, F, 1)).div_(band_rng.view(1, F, 1))
-        s[s < 1e-6] = 0.0                          # NEMS "quiet → zero"
+            sq = s[0]                                  # (F, T)
+            band_min = torch.minimum(band_min, sq.amin(dim=1))
+            band_max = torch.maximum(band_max, sq.amax(dim=1))
+        band_rng = band_max - band_min
+        band_rng[band_rng == 0] = 1.0                  # avoid divide-by-zero
+        for s in stims:
+            s.sub_(band_min.view(1, F, 1)).div_(band_rng.view(1, F, 1))
+            s[s < 1e-6] = 0.0                          # NEMS "quiet → zero"
 
     # ---- RESP: per-neuron minmax across all reps + stims ----
     N = len(responses[0]) if responses else 0
