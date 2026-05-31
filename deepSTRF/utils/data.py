@@ -53,13 +53,22 @@ def hanning_smooth(response: torch.Tensor, window_ms: float, dt_ms: float) -> to
 
 
 class ResponseSmoothingTransform(torch.nn.Module):
-    """
-        Temporally convolves responses with a Hanning window of typically ~20 or ~40 ms.
+    """Temporally smooth responses with a Hanning window (typically ~20-40 ms).
 
-        cf. Hsu, A., Borst, A., & Theunissen, F. E. (2004).
-            Quantifying variability in neural responses and its application for the validation of model predictions.
-            Network: Computation in Neural Systems, 15(2), 91–109. https://doi.org/10.1088/0954-898X_15_2_002
+    Parameters
+    ----------
+    dt_ms : float, default 1
+        Time-bin width of the responses, in ms.
+    window_size_ms : float, default 21
+        Full width of the Hanning window in ms (rounded to an odd number of
+        ``dt_ms`` bins).
 
+    References
+    ----------
+    Hsu, A., Borst, A., & Theunissen, F. E. (2004). Quantifying variability
+    in neural responses and its application for the validation of model
+    predictions. *Network: Computation in Neural Systems*, 15(2), 91-109.
+    https://doi.org/10.1088/0954-898X_15_2_002
     """
 
     def __init__(self, dt_ms=1, window_size_ms=21, *args, **kwargs):
@@ -101,17 +110,19 @@ def neural_collate(batch):
     Parameters
     ----------
     batch : list of 4-tuples
-        Each tuple is ``(stim, per_neuron_responses, per_neuron_mask, stim_meta)``
-        as yielded by ``NeuralDataset.__getitem__`` for a single item:
-            * ``stim`` — a stim tensor of shape ``(..., T_s)`` (modality-specific
-              leading dims, e.g. ``(1, F, T_s)`` for audio).
-            * ``per_neuron_responses`` — list of length ``N_selected``; each
-              element is a ``(R_{s,n}, T_s)`` spike-count tensor or a
-              ``(1, 1)`` NaN sentinel.
-            * ``per_neuron_mask`` — ``(N_selected,)`` bool tensor (currently
-              ignored; the fine-grained ``valid_mask`` returned by this
-              function subsumes it).
-            * ``stim_meta`` — per-stim metadata dict.
+        Each tuple is ``(stim, per_neuron_responses, per_neuron_mask,
+        stim_meta)`` as yielded by ``NeuralDataset.__getitem__`` for a
+        single item:
+
+        * ``stim`` — a stim tensor of shape ``(..., T_s)`` (modality-specific
+          leading dims, e.g. ``(1, F, T_s)`` for audio).
+        * ``per_neuron_responses`` — list of length ``N_selected``; each
+          element is a ``(R_{s,n}, T_s)`` spike-count tensor or a
+          ``(1, 1)`` NaN sentinel.
+        * ``per_neuron_mask`` — ``(N_selected,)`` bool tensor (currently
+          ignored; the fine-grained ``valid_mask`` returned by this
+          function subsumes it).
+        * ``stim_meta`` — per-stim metadata dict.
 
     Returns
     -------
@@ -319,20 +330,25 @@ def fill_missing_data(stims: Sequence[torch.Tensor],
                       dims: Union[int, Sequence[int]],
                       value: float = 0.0
                       ) -> torch.Tensor:
-    """Pad a list of tensors along one or more specified dimensions to match their maxima.
+    """Pad a list of tensors along one or more dimensions to match their maxima.
 
-    Args:
-        stims (Sequence[torch.Tensor]): List of S tensors, each of shape
-            (D0, D1, ..., Dk-1), where shapes may differ at the dimensions in `dims`
-            but must agree on all other dimensions.
-        dims (int or Sequence[int]): Dimension index or indices (can be negative)
-            along which to pad. These refer to the tensor’s axes (0-based).
-        value (float, optional): Fill value for padding. Defaults to 0.0.
+    Parameters
+    ----------
+    stims : sequence of torch.Tensor
+        ``S`` tensors, each of shape ``(D0, D1, ..., Dk-1)``. Shapes may
+        differ at the dimensions in ``dims`` but must agree on all others.
+    dims : int or sequence of int
+        Dimension index or indices (negatives allowed) along which to pad.
+        Refer to the tensors' 0-based axes.
+    value : float, default 0.0
+        Fill value for padding.
 
-    Returns:
-        torch.Tensor: A tensor of shape (S, D0', D1', ..., Dk-1'),
-            where for each d in `dims`, Dd' = max_i stims[i].shape[d],
-            and for other axes Dd' = stims[0].shape[d].
+    Returns
+    -------
+    torch.Tensor
+        A tensor of shape ``(S, D0', D1', ..., Dk-1')`` where, for each ``d``
+        in ``dims``, ``Dd' = max_i stims[i].shape[d]`` and, for other axes,
+        ``Dd' = stims[0].shape[d]``.
     """
     if not stims:
         raise ValueError("`stims` must be a non-empty sequence of tensors")

@@ -7,7 +7,7 @@ from .audio_model import AudioEncodingModel
 import deepSTRF.models.layers as layers
 from deepSTRF.models.activations import ParametricSoftplus
 from deepSTRF.models.dependencies.lmu import LMU
-from deepSTRF.models.dependencies.mamba import MambaBlock, MambaConfig
+from mambapy.mamba import MambaBlock, MambaConfig
 from deepSTRF.models.prefiltering import AdapTrans
 from deepSTRF.models.readouts import STRFReadout, LinearReadout
 # S4Block is imported lazily inside StateNet — its module emits noisy stderr
@@ -409,8 +409,10 @@ class ConvNet2D(AudioEncodingModel):
     output_activation : nn.Module, default ``ParametricSoftplus(out_neurons)``
         Pointwise nonlinearity at the output. The default is unbounded
         above and non-negative — natural for spike-count regression.
-    prefiltering : dict or None
-        Optional spectrogram prefilter spec.
+    prefiltering : nn.Module, optional
+        Optional spectrogram prefilter (``AdapTrans``, ``ICAdaptation``, or
+        any module exposing ``out_channels``). ``None`` (default) gives
+        ``nn.Identity`` and ``C_in = 1``.
 
     References
     ----------
@@ -701,8 +703,10 @@ class StateNet(AudioEncodingModel):
     output_activation : nn.Module, default ``ParametricSoftplus(out_neurons)``
         Pointwise nonlinearity at the output. The default is unbounded
         above and non-negative — natural for spike-count regression.
-    prefiltering : dict or None
-        Optional spectrogram prefilter spec.
+    prefiltering : nn.Module, optional
+        Optional spectrogram prefilter (``AdapTrans``, ``ICAdaptation``, or
+        any module exposing ``out_channels``). ``None`` (default) gives
+        ``nn.Identity`` and ``C_in = 1``.
 
     References
     ----------

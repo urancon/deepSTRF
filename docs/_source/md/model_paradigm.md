@@ -478,5 +478,11 @@ Subclasses extend `validate()` with modality-specific invariants —
 - **Output activations recheck.** Verify `ParametricSigmoid` and
   `ParametricDoubleExponential` against their original papers; add
   `Softplus` for non-negative-rate targets.
-- **SSM dependency cleanup.** Replace vendored `s4.py` / `mamba.py` /
-  `lmu.py` with upstream packages where they've stabilized.
+- **SSM dependency cleanup.** The Mamba backbone now uses the upstream
+  [`mambapy`](https://pypi.org/project/mambapy/) package (a default
+  dependency), replacing the vendored `mamba.py` / `pscan.py`. S4 and LMU
+  remain vendored under `deepSTRF.models.dependencies`: there is no
+  maintained PyTorch package on PyPI for either (`state-spaces/s4` ships
+  `s4.py` as a copy-into-repo standalone, and `pytorch-lmu` is GitHub-only).
+  Both rely solely on already-present dependencies (`numpy` / `scipy` /
+  `einops`), so they add no install burden.

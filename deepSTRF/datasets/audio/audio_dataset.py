@@ -47,7 +47,13 @@ class AudioNeuralDataset(NeuralDataset):
         self.hearing_range_hz: Optional[tuple] = None
 
     def get_F(self):
-        """Return the number of frequency bins in the spectrograms."""
+        """Return the number of frequency bins in the spectrograms.
+
+        Returns
+        -------
+        int
+            ``self.F``, the spectrogram frequency-band count.
+        """
         return self.F
 
     @property
@@ -89,9 +95,14 @@ class AudioNeuralDataset(NeuralDataset):
                 f"self.hearing_range_hz must be a (low, high) pair of positive "
                 f"increasing numbers or None (got {hr!r})"
             )
-        if self.audio_fs is not None:
+        # The waveform grid-lock contract only applies in raw-waveform mode.
+        # ``audio_fs`` alone is NOT the signal: some spectrogram datasets (e.g.
+        # Downer2025) set ``audio_fs`` as the in-loader spec sample rate while
+        # still handing out (1, F, T) spectrograms. Key off the explicit mode
+        # flag ``return_waveform`` instead (absent ⇒ spectrogram dataset).
+        if getattr(self, "return_waveform", False):
             assert isinstance(self.audio_fs, int) and self.audio_fs > 0, \
-                f"self.audio_fs must be a positive int or None (got {self.audio_fs!r})"
+                f"waveform mode requires a positive-int audio_fs (got {self.audio_fs!r})"
             self._validate_waveform_grid()
 
     def _validate_waveform_grid(self):

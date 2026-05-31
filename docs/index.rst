@@ -109,7 +109,6 @@ welcome to add yours.
    _source/md/metrics_paradigm.md
    _source/md/fitter.md
    _source/md/logging.md
-   _source/md/README_tutorial.md
    _source/md/README_formats.md
    _source/md/README_publications.md
 
@@ -143,7 +142,10 @@ welcome to add yours.
 
    _source/ipynb/crcns_aa_tutorial.ipynb
    _source/ipynb/aa4_inspection.ipynb
+   _source/ipynb/inspect_crcns_ac1.ipynb
    _source/ipynb/explore_nat4.ipynb
+   _source/ipynb/explore_downer2025.ipynb
+   _source/ipynb/explore_wingert2026.ipynb
    _source/ipynb/dataset_concatenation.ipynb
    _source/ipynb/fit_ns1_statenet.ipynb
    _source/ipynb/fit_ns1_linear_from_waveform.ipynb

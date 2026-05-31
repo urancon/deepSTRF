@@ -111,77 +111,57 @@ def download_nat4(area: str, dest: Optional[str] = None, wav: bool = False) -> s
 
 
 class NAT4Dataset(AudioNeuralDataset):
-    """A PyTorch dataset for NAT4 (Pennington & David, 2022 / 2023).
+    """PyTorch dataset for NAT4 (Pennington & David, 2022 / 2023).
 
+    Two cortical areas: ``A1`` (primary, 849 cells of which 777 auditory)
+    and ``PEG`` (secondary, 398 of which 339 auditory). Pass ``area=...``;
+    one instance covers one area. To pool both, instantiate twice and
+    ``concat_neural_datasets([a1, peg])``.
 
-    =============== SOURCE ================
+    There are 595 stimuli total: 18 high-rep (``val``, 20 trials) + 577
+    low-rep (``est``, 1 trial), each clip 1.5 s. The default time bin is
+    ``dt_ms = 10`` (the population recording is precomputed at fs=100 with
+    ``val`` pre-averaged over 20 reps; per-site spike trains are at fs=1000
+    and downsampled to 10 ms by summing). The spectrogram has ``F = 18``
+    ozgf bands and ``T = 150`` frames per stim.
 
-    See original papers for details:
-     - "Can deep learning provide a generalizable model for dynamic sound
-       encoding in auditory cortex?" Pennington & David. (2022 preprint)
-     - "A convolutional neural network provides a generalizable model of
-       natural sound coding by neural populations in auditory cortex"
-       Pennington & David, PLOS Computational Biology (2023).
+    The loader reads the published NAT4 archive directly with native CSV /
+    JSON / HDF5 parsers — no NEMS0 dependency. Data are freely available at
+    https://doi.org/10.5281/zenodo.8044773 (no account required) and
+    auto-fetched by ``NAT4Dataset(download=True)``.
 
-    Data freely available at https://doi.org/10.5281/zenodo.8044773 (no
-    account required) — auto-fetched by ``NAT4Dataset(download=True)``.
+    Notes
+    -----
+    Follows the standard deepSTRF data paradigm (see
+    ``docs/_source/md/data_paradigm.md``). NAT4-specific metadata:
 
+    - ``stim_meta`` dicts hold ``name`` and ``subset`` (``'est'`` or
+      ``'val'``); the ``subset='all'|'est'|'val'`` constructor argument
+      filters this list at load time.
+    - ``nrn_meta`` dicts hold ``cell_id`` (raw NEMS id, e.g.
+      ``'ARM029a-01-1'``), ``area``, ``auditory`` (flag from the dataset's
+      ``<area>_pred_correlation.csv``), and the parsed components ``site``
+      (e.g. ``'ARM029a'``), ``animal`` (3-char site prefix, e.g. ``'ARM'``),
+      ``electrode`` (int) and ``unit_in_electrode`` (int). Components default
+      to ``None`` for any cell whose id does not match the standard
+      ``<site>-<elec>-<unit>`` scheme.
 
-    =============== DETAILS ================
+    ``est`` responses have shape ``(R=1, T=150)`` and ``val`` responses
+    ``(R=20, T=150)``; the ``(1, 1)`` NaN sentinel marks ``(stim, neuron)``
+    pairs where the cell was not recorded for that stim.
 
-    - Two cortical areas: ``A1`` (primary, 849 cells of which 777 auditory)
-      and ``PEG`` (secondary, 398 of which 339 auditory). Pass ``area=...``;
-      one instance covers one area. To pool both, instantiate twice and
-      ``concat_neural_datasets([a1, peg])``.
-    - 595 stimuli total: 18 high-rep (``val``, 20 trials) + 577 low-rep
-      (``est``, 1 trial). Each clip is 1.5 s.
-    - Time bin: ``dt_ms = 10`` (the population recording is precomputed at
-      fs=100 with val pre-averaged over 20 reps; per-site spike trains are
-      at fs=1000 and downsampled to 10 ms by summing).
-    - Spectrogram: F = 18 ozgf bands, T = 150 frames per stim.
+    With ``return_waveform=True``, ``stims`` are instead the raw mono
+    waveforms ``(1, T_audio = T * hop)`` at ``audio_fs`` (hop=441 at
+    44.1 kHz / 10 ms) — feed them through a model's ``wav2spec`` slot.
 
-    The loader reads the published NAT4 archive directly with native CSV
-    / JSON / HDF5 parsers — no NEMS0 dependency. The 4 NEMS calls used by
-    the legacy loader (``load_recording``, ``epoch_names_matching``,
-    ``xforms.normalize_sig``, ``preprocessing.split_pop_rec_by_mask``)
-    are reimplemented in ``deepSTRF.datasets.audio._nat4_native``.
+    References
+    ----------
+    Pennington & David (2022, preprint). "Can deep learning provide a
+    generalizable model for dynamic sound encoding in auditory cortex?"
 
-
-    =============== STRUCTURE ================
-
-    Follows the standard deepSTRF data paradigm (see docs/_source/md/data_paradigm.md).
-    NAT4-specific metadata contents:
-     - self.stims                       list of S=595 tensors (1, F=18, T=150);
-                                        with ``return_waveform=True`` instead
-                                        ``(1, T_audio=T*hop)`` raw waveforms at
-                                        ``audio_fs`` (hop=441 at 44.1 kHz / 10 ms)
-     - self.responses                   list of S lists of N tensors —
-                                        est stims have shape (R=1, T=150),
-                                        val stims have shape (R=20, T=150);
-                                        ``(1, 1)`` NaN sentinel for the (s, n)
-                                        pairs where the cell wasn't recorded
-                                        for that stim (cells from sites that
-                                        only saw a subset of the stim bank).
-     - self.stim_meta                   list of S dicts {"name", "subset"}
-                                        where subset is 'est' or 'val'. The
-                                        ``subset='all'|'est'|'val'`` constructor
-                                        arg filters this list at load time.
-     - self.nrn_meta             list of N dicts with the per-cell info
-                                        deepSTRF can recover from the archive:
-                                        ``cell_id`` (raw NEMS id, e.g.
-                                        ``'ARM029a-01-1'``), ``area``,
-                                        ``auditory`` (flag from the dataset's
-                                        ``<area>_pred_correlation.csv``),
-                                        plus the parsed components ``site``
-                                        (e.g. ``'ARM029a'``), ``animal`` (3-char
-                                        prefix of the site, e.g. ``'ARM'``),
-                                        ``electrode`` (int when the id parses
-                                        cleanly), and ``unit_in_electrode``
-                                        (int). Components default to ``None``
-                                        for any cell whose id does not match
-                                        the standard ``<site>-<elec>-<unit>``
-                                        scheme.
-
+    Pennington & David (2023). "A convolutional neural network provides a
+    generalizable model of natural sound coding by neural populations in
+    auditory cortex." *PLOS Computational Biology*.
     """
 
     def __init__(self, path: Optional[str] = None, area: str = 'A1',

@@ -129,87 +129,57 @@ def _parse_espejo_cell_id(cell_id: str) -> dict:
 
 
 class EspejoDataset(AudioNeuralDataset):
-    """A PyTorch dataset for Lopez-Espejo et al. (2019) ferret A1 recordings.
-
-
-    =============== SOURCE ================
-
-    Lopez Espejo M, Schwartz ZP, David SV. (2019) Spectral tuning of
-    adaptation supports coding of sensory context in auditory cortex.
-    *PLoS Computational Biology* 15(10): e1007430.
-    https://doi.org/10.1371/journal.pcbi.1007430
-
-    Data freely available at https://doi.org/10.5281/zenodo.3445557
-    (no account required) — auto-fetched with ``download=True``.
-
-
-    =============== DETAILS ================
+    """PyTorch dataset for Lopez-Espejo et al. (2019) ferret A1 recordings.
 
     Awake, passively-listening adult ferret primary auditory cortex (A1),
-    extracellularly recorded single units. Two disjoint releases (no
-    cell overlap, different stimulus dimensionality — they cannot be
-    concatenated):
+    extracellularly recorded single units. The dataset ships in two disjoint
+    releases (no cell overlap, different stimulus dimensionality — they
+    cannot be concatenated), selected by the ``stimuli`` argument:
 
-    - ``stimuli='nat'``: 93 3-second natural sounds (animal vocalizations,
-      speech, environmental, music). Stimuli stored as 18-band gammatone
-      log-spectrograms (NEMS "ozgf"); ``F=18``. ~540 cells across 35
-      experiment sites in 6 ferrets. Each site presents a subset of the
-      stim bank.
+    - ``'nat'``: 93 3-second natural sounds (animal vocalizations, speech,
+      environmental, music), stored as 18-band gammatone log-spectrograms
+      (NEMS "ozgf", ``F=18``). ~540 cells across 35 sites in 6 ferrets;
+      each site presents a subset of the stim bank.
+    - ``'vmn'``: 30 3-second vocalization-modulated noise stimuli (two
+      narrowband noise streams modulated by independent natural-vocalization
+      envelopes), stored as 2-band envelopes ("envelope" stimfmt, ``F=2``).
+      ~200 cells across 103 sites in 5 ferrets.
 
-    - ``stimuli='vmn'``: 30 3-second vocalization-modulated noise stimuli
-      (two narrowband noise streams modulated by independent natural-
-      vocalization envelopes). Stimuli stored as 2-band envelopes
-      ("envelope" stimfmt); ``F=2``. ~200 cells across 103 sites in 5
-      ferrets.
-
-    Both releases sample at 100 Hz (``dt=10 ms`` native). The on-disk
+    Both releases sample at 100 Hz (``dt=10 ms`` native); the on-disk
     cochleagrams are log-compressed at source. Each occurrence epoch
-    includes the published 0.5 s pre-stim + 0.5 s post-stim silence
-    flanking the 3 s stimulus, so per-stim tensors are ``(1, F, 500)``
-    (NAT) or ``(1, F, 400)`` (VMN).
+    includes the published 0.5 s pre-stim + 0.5 s post-stim silence flanking
+    the 3 s stimulus, so per-stim tensors are ``(1, F, 500)`` (NAT) or
+    ``(1, F, 400)`` (VMN). The estimation / test split follows the paper's
+    ``split_by_occurrence_counts`` and is surfaced via the per-stim
+    ``n_repeats`` and ``split`` metadata fields.
 
-    Estimation / test split follows the paper's
-    ``split_by_occurrence_counts``: stimuli presented at the maximum
-    repetition count within a site are the test set (~10 reps for NAT,
-    ~15 reps for VMN), the rest are estimation (1 rep for NAT, ~3 reps
-    for VMN). The per-stim ``n_repeats`` and ``split`` fields are
-    surfaced in ``self.stim_meta`` so this can be cross-checked.
+    Data are freely available at https://doi.org/10.5281/zenodo.3445557 (no
+    account required) and auto-fetched with ``download=True``.
 
-
-    =============== STRUCTURE ================
-
+    Notes
+    -----
     Follows the standard deepSTRF data paradigm (see
-    ``docs/_source/md/data_paradigm.md``).
+    ``docs/_source/md/data_paradigm.md``). Espejo-specific metadata:
 
-    Espejo-specific metadata:
+    - ``stim_meta`` dicts hold ``name``, ``type`` (``'nat'`` / ``'vmn'``),
+      ``n_repeats``, ``split`` (``'test'`` / ``'estimation'``),
+      ``duration_s`` and ``n_samples``.
+    - ``nrn_meta`` dicts hold ``cell_id``, ``site``, ``animal_id``,
+      ``channel``, ``unit`` and ``experiment_set`` (``'nat'`` / ``'vmn'``).
+      ``unit`` can be ``None`` for VMN cells (2-segment cellids).
 
-    - ``self.stims``           list of S tensors ``(1, F, T)`` — pre-computed
-                               cochleagrams pulled directly from ``stim.h5``,
-                               de-duplicated across sites.
-    - ``self.responses``       list of S lists of N tensors ``(R_{s,n}, T)``;
-                               ``(1, 1)`` NaN sentinel where cell n was not
-                               recorded for stim s (different sites present
-                               different stim subsets).
-    - ``self.stim_meta``       list of S dicts ``{"name", "type"='nat'|'vmn',
-                               "n_repeats", "split"='test'|'estimation',
-                               "duration_s", "n_samples"}``.
-    - ``self.nrn_meta`` list of N dicts ``{"cell_id", "site",
-                               "animal_id", "channel", "unit",
-                               "experiment_set"='nat'|'vmn'}``. ``unit``
-                               can be ``None`` for VMN cells (2-segment
-                               cellids).
+    The ``(1, 1)`` NaN sentinel marks ``(stim, neuron)`` pairs the cell was
+    not recorded for (different sites present different stim subsets). Only
+    the pre-computed cochleagrams are in the Zenodo deposit (the raw NAT
+    waveforms are mirrored on the LBHB bitbucket); the loader fixes
+    ``dt_ms = 10``.
 
-
-    =============== REMARKS ================
-
-    - The raw waveforms for the NAT stimuli are not in the Zenodo deposit
-      — only the pre-computed cochleagrams. The LBHB bitbucket mirrors
-      the raw .wav files (see Lopez-Espejo et al. README). A future
-      revision could expose ``stimfmt='waveform'`` for finer time
-      resolution; the current loader fixes ``dt_ms = 10``.
-
-    - ``stimuli='nat'`` and ``stimuli='vmn'`` instantiate disjoint
-      populations with different ``F`` and cannot be concatenated.
+    References
+    ----------
+    Lopez Espejo, Schwartz & David (2019). "Spectral tuning of adaptation
+    supports coding of sensory context in auditory cortex." *PLoS
+    Computational Biology* 15(10): e1007430.
+    https://doi.org/10.1371/journal.pcbi.1007430
     """
 
     def __init__(

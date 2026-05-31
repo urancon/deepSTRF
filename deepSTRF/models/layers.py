@@ -56,20 +56,28 @@ class SinusoidalPositionalEncoding(nn.Module):
 
 def build_causal_window_mask(L: int, window: int = None,
                              device=None) -> torch.Tensor:
-    """
-    Build a ``(L, L)`` attention mask for causal (and optionally
-    windowed) self-attention.
+    """Build a ``(L, L)`` attention mask for causal (optionally windowed) self-attention.
 
-    Position ``i`` attends to position ``j`` iff:
+    Position ``i`` attends to position ``j`` iff ``j <= i`` (causal) and,
+    when ``window`` is set, ``i - j < window`` (otherwise the past is
+    unlimited).
 
-      - ``j <= i``  (causal)
-      - and ``i - j < window``  (when ``window`` is set; otherwise
-        unlimited past)
+    Parameters
+    ----------
+    L : int
+        Sequence length.
+    window : int, optional
+        Maximum look-back distance. ``None`` (default) allows attending to
+        the entire past.
+    device : torch.device, optional
+        Device for the returned mask.
 
-    Returns a ``(L, L)`` bool tensor where ``True`` means "mask out /
-    forbid attention" — matching the convention used by
-    ``nn.TransformerEncoderLayer`` and
-    ``F.scaled_dot_product_attention``.
+    Returns
+    -------
+    torch.Tensor
+        A ``(L, L)`` bool tensor where ``True`` means "mask out / forbid
+        attention" — matching ``nn.TransformerEncoderLayer`` and
+        ``F.scaled_dot_product_attention``.
     """
     # forbid future: True above the diagonal
     mask = torch.triu(torch.ones(L, L, dtype=torch.bool, device=device),
@@ -123,16 +131,28 @@ class CausalLayerNorm(nn.Module):
 #    #########################
 
 class LearnableExponentialDecay(nn.Module):
-    """
-    TODO: description --> Rahman et al. (DNet) + Fang et al. (PLIF)
+    """Per-band learnable exponential-decay low-pass filter.
 
-    TODO:
-     - multiple input channel       | Now: C_in=1 only
-     - multiple output channel      | Now: C_out=1 only
-     - make 1d and 2d versions      | Now: 1d processing with expected 2d input
+    Convolves each frequency band of a ``(B, 1, F, T)`` spectrogram with a
+    causal exponential kernel whose time constant is learned per band, and
+    returns a low-pass version of the same shape. The decay parameterization
+    follows Rahman et al. (DNet) and Fang et al. (PLIF).
 
-    Takes a (B, F, T) tensor as input, and returns a low-pass version of the same shape
+    Parameters
+    ----------
+    input_size : int
+        Number of frequency bands ``F`` (one learnable time constant each).
+    kernel_size : int
+        Temporal extent ``K`` of the decay kernel in frames.
+    init_tau : float, default 2.0
+        Mean initial time constant (frames) for the decay parameters.
+    decay_input : bool, default True
+        If True, scale the kernel so the filtered input keeps unit DC gain.
 
+    Notes
+    -----
+    Currently single input / output channel only, and processes a 2-D
+    ``(B, 1, F, T)`` input as a stack of 1-D temporal convolutions.
     """
     def __init__(self, input_size: int, kernel_size: int, init_tau: float = 2., decay_input: bool = True):
         super(LearnableExponentialDecay, self).__init__()
@@ -149,10 +169,19 @@ class LearnableExponentialDecay(nn.Module):
         self.d = Parameter(init_d)
 
     def build_kernel(self, device='cpu'):
-        """
-        Creates a parametrized kernel to be convolved with the last (temporal) dimension of the input tensor
-        This output kernel has for shape: (input_size, 1, kernel_size)
+        """Build the per-band decay kernel of shape ``(input_size, 1, kernel_size)``.
 
+        The kernel is convolved with the last (temporal) axis of the input.
+
+        Parameters
+        ----------
+        device : torch.device or str, default 'cpu'
+            Device on which to build the kernel.
+
+        Returns
+        -------
+        torch.Tensor
+            Kernel of shape ``(input_size, 1, kernel_size)``.
         """
         kernel = torch.ones(self.input_size, 1, self.K).to(device)
         kernel = kernel * (1 - 1 / (1 + self.d ** 2)).unsqueeze(1).unsqueeze(1).repeat(1, 1, self.K)
@@ -161,11 +190,18 @@ class LearnableExponentialDecay(nn.Module):
         return kernel.to(device)
 
     def forward(self, x):
-        """
-        Convolves each frequency band of input 1-channel spectrogram with filters and standardize the output.
+        """Low-pass each frequency band of a 1-channel spectrogram.
 
-        :param spectro_in: shape is (B, C, F, T) with B=Batch, C=Channels=1 (raw spectrogram), F=#Frequency_bands, T=#Timesteps
-        :return: a tensor of the same shape
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input spectrogram of shape ``(B, 1, F, T)`` (B=batch, 1 channel,
+            F frequency bands, T timesteps).
+
+        Returns
+        -------
+        torch.Tensor
+            Low-pass-filtered spectrogram of the same shape.
         """
         # build exponential kernel
         kernel = self.build_kernel(x.device)
@@ -288,6 +324,7 @@ class ParametricSTRF(nn.Module):
     num_gaussians : int, default 1
         Number of Gaussians per ``(C_out, C_in)`` slot.
     bias : bool, default True
+        Whether to add a per-output-channel bias (conv2d convention).
 
     References
     ----------
@@ -369,8 +406,7 @@ class ParametricSTRF(nn.Module):
 
 
 class SeparableSTRF(nn.Module):
-    """
-    Spectro-Temporal Receptive Field (2D) kernel, frequency-time separable.
+    """Frequency-time separable Spectro-Temporal Receptive Field (2D) kernel.
 
     The effective ``(C_out, C_in, F, T)`` kernel is the rank-1 outer
     product ``w_F(f) · w_T(t)`` of two per-``(C_out, C_in)`` factors.
@@ -378,6 +414,17 @@ class SeparableSTRF(nn.Module):
     ``nn.Conv2d`` STRF (``C_out·C_in·(F + T)`` vs ``C_out·C_in·F·T``)
     while preserving the conv2d call signature so it drops in as a
     ``kernel=`` arg on any STRFReadout-using model.
+
+    Parameters
+    ----------
+    F : int
+        Frequency bins of the kernel.
+    T : int
+        Temporal extent of the kernel in frames.
+    C_in, C_out : int
+        Input / output channel counts.
+    bias : bool, default True
+        Whether to add a per-output-channel bias (conv2d convention).
     """
     def __init__(self, F: int, T: int, C_in, C_out, bias: bool = True):
         super(SeparableSTRF, self).__init__()
@@ -418,14 +465,16 @@ class SeparableSTRF(nn.Module):
 
 
 class LocallyConnected1d(nn.Module):
-    """
-    Implementation of Locally Connected (LC) for 1D tensors
-    A trade-off between Linear and Conv1d
+    """Locally connected (LC) layer for 1-D tensors — a trade-off between Linear and Conv1d.
 
-    Note:
-        nn.Unfold is only compatible with images, so for 1d inputs, it is necessary to first unsqueeze them to 2d,
-        perform the unfold/conv operations, and finally squeeze them back from 2d to 1d
+    Like a convolution, but the kernel weights are *not* shared across
+    positions: every output position has its own filter.
 
+    Notes
+    -----
+    ``nn.Unfold`` only accepts images, so 1-D inputs are first unsqueezed to
+    2-D, the unfold / conv operations are performed, and the result is
+    squeezed back to 1-D.
     """
     def __init__(self, input_size, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, bias=True):
         super(LocallyConnected1d, self).__init__()

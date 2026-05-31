@@ -52,6 +52,7 @@ dependencies = [
     "matplotlib>=3.5",
     "Pillow>=9.0",
     "einops>=0.6",
+    "mambapy>=1.2",         # pure-PyTorch Mamba backbone for StateNet(rnn_type='Mamba')
     "soundfile>=0.12",
     "scikit-image>=0.20",
     "h5py>=3.7",
@@ -108,9 +109,13 @@ s4 = [
 
 # EEG datasets (currently: Alice EEG). MNE-Python parses the .fif files
 # Brodbeck 2023 rereleased, and exposes channel montages + bad-channel /
-# artifact annotations natively.
+# artifact annotations natively. The gammatone package provides the
+# paper-faithful Heeris time-domain filterbank used by
+# ``AliceEEGDataset(spec_backend='heeris')`` to match Brodbeck via
+# eelbrain's ``gammatone_bank``.
 eeg = [
     "mne>=1.5",
+    "gammatone>=1.0",
 ]
 
 # Meliza 2025 (zebra finch occluded-song restoration). Uses the paper's

@@ -88,11 +88,12 @@ def download_ns1(dest: Optional[str] = None) -> str:
     """Download all NS1 data assets into ``dest``.
 
     Sources:
-     - **OSF** (https://osf.io/ayw2p/, no account): the dataset README, the
-       per-neuron metadata (.mat), and the spike + wav zip (~155 MB total).
-     - **DNet GitHub** (https://github.com/monzilur/DNet, master branch): the
-       precomputed 5 ms mel-spectrogram tensor ``test_data_5ms.mat``
-       (5.2 MB) accompanying Rahman et al. 2018 PLoS Comp Biol. NOT on OSF.
+
+    - **OSF** (https://osf.io/ayw2p/, no account): the dataset README, the
+      per-neuron metadata (.mat), and the spike + wav zip (~155 MB total).
+    - **DNet GitHub** (https://github.com/monzilur/DNet, master branch): the
+      precomputed 5 ms mel-spectrogram tensor ``test_data_5ms.mat``
+      (5.2 MB) accompanying Rahman et al. 2018 PLoS Comp Biol. NOT on OSF.
 
     Idempotent: skips files that already exist; returns the destination path.
 
@@ -134,68 +135,55 @@ def download_ns1(dest: Optional[str] = None) -> str:
 
 
 class NS1Dataset(AudioNeuralDataset):
-    """A PyTorch dataset for the NS1 (Harper et al. 2016, Rahman et al. 2020) data.
+    """PyTorch dataset for the NS1 (Harper et al. 2016, Rahman et al. 2020) data.
 
+    119 multi/single units from primary auditory cortex (A1) of deeply
+    anesthetized ferrets, recorded in response to 20 natural sound clips of
+    4.995 s each, presented 20 times per neuron. Every neuron heard every
+    clip, so the response grid is fully dense (no NaN sentinels). The DRC
+    stimuli are not loaded here — their spectrograms are not packaged with
+    the OSF release.
 
-    =============== SOURCE ================
+    Of the 119 units, 73 pass the "single-unit at known depth" filter the
+    original authors used (``single_t in {'Yes', 'Maybe'}`` and
+    ``depth >= 0``); :meth:`~deepSTRF.datasets.neural_dataset.NeuralDataset.select_pop_by_nrn_attr`
+    over ``single_t`` / ``depth_um`` reproduces this subset.
 
-    See original papers for details:
-     - "Network receptive field modeling reveals extensive integration and
-       multi-feature selectivity in auditory cortical neurons", Harper et al.
-       PLoS Computational Biology (2016).
-     - "Simple transformations capture auditory input to cortex", Rahman et al.
-       PNAS (2020).
+    The spectrogram tensor is precomputed at ``dt = 5 ms`` (``F = 34``
+    frequency bands, ``T = 999`` bins); the ``dt_ms`` constructor argument is
+    currently validated against this resolution. With ``return_waveform=True``,
+    ``stims`` are instead raw mono waveforms ``(1, T_audio)`` at ``audio_fs``
+    (aligned to ``T_audio = T_neural * audio_fs * dt_ms / 1000``) — feed them
+    through a model's ``wav2spec`` front-end.
 
-    Data freely available — no account required:
-     - https://osf.io/ayw2p/                (metadata, raw spike + wav data)
-     - https://github.com/monzilur/DNet     (precomputed 5 ms mel spectrogram)
-    Both are auto-fetched by ``NS1Dataset(download=True)``.
+    Data are freely available (no account required) and auto-fetched by
+    ``NS1Dataset(download=True)``:
 
+    - https://osf.io/ayw2p/ — metadata, raw spike and wav data.
+    - https://github.com/monzilur/DNet — precomputed 5 ms mel spectrogram.
 
-    =============== DETAILS ================
+    Notes
+    -----
+    Follows the standard deepSTRF data paradigm (see
+    ``docs/_source/md/data_paradigm.md``). NS1-specific metadata:
 
-    - 119 multi/single units from primary auditory cortex (A1) of deeply-
-      anesthetized ferrets. Of those, 73 pass the "single-unit at known depth"
-      filter the original authors used (``singleT in {'Yes', 'Maybe'}`` and
-      ``depth >= 0``); ``select_pop_by_nrn_attr`` over ``single_t``/``depth``
-      reproduces this subset.
-    - 20 natural sound clips of 4.995 s each, presented 20 times per neuron
-      (every neuron heard every clip — the response grid is fully dense, no
-      NaN sentinels). DRC stimuli are NOT loaded here: their stimulus
-      spectrograms are not packaged with the OSF release.
-    - The spectrogram tensor is precomputed at ``dt = 5 ms`` (F = 34 frequency
-      bands, T = 999 bins). The ``dt_ms`` constructor arg is currently
-      validated against this resolution; varying ``dt`` would require
-      re-computing spectrograms from raw wavs (TODO).
+    - ``stim_meta`` dicts hold ``name`` and ``type``.
+    - ``nrn_meta`` dicts hold ``cell_id``, ``area``, ``depth_um``,
+      ``noise_ratio``, ``single_n``, ``single_t``, ``n_electrodes`` and
+      ``electrode_number``. ``noise_ratio`` is the Sahani-Linden normalised
+      noise power (lower = cleaner; NOT an SNR despite the legacy ``.mat``
+      field name). ``single_n`` is the single-unit flag from spike-snippet
+      clustering (0/1); ``single_t`` is the manual triage label
+      ('Yes'/'Maybe'/'No').
 
+    References
+    ----------
+    Harper et al. (2016). "Network receptive field modeling reveals extensive
+    integration and multi-feature selectivity in auditory cortical neurons."
+    *PLoS Computational Biology*.
 
-    =============== STRUCTURE ================
-
-    Follows the standard deepSTRF data paradigm (see docs/_source/md/data_paradigm.md).
-    Stim shape depends on the loading mode (see ``return_waveform`` parameter):
-
-    - **Spectrogram mode** (default): ``self.stims[s]`` is a ``(1, F=34, T=999)``
-      tensor of the precomputed Harper/Rahman mel-spectrogram at dt=5 ms.
-    - **Waveform mode**: ``self.stims[s]`` is a ``(1, T_audio)`` mono float tensor
-      at ``self.audio_fs`` Hz, aligned to the response window (i.e.
-      ``T_audio = T_neural * audio_fs * dt_ms / 1000``).
-
-    NS1-specific metadata contents:
-     - self.stims                       list of S=20 tensors (see shape above)
-     - self.responses                   list of S lists of N tensors (R=20, T=999)
-     - self.stim_meta                   list of S dicts {"name", "type"}
-     - self.nrn_meta             list of N dicts {"cell_id", "area",
-                                        "depth_um", "noise_ratio", "single_n",
-                                        "single_t", "n_electrodes",
-                                        "electrode_number"}
-                                        — ``noise_ratio`` is the Sahani-Linden
-                                        normalised-noise-power; lower = cleaner
-                                        (NOT SNR despite the legacy field name
-                                        in the .mat). ``single_n`` is the
-                                        single-unit flag from spike-snippet
-                                        clustering (0/1); ``single_t`` is the
-                                        manual triage label ('Yes'/'Maybe'/'No').
-
+    Rahman et al. (2020). "Simple transformations capture auditory input to
+    cortex." *PNAS*.
     """
 
     def __init__(self, path: Optional[str] = None, dt_ms: float = 5.0,
@@ -218,11 +206,11 @@ class NS1Dataset(AudioNeuralDataset):
             (Hsu, Borst & Theunissen 2004).
         download : bool, default False
             If True and the data assets are missing under ``path``, fetch
-            them from their public sources (no account required):
-             - OSF (https://osf.io/ayw2p/): metadata + spike data + wavs
-             - DNet GitHub (https://github.com/monzilur/DNet): the
-               precomputed 5 ms mel-spectrogram tensor (``test_data_5ms.mat``).
-            Total ~160 MB, ~16 s on a fast connection. See ``download_ns1``.
+            them from their public sources (no account required) — OSF
+            (https://osf.io/ayw2p/: metadata + spike data + wavs) and DNet
+            GitHub (https://github.com/monzilur/DNet: the precomputed 5 ms
+            mel-spectrogram tensor ``test_data_5ms.mat``). Total ~160 MB,
+            ~16 s on a fast connection. See :func:`download_ns1`.
         return_waveform : bool, default False
             If True, ``self.stims`` holds raw audio waveforms instead of
             precomputed spectrograms. Each ``self.stims[s]`` is a
@@ -258,6 +246,8 @@ class NS1Dataset(AudioNeuralDataset):
         # roughly 200 Hz – 40 kHz. Lets tooling/notebooks display the range and
         # users optionally clamp a wav2spec's frequency limits.
         self.hearing_range_hz = (200.0, 40000.0)
+        # Raw-waveform mode flag (gates the base-class grid-lock validation).
+        self.return_waveform = bool(return_waveform)
 
         # ----------- 1. load the precomputed spectrograms -----------
         # X_nfht: (S=20, F=34, 1, T=999) at dt=5 ms

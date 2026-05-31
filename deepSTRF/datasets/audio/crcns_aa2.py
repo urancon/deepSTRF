@@ -211,52 +211,44 @@ def get_stim_ids_from_folders(cells_path, verbose=False):
 
 
 class CRCNSAA2Dataset(AudioNeuralDataset):
-    """
-    A PyTorch dataset for handling neural data from the CRCNS-AA2 dataset and its many recording sites (OV, Mld, Field L, CM)
+    """PyTorch dataset for the CRCNS-AA2 recordings (OV, MLd, Field L, CM).
 
+    494 extracellular, spike-sorted single units of male zebra finches,
+    identified in OV, MLd, Field L, L1, L2a, L2b, L3 (and some with
+    unidentified area, ``None``). Three stimulus classes — conspecific songs
+    (72 stims), flat ripples (20) and song ripples (25) — each presented
+    10-20 times, with low trial-to-trial variability. Almost all cells saw
+    conspecific and songrip stimuli; about half saw flatrip. Population
+    fitting-compatible. Data are available at
+    https://crcns.org/data-sets/aa/aa-2/about (free CRCNS account).
 
-    =============== SOURCE ================
+    Notes
+    -----
+    Follows the standard deepSTRF data paradigm (see
+    ``docs/_source/md/data_paradigm.md``). AA2-specific metadata:
 
-    See original papers for details:
-     - "Sound representation methods for spectro-temporal receptive field estimation" by Patrick Gill et al. (2006)
-     - "Role of the Zebra Finch Auditory Thalamus in Generating Complex Representations for Natural Sounds" by Noopur Amin et al. (2010)
+    - ``stims`` are mel-spectrograms ``(1, F, T_s)``.
+    - ``stim_meta`` dicts hold ``name``, ``type``, ``sample_rate``,
+      ``n_samples`` and ``duration_s`` (the last three from
+      ``data/stim_data.csv``).
+    - ``nrn_meta`` dicts hold ``cell_id``, ``animal_id``, ``area``,
+      ``cell_seq`` and ``rig`` (see :class:`~deepSTRF.datasets.audio.crcns_aa1.CRCNSAA1Dataset`
+      for the cell-name format; ``rig`` is often ``None`` in AA2).
 
-    Data available at: https://crcns.org/data-sets/aa/aa-2/about
+    References
+    ----------
+    Gill et al. (2006). "Sound representation methods for spectro-temporal
+    receptive field estimation."
 
-
-    =============== DETAILS ================
-
-    More details can be found in the dataset source, the dataset-specific README in the deepSTRF docs, or in the original papers.
-    But in a nutshell:
-    - 494 extracellular, spike-sorted single units of male zebra finches
-    - neurons identified in OV, MLd, Field L, L1, L2a, L2b, L3, OV. Also neurons with unindentified area (None)
-    - 3 stimulus classes: conspecific songs (72 stims), flat ripples (20), and song ripples (25)
-    - almost all cells were presented conspecific and songrip stimuli, and about half were presented flatrip
-    - stimuli were each presented 10-20 times
-    - low trial-to-trial variability
-    - population fitting-compatible
-
-
-    =============== STRUCTURE ================
-
-    Follows the standard deepSTRF data paradigm (see docs/_source/md/data_paradigm.md).
-    AA2-specific metadata contents:
-     - self.stims                       list of S tensors (1, F, T_s), mel-spectrograms
-     - self.responses                   list of S lists of N tensors (R_{s,n}, T_s)
-     - self.stim_meta                   list of S dicts {"name", "type",
-                                        "sample_rate", "n_samples", "duration_s"}
-                                        (last three from data/stim_data.csv)
-     - self.nrn_meta             list of N dicts {"cell_id", "animal_id",
-                                        "area", "cell_seq", "rig"} — see AA1's
-                                        docstring for the cell-name format
-                                        documentation; rig is often None in AA2
-
+    Amin et al. (2010). "Role of the Zebra Finch Auditory Thalamus in
+    Generating Complex Representations for Natural Sounds."
     """
     def __init__(self, path: Optional[str] = None,
                  areas=('Field_L', 'mld', 'OV', 'CM', 'None'),
                  stimuli=('conspecific', 'flatrip', 'songrip'),
                  animals='all', dt_ms=1, smooth=True, n_mels=32,
                  compression='cubic',
+                 window_ms: float = 10.0,
                  return_waveform: bool = False, audio_fs: int = 32000,
                  download: bool = False,
                  username: Optional[str] = None,
@@ -280,6 +272,16 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
         compression : str
             Spectrogram compression ('cubic', 'log1p', 'none'). Ignored when
             ``return_waveform=True``.
+        window_ms : float, default 10.0
+            FFT analysis-window length in ms. ``n_fft`` is computed as
+            ``round(window_ms * 1e-3 * sample_rate)`` and is **decoupled
+            from ``hop_length``** so phonemic detail is preserved at any
+            ``dt_ms``. Earlier versions of this dataset hardcoded
+            ``n_fft = 10 * hop_length``, which gave a benign 10 ms FFT
+            window at ``dt_ms=1`` but a 500 ms window at ``dt_ms=50``.
+            Default ``window_ms=10.0`` preserves bit-identical behaviour
+            at ``dt_ms=1`` while fixing the scaling bug at coarser bins.
+            Ignored when ``return_waveform=True``.
         return_waveform : bool, default False
             If True, ``self.stims[s]`` holds the raw audio waveform
             ``(1, T_audio)`` at ``audio_fs`` Hz (grid-locked to ``T_audio =
@@ -313,13 +315,26 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
         # Waveform-input mode: store raw audio instead of the in-loader mel spec.
         self.return_waveform = bool(return_waveform)
         self.audio_fs = int(audio_fs) if return_waveform else None
-        # hop_length (samples) | dt (ms)
-        # 320 | 10
-        # 160 | 5
-        # 32  | 1
+        # sr = 32 kHz (CRCNS-AA2 wavs). hop_length tracks dt_ms; n_fft is
+        # **independent of dt_ms** and pinned to ``window_ms``. At the
+        # default (window_ms=10, dt_ms=1) this gives n_fft=320, which
+        # equals the legacy ``10 * hl`` value bit-for-bit. At coarser
+        # dt_ms the legacy formula scaled the window with the hop and
+        # over-smoothed the spec; the new formula caps n_fft at
+        # ``window_ms * sr`` (or ``hop_length`` if that's larger — STFT
+        # constraint). See ``window_ms`` docstring above.
+        sample_rate = 32000
         self.F = n_mels
-        hl = dt_ms * 32
-        transform = torchaudio.transforms.MelSpectrogram(sample_rate=32000, n_fft=10 * hl, hop_length=hl, n_mels=self.F)  # n_fft=800
+        self.window_ms = float(window_ms)
+        hl = int(dt_ms * 32)
+        # See the AA1 spec block for why we derive n_fft from the
+        # truncated hop via the ratio ``window_ms / dt_ms`` — preserves
+        # bit-identical behaviour at the legacy ``window_ms = 10 * dt_ms``
+        # contract for every supported sr.
+        n_fft = max(int(round((self.window_ms / float(dt_ms)) * hl)), hl)
+        transform = torchaudio.transforms.MelSpectrogram(
+            sample_rate=sample_rate, n_fft=n_fft, hop_length=hl, n_mels=self.F,
+        )
         self.compression = compression
         # audio-samples-per-neural-bin for waveform mode (== hl at native 32 kHz).
         hop = int(round(audio_fs * dt_ms / 1000)) if return_waveform else None

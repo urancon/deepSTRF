@@ -70,12 +70,27 @@ def corrcoef(
 ) -> torch.Tensor:
     """Pearson correlation per neuron over flattened valid (B, T) positions.
 
-    ``gt`` may be passed as either a pre-computed PSTH ``(B, N, 1, T)`` or a
-    raw responses tensor ``(B, N, R, T)`` with ``R > 1``; in the latter case
-    it is collapsed to PSTH via ``nanmean(dim=2, keepdim=True)`` before the
-    correlation is computed.
-
     See ``metrics_paradigm.md`` §6.3.
+
+    Parameters
+    ----------
+    pred : torch.Tensor
+        Prediction of shape ``(B, N, 1, T)``.
+    gt : torch.Tensor
+        Pre-computed PSTH ``(B, N, 1, T)`` or raw responses ``(B, N, R, T)``
+        with ``R > 1`` (collapsed to PSTH via ``nanmean(dim=2, keepdim=True)``
+        first). May contain NaN.
+    mask : torch.Tensor, optional
+        Bool tensor broadcastable to ``(B, N, 1, T)``. If None, defaults to
+        ``~gt.isnan()``; if provided, REPLACES the NaN-derived mask.
+    reduction : {'none', 'mean', 'sum'}, default 'mean'
+        Reduction over the neuron axis.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape ``(N,)`` if ``reduction='none'``, otherwise a scalar. Neurons
+        with fewer than 2 valid positions or zero variance yield NaN.
     """
     gt = collapse_to_psth_if_needed(gt)
     _check_pred_gt(pred, gt)
@@ -103,13 +118,28 @@ def fve(
 ) -> torch.Tensor:
     """Fraction of variance explained (R²) per neuron, over flattened valid positions.
 
-    ``FVE_n = 1 - SS_res / SS_tot`` where SS_tot is the variance of ``gt`` only.
-    Negative when the prediction is worse than predicting the mean.
+    ``FVE_n = 1 - SS_res / SS_tot`` where ``SS_tot`` is the variance of ``gt``
+    only. Negative when the prediction is worse than predicting the mean.
 
-    ``gt`` may be passed as either a pre-computed PSTH ``(B, N, 1, T)`` or a
-    raw responses tensor ``(B, N, R, T)`` with ``R > 1``; in the latter case
-    it is collapsed to PSTH via ``nanmean(dim=2, keepdim=True)`` before the
-    metric is computed.
+    Parameters
+    ----------
+    pred : torch.Tensor
+        Prediction of shape ``(B, N, 1, T)``.
+    gt : torch.Tensor
+        Pre-computed PSTH ``(B, N, 1, T)`` or raw responses ``(B, N, R, T)``
+        with ``R > 1`` (collapsed to PSTH via ``nanmean(dim=2, keepdim=True)``
+        first). May contain NaN.
+    mask : torch.Tensor, optional
+        Bool tensor broadcastable to ``(B, N, 1, T)``. If None, defaults to
+        ``~gt.isnan()``; if provided, REPLACES the NaN-derived mask.
+    reduction : {'none', 'mean', 'sum'}, default 'mean'
+        Reduction over the neuron axis.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape ``(N,)`` if ``reduction='none'``, otherwise a scalar. Neurons
+        with fewer than 2 valid positions or zero target variance yield NaN.
     """
     gt = collapse_to_psth_if_needed(gt)
     _check_pred_gt(pred, gt)
@@ -138,6 +168,67 @@ def fve(
 # -----------------------------------------------------------------------------
 
 
+def _per_stim_sp_np(
+    responses_b: torch.Tensor,
+    valid_b: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Per-stim SP, NP, and valid-time-count, all shape ``(N,)``.
+
+    Behaviour-preserving extraction of the inner per-``(stim, neuron)`` loop
+    from :func:`_sahani_linden_per_neuron` — exposes a stim-streaming entry
+    point so callers can accumulate length-weighted partial sums without
+    pre-building an ``(S, N, R_max, T_max)`` padded tensor (see
+    :meth:`NeuralDataset.compute_neuron_quality`).
+
+    Parameters
+    ----------
+    responses_b : torch.Tensor
+        Per-stim responses, shape ``(N, R, T)``. Invalid entries flagged via
+        ``valid_b`` (NaN sentinels or an explicit mask).
+    valid_b : torch.Tensor
+        Bool mask of the same shape as ``responses_b``.
+
+    Returns
+    -------
+    sp_b, np_b : torch.Tensor
+        ``(N,)`` per-neuron SP / NP for this stim. ``NaN`` for neurons that
+        don't qualify (``R_v < 2`` or ``T_v < 2``).
+    Tv_b : torch.Tensor
+        ``(N,)`` per-neuron valid-time-bin count. ``0`` for non-qualifying
+        neurons — used as the weight in length-weighted aggregation.
+    """
+    if responses_b.dim() != 3:
+        raise ValueError(
+            f"_per_stim_sp_np expects (N, R, T), got {tuple(responses_b.shape)}"
+        )
+    N, _, _ = responses_b.shape
+    nan = responses_b.new_full((), float("nan"))
+    zero = responses_b.new_zeros(())
+    sp_out = []
+    np_out = []
+    tv_out = []
+    for n in range(N):
+        v_n = valid_b[n]                              # (R, T)
+        valid_repeats = v_n.any(dim=-1)               # (R,)
+        valid_time = v_n.any(dim=0)                   # (T,)
+        R_v = int(valid_repeats.sum().item())
+        T_v = int(valid_time.sum().item())
+        if R_v < 2 or T_v < 2:
+            sp_out.append(nan)
+            np_out.append(nan)
+            tv_out.append(zero)
+            continue
+        sub = responses_b[n][valid_repeats][:, valid_time]   # (R_v, T_v)
+        psth = sub.mean(dim=0)                                # (T_v,)
+        var_psth = psth.var(unbiased=True)                    # scalar
+        tp = sub.var(dim=-1, unbiased=True).mean()            # scalar
+        sp = (R_v * var_psth - tp) / (R_v - 1)
+        sp_out.append(sp)
+        np_out.append(tp - sp)
+        tv_out.append(responses_b.new_tensor(float(T_v)))
+    return torch.stack(sp_out), torch.stack(np_out), torch.stack(tv_out)
+
+
 def _sahani_linden_per_neuron(
     responses: torch.Tensor,
     valid: torch.Tensor,
@@ -157,41 +248,33 @@ def _sahani_linden_per_neuron(
 
     A given ``(b, n)`` cell is included iff it has ≥ 2 valid repeats and ≥ 2
     valid time bins. Cells that have no qualifying stim get NaN.
+
+    Thin wrapper over :func:`_per_stim_sp_np`: loops over the batch axis and
+    accumulates per-neuron length-weighted partial sums. The streaming-friendly
+    helper is the underscore-prefixed per-stim variant — callers handling
+    large datasets should use it directly to avoid pre-padding ``(S, N,
+    R_max, T_max)`` in memory.
     """
-    B, N, R, T = responses.shape
+    B, N, _, _ = responses.shape
     nan = responses.new_full((), float("nan"))
-    sp_per_neuron = []
-    np_per_neuron = []
-    for n in range(N):
-        sp_stims = []
-        np_stims = []
-        weights = []
-        for b in range(B):
-            v_bn = valid[b, n]                       # (R, T)
-            valid_repeats = v_bn.any(dim=-1)         # (R,)
-            valid_time = v_bn.any(dim=0)             # (T,)
-            R_v = int(valid_repeats.sum().item())
-            T_v = int(valid_time.sum().item())
-            if R_v < 2 or T_v < 2:
-                continue
-            sub = responses[b, n][valid_repeats][:, valid_time]   # (R_v, T_v)
-            psth = sub.mean(dim=0)                                # (T_v,)
-            var_psth = psth.var(unbiased=True)                    # scalar
-            tp = sub.var(dim=-1, unbiased=True).mean()            # scalar
-            sp = (R_v * var_psth - tp) / (R_v - 1)
-            sp_stims.append(sp)
-            np_stims.append(tp - sp)
-            weights.append(float(T_v))
-        if sp_stims:
-            sps = torch.stack(sp_stims)
-            nps = torch.stack(np_stims)
-            ws = sps.new_tensor(weights)
-            sp_per_neuron.append((sps * ws).sum() / ws.sum())
-            np_per_neuron.append((nps * ws).sum() / ws.sum())
-        else:
-            sp_per_neuron.append(nan)
-            np_per_neuron.append(nan)
-    return torch.stack(sp_per_neuron), torch.stack(np_per_neuron)
+    sum_w = responses.new_zeros(N)
+    sum_w_sp = responses.new_zeros(N)
+    sum_w_np = responses.new_zeros(N)
+    for b in range(B):
+        sp_b, np_b, tv_b = _per_stim_sp_np(responses[b], valid[b])
+        contrib = tv_b > 0
+        if not bool(contrib.any()):
+            continue
+        # tv_b is 0 for non-qualifying neurons → masked multiplications stay 0
+        # whether sp_b/np_b are NaN there or not; explicit `where` avoids the
+        # 0 * NaN = NaN trap.
+        sum_w = sum_w + tv_b
+        sum_w_sp = sum_w_sp + torch.where(contrib, tv_b * sp_b, sum_w_sp.new_zeros(()))
+        sum_w_np = sum_w_np + torch.where(contrib, tv_b * np_b, sum_w_np.new_zeros(()))
+    qualifying = sum_w > 0
+    sp_out = torch.where(qualifying, sum_w_sp / sum_w.clamp(min=1), nan.expand(N))
+    np_out = torch.where(qualifying, sum_w_np / sum_w.clamp(min=1), nan.expand(N))
+    return sp_out, np_out
 
 
 @torch.no_grad()
@@ -203,8 +286,24 @@ def signal_power(
     """Sahani-Linden signal power per neuron.
 
     Computed per-stimulus (with the per-stim valid repeat count) then
-    averaged across stimuli (``nanmean``). Cells without any qualifying
-    stim — needs ≥ 2 valid repeats and ≥ 2 valid time bins — return NaN.
+    length-weighted across stimuli. Cells without any qualifying stim —
+    needs ≥ 2 valid repeats and ≥ 2 valid time bins — return NaN.
+
+    Parameters
+    ----------
+    responses : torch.Tensor
+        Raw responses of shape ``(B, N, R, T)``. NaN marks missing repeats /
+        time bins.
+    mask : torch.Tensor, optional
+        Bool tensor broadcastable to ``responses``. If None, defaults to
+        ``~responses.isnan()``; if provided, REPLACES the NaN-derived mask.
+    reduction : {'none', 'mean', 'sum'}, default 'mean'
+        Reduction over the neuron axis.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape ``(N,)`` if ``reduction='none'``, otherwise a scalar.
     """
     _check_responses(responses)
     valid = resolve_mask(responses, mask)
@@ -218,7 +317,24 @@ def noise_power(
     mask: Optional[torch.Tensor] = None,
     reduction: str = "mean",
 ) -> torch.Tensor:
-    """Sahani-Linden noise power per neuron. ``NP = TP - SP``."""
+    """Sahani-Linden noise power per neuron (``NP = TP - SP``).
+
+    Parameters
+    ----------
+    responses : torch.Tensor
+        Raw responses of shape ``(B, N, R, T)``. NaN marks missing repeats /
+        time bins.
+    mask : torch.Tensor, optional
+        Bool tensor broadcastable to ``responses``. If None, defaults to
+        ``~responses.isnan()``; if provided, REPLACES the NaN-derived mask.
+    reduction : {'none', 'mean', 'sum'}, default 'mean'
+        Reduction over the neuron axis.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape ``(N,)`` if ``reduction='none'``, otherwise a scalar.
+    """
     _check_responses(responses)
     valid = resolve_mask(responses, mask)
     _, np_ = _sahani_linden_per_neuron(responses, valid)
@@ -231,10 +347,24 @@ def snr(
     mask: Optional[torch.Tensor] = None,
     reduction: str = "mean",
 ) -> torch.Tensor:
-    """Signal-to-noise ratio per neuron. ``SNR = SP / NP``.
+    """Signal-to-noise ratio per neuron (``SNR = SP / NP``).
 
-    Returns ``+inf`` for noiseless cells (NP ≈ 0). Caller decides whether
-    to filter.
+    Parameters
+    ----------
+    responses : torch.Tensor
+        Raw responses of shape ``(B, N, R, T)``. NaN marks missing repeats /
+        time bins.
+    mask : torch.Tensor, optional
+        Bool tensor broadcastable to ``responses``. If None, defaults to
+        ``~responses.isnan()``; if provided, REPLACES the NaN-derived mask.
+    reduction : {'none', 'mean', 'sum'}, default 'mean'
+        Reduction over the neuron axis.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape ``(N,)`` if ``reduction='none'``, otherwise a scalar. Noiseless
+        cells (``NP ≈ 0``) yield ``+inf``; the caller decides whether to filter.
     """
     _check_responses(responses)
     valid = resolve_mask(responses, mask)
@@ -246,6 +376,83 @@ def snr(
 # -----------------------------------------------------------------------------
 # Public: noise-corrected prediction correlation
 # -----------------------------------------------------------------------------
+
+
+def _per_stim_ccmax(
+    responses_b: torch.Tensor,
+    valid_b: torch.Tensor,
+    max_iters: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Per-stim CCmax + valid-time-count, both shape ``(N,)``.
+
+    Behaviour-preserving extraction of the inner per-``(stim, neuron)`` loop
+    from :func:`_ccmax_per_neuron`. Returns ``T_v = 0`` for any neuron that
+    doesn't contribute on this stim — both the ``R_v < 2 / T_v < 2``
+    structural skip and the ``ρ_half ≤ 0`` "too noisy to estimate" skip
+    collapse to zero weight in the streaming aggregator.
+
+    Parameters
+    ----------
+    responses_b : torch.Tensor
+        Per-stim responses, shape ``(N, R, T)``.
+    valid_b : torch.Tensor
+        Bool mask of the same shape as ``responses_b``.
+    max_iters : int
+        Cap on random half-splits per neuron (``C(R, R/2)`` blows up
+        quickly).
+
+    Returns
+    -------
+    ccmax_b : torch.Tensor
+        ``(N,)`` per-neuron CCmax for this stim. ``NaN`` for neurons that
+        don't qualify or where ``ρ_half ≤ 0``.
+    Tv_b : torch.Tensor
+        ``(N,)`` per-neuron valid-time-bin count. ``0`` for non-contributing
+        neurons — use as the streaming weight.
+    """
+    if responses_b.dim() != 3:
+        raise ValueError(
+            f"_per_stim_ccmax expects (N, R, T), got {tuple(responses_b.shape)}"
+        )
+    N, _, _ = responses_b.shape
+    nan = responses_b.new_full((), float("nan"))
+    zero = responses_b.new_zeros(())
+    cc_out = []
+    tv_out = []
+    for n in range(N):
+        v_n = valid_b[n]
+        valid_repeats = v_n.any(dim=-1)
+        valid_time = v_n.any(dim=0)
+        R_v = int(valid_repeats.sum().item())
+        T_v = int(valid_time.sum().item())
+        if R_v < 2 or T_v < 2:
+            cc_out.append(nan)
+            tv_out.append(zero)
+            continue
+        sub = responses_b[n][valid_repeats][:, valid_time]
+        if R_v % 2 == 1:
+            R_v -= 1
+            sub = sub[:R_v]
+        half_sets = list(itertools.combinations(range(R_v), R_v // 2))
+        n_iters = min(len(half_sets) // 2, max_iters)
+        cc_halfs = []
+        for i in range(n_iters):
+            first = sub[list(half_sets[i])].mean(dim=0)
+            second = sub[list(half_sets[-1 - i])].mean(dim=0)
+            cc_halfs.append(_pearson_1d(first, second))
+        if not cc_halfs:
+            cc_out.append(nan)
+            tv_out.append(zero)
+            continue
+        rho_half = torch.stack(cc_halfs).mean()
+        if rho_half.item() <= 0:
+            # too noisy to estimate ceiling; drop this stim from the weighted avg
+            cc_out.append(nan)
+            tv_out.append(zero)
+            continue
+        cc_out.append(torch.sqrt(2 * rho_half / (1 + rho_half)))
+        tv_out.append(responses_b.new_tensor(float(T_v)))
+    return torch.stack(cc_out), torch.stack(tv_out)
 
 
 def _ccmax_per_neuron(
@@ -261,47 +468,24 @@ def _ccmax_per_neuron(
     natural sample weighting of ``corrcoef`` over the concatenated time axis.
     Per-stim cells with ``ρ_half ≤ 0`` are dropped (NaN-skip in the weighted
     average). Cells with no qualifying stim get NaN.
+
+    Thin wrapper over :func:`_per_stim_ccmax`. See
+    :func:`_sahani_linden_per_neuron` for the equivalent SP/NP streaming
+    rationale.
     """
-    B, N, R, T = responses.shape
+    B, N, _, _ = responses.shape
     nan = responses.new_full((), float("nan"))
-    out = []
-    for n in range(N):
-        ccmax_stims = []
-        weights = []
-        for b in range(B):
-            v_bn = valid[b, n]
-            valid_repeats = v_bn.any(dim=-1)
-            valid_time = v_bn.any(dim=0)
-            R_v = int(valid_repeats.sum().item())
-            T_v = int(valid_time.sum().item())
-            if R_v < 2 or T_v < 2:
-                continue
-            sub = responses[b, n][valid_repeats][:, valid_time]
-            if R_v % 2 == 1:
-                R_v -= 1
-                sub = sub[:R_v]
-            half_sets = list(itertools.combinations(range(R_v), R_v // 2))
-            n_iters = min(len(half_sets) // 2, max_iters)
-            cc_halfs = []
-            for i in range(n_iters):
-                first = sub[list(half_sets[i])].mean(dim=0)
-                second = sub[list(half_sets[-1 - i])].mean(dim=0)
-                cc_halfs.append(_pearson_1d(first, second))
-            if not cc_halfs:
-                continue
-            rho_half = torch.stack(cc_halfs).mean()
-            if rho_half.item() <= 0:
-                # too noisy to estimate ceiling; drop this stim from the weighted avg
-                continue
-            ccmax_stims.append(torch.sqrt(2 * rho_half / (1 + rho_half)))
-            weights.append(float(T_v))
-        if ccmax_stims:
-            cms = torch.stack(ccmax_stims)
-            ws = cms.new_tensor(weights)
-            out.append((cms * ws).sum() / ws.sum())
-        else:
-            out.append(nan)
-    return torch.stack(out)
+    sum_w = responses.new_zeros(N)
+    sum_w_cc = responses.new_zeros(N)
+    for b in range(B):
+        cc_b, tv_b = _per_stim_ccmax(responses[b], valid[b], max_iters=max_iters)
+        contrib = tv_b > 0
+        if not bool(contrib.any()):
+            continue
+        sum_w = sum_w + tv_b
+        sum_w_cc = sum_w_cc + torch.where(contrib, tv_b * cc_b, sum_w_cc.new_zeros(()))
+    qualifying = sum_w > 0
+    return torch.where(qualifying, sum_w_cc / sum_w.clamp(min=1), nan.expand(N))
 
 
 @torch.no_grad()
@@ -315,12 +499,44 @@ def normalized_corrcoef(
 ) -> torch.Tensor:
     """Noise-corrected correlation coefficient per neuron.
 
-    ``method='schoppe'`` divides by ``sqrt(var(pred) · SP)`` (Schoppe 2016).
-    ``method='hsu'`` divides the raw Pearson by ``CCmax`` (Hsu/Spearman-Brown).
-    Single-trial degenerate case (R = 1 everywhere): falls back to raw
-    ``corrcoef(pred, psth)``.
-
     See ``metrics_paradigm.md`` §6.4.
+
+    Parameters
+    ----------
+    pred : torch.Tensor
+        Prediction of shape ``(B, N, 1, T)`` (the model-output convention;
+        the R-axis must be 1).
+    responses : torch.Tensor
+        Raw responses ``(B, N, R, T)``. The PSTH is formed internally via
+        ``nanmean(dim=2, keepdim=True)``; the noise ceiling uses the full
+        repeat axis. May contain NaN.
+    method : {'schoppe', 'hsu'}, default 'schoppe'
+        ``'schoppe'`` divides by ``sqrt(var(pred) · SP)`` (Schoppe et al.
+        2016); ``'hsu'`` divides the raw Pearson by ``CCmax``
+        (Hsu/Spearman-Brown).
+    mask : torch.Tensor, optional
+        Bool tensor broadcastable to the PSTH ``(B, N, 1, T)``. If None,
+        defaults to ``~psth.isnan()``; if provided, REPLACES the NaN-derived
+        mask.
+    reduction : {'none', 'mean', 'sum'}, default 'mean'
+        Reduction over the neuron axis.
+    ccmax_iters : int, default 126
+        Cap on random half-splits per ``(stim, neuron)`` for the ``'hsu'``
+        CCmax estimate.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape ``(N,)`` if ``reduction='none'``, otherwise a scalar. In the
+        single-trial degenerate case (``R = 1`` everywhere) the noise
+        correction is undefined and the raw ``corrcoef(pred, psth)`` is
+        returned.
+
+    Raises
+    ------
+    ValueError
+        If ``method`` is not ``'schoppe'`` or ``'hsu'``, or if the input
+        shapes are inconsistent.
     """
     if pred.dim() != 4 or responses.dim() != 4:
         raise ValueError(
@@ -398,8 +614,30 @@ def coherence(
 ) -> torch.Tensor:
     """Magnitude-squared coherence per neuron (mean over frequency bins).
 
-    Eval-only: uses ``scipy.signal.coherence``, no gradient. Does **not**
-    tolerate NaN — raises ``ValueError`` if any input element is NaN.
+    Eval-only: uses ``scipy.signal.coherence``, no gradient.
+
+    Parameters
+    ----------
+    pred : torch.Tensor
+        Prediction of shape ``(B, N, 1, T)``.
+    gt : torch.Tensor
+        Ground-truth PSTH of shape ``(B, N, 1, T)``.
+    dt_ms : float
+        Time-bin width in milliseconds; sets the sampling rate
+        ``fs = 1 / (dt_ms · 1e-3)`` passed to ``scipy.signal.coherence``.
+    reduction : {'none', 'mean', 'sum'}, default 'mean'
+        Reduction over the neuron axis.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape ``(N,)`` if ``reduction='none'``, otherwise a scalar.
+
+    Raises
+    ------
+    ValueError
+        If any element of ``pred`` or ``gt`` is NaN (this metric does not
+        tolerate NaN; pre-flatten to a NaN-free subset first).
     """
     _check_pred_gt(pred, gt)
     if torch.isnan(pred).any() or torch.isnan(gt).any():
@@ -416,7 +654,7 @@ def coherence(
 
 
 # -----------------------------------------------------------------------------
-# Internal helpers (importable for callers like WehrDataset)
+# Internal helpers (importable from audio loaders)
 # -----------------------------------------------------------------------------
 
 
@@ -427,10 +665,23 @@ def compute_CCmax(
 ) -> torch.Tensor:
     """CCmax (Hsu / Spearman-Brown) per ``(B,)`` cell.
 
-    Internal helper kept for backward compatibility with ``WehrDataset``.
-    Input ``(B, R, T)``; returns ``(B,)``. NaN-aware: drops invalid repeats
-    and time bins per ``(b,)``. Returns 1.0 for cells with R = 1, NaN for
-    cells with ``ρ_half ≤ 0``.
+    Internal helper kept importable for the audio loaders (legacy CCmax /
+    TTRC pipeline). Prefer :func:`compute_neuron_quality` on the dataset
+    itself.
+
+    Parameters
+    ----------
+    responses : torch.Tensor
+        Responses of shape ``(B, R, T)``. NaN marks invalid repeats / time
+        bins (dropped per ``(b,)``).
+    max_iters : int, default 126
+        Cap on random half-splits per cell.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape ``(B,)``. ``1.0`` for cells with ``R = 1``; NaN for cells with
+        ``ρ_half ≤ 0``.
     """
     if responses.dim() != 3:
         raise ValueError(
@@ -475,9 +726,20 @@ def compute_CCmax(
 def compute_TTRC(responses: torch.Tensor) -> torch.Tensor:
     """Trial-to-trial response correlation per ``(B,)`` cell.
 
-    Internal helper kept for backward compatibility with ``WehrDataset``.
-    Input ``(B, R, T)``; returns ``(B,)``. NaN-aware. Returns 1.0 for
-    R = 1, NaN for cells with no valid trial pair.
+    Internal helper kept importable for the audio loaders (legacy CCmax /
+    TTRC pipeline). Prefer :func:`compute_neuron_quality` on the dataset
+    itself.
+
+    Parameters
+    ----------
+    responses : torch.Tensor
+        Responses of shape ``(B, R, T)``. NaN-aware.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape ``(B,)``. ``1.0`` for cells with ``R = 1``; NaN for cells with
+        no valid trial pair.
     """
     if responses.dim() != 3:
         raise ValueError(

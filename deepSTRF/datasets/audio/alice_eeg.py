@@ -124,10 +124,78 @@ def _erb_filterbank(n_bands: int, sr: int, n_fft: int,
     return torch.from_numpy(fb)
 
 
+def _heeris_gammatone(wav: torch.Tensor, sr: int, n_bands: int, dt_ms: float,
+                      window_ms: float = 25.0,
+                      f_min: float = 80.0,
+                      f_max: Optional[float] = None) -> torch.Tensor:
+    """Paper-faithful time-domain gammatone spectrogram (Heeris 2018).
+
+    Calls :func:`gammatone.gtgram.gtgram` — the Heeris filterbank cited
+    by Brodbeck et al. 2023 via eelbrain's ``gammatone_bank`` wrapper.
+    Output shape ``(1, n_bands, T)``, low-frequency band at index 0
+    (matches the Gaussian-approximation helper's convention; the raw
+    ``gtgram`` returns high → low).
+
+    The ``gammatone`` PyPI package is optional — it's listed under the
+    ``[eeg]`` and ``[meliza]`` extras. Install via ``pip install
+    deepSTRF[eeg]`` or ``pip install gammatone``.
+    """
+    try:
+        import gammatone.gtgram as _gt
+    except ImportError as exc:
+        raise ImportError(
+            "The Heeris gammatone backend requires the optional `gammatone` "
+            "package. Install with `pip install gammatone` or "
+            "`pip install deepSTRF[eeg]`."
+        ) from exc
+
+    wav_np = wav.squeeze(0).cpu().numpy().astype("float64")
+    # gtgram's signature: gtgram(wave, fs, window_time, hop_time, channels, f_min, f_max=None)
+    # NOTE: when f_max is None, gtgram defaults to fs/2 internally — we
+    # pass it through explicitly so the audit-status of the band edges
+    # is transparent in the returned tensor.
+    #
+    # Row convention: ``gtgram`` returns rows in INCREASING center-frequency
+    # order (row 0 = f_min, row -1 = f_max). Counter-intuitively,
+    # ``gammatone.filters.centre_freqs(...)`` returns the *same* centers in
+    # *decreasing* order — different convention between the two
+    # gammatone helpers. We pass gtgram's output straight through, matching
+    # the Gaussian backend's "ERB band 0 = lowest frequency" convention.
+    out = _gt.gtgram(
+        wave=wav_np,
+        fs=int(sr),
+        window_time=float(window_ms) * 1e-3,
+        hop_time=float(dt_ms) * 1e-3,
+        channels=int(n_bands),
+        f_min=float(f_min),
+        f_max=(float(f_max) if f_max is not None else None),
+    )                                                                  # (n_bands, T), row 0 = low
+    out = np.log(out + 1e-8)
+    return torch.from_numpy(out).to(dtype=torch.float32).unsqueeze(0)  # (1, n_bands, T)
+
+
 def _gammatone_spectrogram(wav: torch.Tensor, sr: int,
                            n_bands: int, dt_ms: float,
-                           n_fft: int = 1024) -> torch.Tensor:
-    """Log-power ERB-band spectrogram (gammatone approximation).
+                           n_fft: Optional[int] = None,
+                           window_ms: Optional[float] = None,
+                           f_min: float = 80.0,
+                           f_max: Optional[float] = None,
+                           backend: str = "gaussian") -> torch.Tensor:
+    """Log-power ERB-band spectrogram.
+
+    Two backends:
+
+    - ``backend='gaussian'`` (default, back-compat): frequency-domain
+      Gaussian filterbank with ERB-spaced centers, applied to a power
+      STFT. Cheap; what deepSTRF has always done. The empirical audit
+      at ``untracked/alice_eeg_spec_compare.py`` shows it differs
+      visibly from the paper-faithful Heeris bank — lower dynamic
+      range, less time-localized transients.
+    - ``backend='heeris'`` (paper-faithful): time-domain gammatone
+      filterbank from the ``gammatone`` PyPI package (Heeris 2018),
+      same as Brodbeck et al. 2023 via eelbrain's ``gammatone_bank``.
+      ``n_fft`` is ignored — Heeris owns the analysis-window logic
+      via ``window_ms`` (default 25 ms).
 
     Parameters
     ----------
@@ -139,20 +207,52 @@ def _gammatone_spectrogram(wav: torch.Tensor, sr: int,
         Number of ERB bands.
     dt_ms : float
         Output time-bin width in ms; sets the STFT hop length.
-    n_fft : int
-        FFT length. 1024 is plenty for 80 Hz – sr/2 coverage with reasonable
-        time resolution at the typical audio sample rates here.
+    n_fft : int, optional
+        Explicit FFT length (``backend='gaussian'`` only). Overrides
+        ``window_ms`` if both are set. ``None`` falls back to
+        ``window_ms`` (or the legacy default of 1024 if ``window_ms``
+        is also ``None``).
+    window_ms : float, optional
+        FFT analysis-window length in ms. For ``backend='gaussian'``:
+        ``n_fft = round(window_ms * 1e-3 * sr)``, floored at ``hop``.
+        For ``backend='heeris'``: passed straight into ``gtgram`` as
+        ``window_time`` (default 25 ms — Heeris's own convention).
+    f_min, f_max : float, optional
+        ERB-band edges in Hz. Default ``80.0`` and ``sr/2`` — matches
+        Brodbeck 2023 Fig 4's lower edge but lets the upper edge run
+        well past the speech-relevant range. For human-speech work,
+        pass ``f_max=8000`` to drop the inaudible-for-speech bands.
+    backend : {'gaussian', 'heeris'}, default 'gaussian'
+        Spec-pipeline backend. See above. ``'heeris'`` requires the
+        optional ``gammatone`` PyPI package (in the ``[eeg]`` extra).
 
     Returns
     -------
     Tensor, shape ``(1, n_bands, T)``
-        Log power per band per frame.
+        Log power per band per frame, low-frequency band at index 0.
     """
+    if backend not in ("gaussian", "heeris"):
+        raise ValueError(
+            f"backend must be 'gaussian' or 'heeris', got {backend!r}"
+        )
+    if backend == "heeris":
+        return _heeris_gammatone(
+            wav, sr=sr, n_bands=n_bands, dt_ms=dt_ms,
+            window_ms=(window_ms if window_ms is not None else 25.0),
+            f_min=f_min, f_max=f_max,
+        )
+
+    # --- backend == 'gaussian' (legacy default) -------------------------
     hop = max(1, int(round(sr * dt_ms / 1000.0)))
+    if n_fft is None:
+        if window_ms is not None:
+            n_fft = max(int(round(window_ms * 1e-3 * sr)), hop)
+        else:
+            n_fft = 1024     # legacy default; preserves bit-identical specs
     spec = torchaudio.transforms.Spectrogram(
         n_fft=n_fft, hop_length=hop, power=2.0,
     )(wav)  # (1, n_fft//2+1, T)
-    fb = _erb_filterbank(n_bands, sr, n_fft)              # (n_bands, n_fft//2+1)
+    fb = _erb_filterbank(n_bands, sr, n_fft, f_min=f_min, f_max=f_max)
     out = torch.einsum("bf,cft->cbt", fb, spec)           # (1, n_bands, T)
     return torch.log(out + 1e-8)
 
@@ -163,79 +263,64 @@ def _gammatone_spectrogram(wav: torch.Tensor, sr: int,
 
 
 class AliceEEGDataset(AudioNeuralDataset):
-    """
-    A PyTorch dataset for handling EEG data from the Alice audiobook listening
-    paradigm, adapted to the deepSTRF data paradigm.
+    """PyTorch dataset for EEG from the Alice audiobook listening paradigm.
 
+    33 human participants listened to the first chapter of *Alice in
+    Wonderland* (~12.4 min) split into 12 audio segments, recorded with 61
+    EEG channels per subject (10-20-like montage). Bad channels and bad
+    artifact windows (marked in the source ``.fif`` metadata) are converted
+    to NaN at the response level. Each subject heard each segment once
+    (``R = 1``). deepSTRF consumes Brodbeck et al. 2023's restructured
+    release (UMd PULFR ``10.13016/pulf-lndn``): per-subject MNE ``.fif``
+    files plus 12 audio segments and a word-onset table. See
+    ``docs/_source/md/README_Alice_EEG.md`` for the full dataset notes.
 
-    =============== SOURCE ================
-
-    See original papers for details:
-     - "The Alice Datasets: fMRI & EEG Observations of Natural Language
-       Comprehension" by Bhattasali et al. (2020), LREC.
-     - "Hierarchical structure guides rapid linguistic predictions during
-       naturalistic listening" by Brennan et al. (2019), PLOS ONE.
-
-    Brodbeck et al. 2023 (eLife T&R, the Eelbrain methods paper) rereleased
-    a restructured / preprocessed copy of the dataset at UMd PULFR
-    (``10.13016/pulf-lndn``). deepSTRF consumes that restructure: per-subject
-    MNE ``.fif`` files plus 12 audio segments and a word-onset table.
-
-
-    =============== DETAILS ================
-
-    More details can be found in the dataset source, the dataset-specific
-    README in the deepSTRF docs (``docs/_source/md/README_Alice_EEG.md``),
-    or in the original papers.
-    But in a nutshell:
-     - 33 human participants listened to the first chapter of *Alice in
-       Wonderland* (~12.4 min) split into 12 audio segments.
-     - 61 EEG channels per subject (10–20-like montage); bad channels and bad
-       artifact windows marked in the source ``.fif`` metadata are converted
-       to NaN at the response level.
-     - R = 1 always (each subject heard each segment once).
-
-
-    =============== STRUCTURE ================
-
-    Follows the standard deepSTRF data paradigm (see
-    ``docs/_source/md/data_paradigm.md``). Alice-specific metadata contents:
-     - self.stims                       list of S=12 tensors ``(1, F, T_s)`` —
-                                        log-power ERB-band spectrogram (a
-                                        gammatone approximation; see
-                                        ``_gammatone_spectrogram``).
-     - self.responses                   list of S lists of N tensors
-                                        ``(R, T_s)``. R depends on
-                                        ``treat_subjects_as`` (see below).
-     - self.stim_meta                   list of S dicts ``{"name", "type",
-                                        "sample_rate", "n_samples",
-                                        "duration_s"}``.
-     - self.nrn_meta             list of N dicts. In ``"neurons"``
-                                        mode each entry is a
-                                        ``(subject, channel)`` pair with
-                                        ``{"channel_id", "subject", "area",
-                                        "xyz"}``. In ``"repeats"`` mode (see
-                                        below) each entry is a channel only.
-
-    Two modes for ``treat_subjects_as``:
+    The ``treat_subjects_as`` argument selects one of two layouts:
 
     - ``"neurons"`` (default): every ``(subject, channel)`` pair becomes a
-      "neuron". ``N = sum_s(n_channels_s)``. ``R = 1`` everywhere. Bad
-      channels carry the structural NaN sentinel per the data paradigm.
-      Standard ``corrcoef`` / ``fve`` are the relevant metrics.
+      "neuron"; ``N = sum_s(n_channels_s)`` and ``R = 1`` everywhere. Bad
+      channels carry the structural NaN sentinel. Use ``corrcoef`` / ``fve``.
+    - ``"repeats"``: subjects are treated as repeats of a shared canonical
+      per-channel EEG response; ``N = n_montage_channels`` (e.g. 61) and
+      ``R = n_subjects``. Bad ``(channel, subject)`` combinations become NaN
+      repeat slabs. Useful for inter-subject reliability (ISC-style) via
+      ``normalized_corrcoef(method='schoppe')`` — but note this is
+      *inter-subject* reliability, not trial reliability, so the iid-trial
+      noise model the Schoppe correction assumes does not strictly hold;
+      treat the resulting ceiling as a group-level sanity check.
 
-    - ``"repeats"``: treats subjects as repeats of a shared canonical EEG
-      response per channel. ``N = n_montage_channels`` (e.g. 61);
-      ``R = n_subjects``. Bad ``(channel, subject)`` combinations become
-      ``NaN`` slabs at the repeat slot. Useful for inter-subject reliability
-      (ISC-style) analyses via ``normalized_corrcoef(method='schoppe')``.
-      **Caveat:** this is *inter-subject reliability*, not trial reliability
-      — the noise model that justifies the Schoppe correction (iid trial
-      noise around a shared deterministic signal) doesn't strictly hold for
-      between-subject variability. Document the interpretive shift when
-      reporting numbers; it remains a useful sanity check and group-level
-      ceiling.
+    Notes
+    -----
+    Follows the standard deepSTRF data paradigm (see
+    ``docs/_source/md/data_paradigm.md``). Alice-specific metadata:
 
+    - ``stims`` are ``S = 12`` log-power ERB-band spectrograms ``(1, F, T_s)``
+      (a gammatone approximation; see ``_gammatone_spectrogram``).
+    - ``stim_meta`` dicts hold ``name``, ``type``, ``sample_rate``,
+      ``n_samples`` and ``duration_s``.
+    - ``nrn_meta`` dicts hold ``channel_id``, ``subject``, ``area`` and
+      ``xyz`` in ``"neurons"`` mode; a channel-only entry in ``"repeats"``
+      mode.
+
+    The default ``spec_backend='gaussian'`` is a frequency-domain Gaussian
+    approximation of Brodbeck 2023's time-domain gammatone (Heeris)
+    filterbank — spectrally equivalent to first order but with lower dynamic
+    range and less time-localized transients. ``spec_backend='heeris'``
+    selects the paper-faithful bank (requires the optional ``gammatone``
+    package in the ``[eeg]`` extra). The ``window_ms`` / ``fmin`` / ``fmax``
+    constructor knobs control the FFT window and ERB-band edges; their
+    defaults preserve the historical behaviour, so no existing fits change.
+
+    References
+    ----------
+    Bhattasali et al. (2020). "The Alice Datasets: fMRI & EEG Observations of
+    Natural Language Comprehension." LREC.
+
+    Brennan et al. (2019). "Hierarchical structure guides rapid linguistic
+    predictions during naturalistic listening." *PLOS ONE*.
+
+    Brodbeck et al. (2023). Eelbrain methods paper. *eLife* (Tools &
+    Resources).
     """
 
     def __init__(self, path: Optional[str] = None,
@@ -245,6 +330,10 @@ class AliceEEGDataset(AudioNeuralDataset):
                  treat_subjects_as: str = "neurons",
                  hp_freq_hz: Optional[float] = 1.0,
                  lp_freq_hz: Optional[float] = None,
+                 window_ms: Optional[float] = None,
+                 fmin: float = 80.0,
+                 fmax: Optional[float] = None,
+                 spec_backend: str = "gaussian",
                  download: bool = False):
         """
         Parameters
@@ -276,6 +365,35 @@ class AliceEEGDataset(AudioNeuralDataset):
             Optional low-pass cutoff. Useful if you want to focus on the
             cortical-tracking band (< 40 Hz) or the envelope-tracking band
             (< 8 Hz).
+        window_ms : float, optional
+            FFT analysis-window length in ms for the stimulus
+            spectrogram. ``None`` preserves the legacy ``n_fft=1024``
+            default — at the audiobook sample rate (16 kHz) this gives
+            a ~64 ms window; at 44.1 kHz, ~23 ms. Pass an explicit
+            ``window_ms`` to override (e.g. ``25.0`` for the Kaldi
+            convention). The spec pipeline is otherwise unchanged from
+            the audit baseline — see the "Audit status" callout below
+            before benchmarking against Brodbeck 2023.
+        fmin, fmax : float, optional
+            Lower and upper ERB-band edges in Hz. Default ``80.0`` and
+            ``sr/2`` (Nyquist). For speech-tracking work, pass
+            ``fmax=8000`` to drop bands above the speech-relevant range
+            (matches Brodbeck 2023's published lower-band figure
+            roughly; not empirically validated against the paper's
+            actual filterbank — see "Audit status").
+        spec_backend : {'gaussian', 'heeris'}, default 'gaussian'
+            Spec-pipeline backend.
+
+            - ``'gaussian'`` (back-compat): frequency-domain Gaussian
+              ERB filterbank — the deepSTRF approximation that's been
+              shipped to date.
+            - ``'heeris'`` (paper-faithful, requires ``gammatone``
+              PyPI package): time-domain Heeris filterbank, same as
+              Brodbeck et al. 2023 via eelbrain's
+              ``gammatone_bank``. See the empirical comparison at
+              ``untracked/alice_eeg_spec_compare.py`` — Heeris has
+              visibly sharper time-localization and broader dynamic
+              range. Recommended when reproducing the paper.
         download : bool, default False
             If True and the data is missing under ``path``, fetch the four
             zips from the UMd DRUM mirror (~2.5 GiB total; anonymous HTTPS).
@@ -301,6 +419,15 @@ class AliceEEGDataset(AudioNeuralDataset):
         self.F = int(n_frequency_bands)
         self.hp_freq_hz = hp_freq_hz
         self.lp_freq_hz = lp_freq_hz
+        self.window_ms = float(window_ms) if window_ms is not None else None
+        self.fmin = float(fmin)
+        self.fmax = float(fmax) if fmax is not None else None
+        if spec_backend not in ("gaussian", "heeris"):
+            raise ValueError(
+                f"spec_backend must be 'gaussian' or 'heeris', got "
+                f"{spec_backend!r}"
+            )
+        self.spec_backend = spec_backend
 
         if treat_subjects_as not in ("neurons", "repeats"):
             raise ValueError(
@@ -372,7 +499,11 @@ class AliceEEGDataset(AudioNeuralDataset):
             if wav.shape[0] > 1:
                 wav = wav.mean(dim=0, keepdim=True)
             n_samples = int(wav.shape[-1])
-            spec = _gammatone_spectrogram(wav, sr, self.F, self.dt)  # (1, F, T)
+            spec = _gammatone_spectrogram(
+                wav, sr, self.F, self.dt,
+                window_ms=self.window_ms, f_min=self.fmin, f_max=self.fmax,
+                backend=self.spec_backend,
+            )  # (1, F, T)
             stims.append(spec)
             stim_meta.append({
                 "name": os.path.basename(wav_path),

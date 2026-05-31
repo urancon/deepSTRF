@@ -8,10 +8,26 @@ from deepSTRF.models.scales import mel_to_Hz, Hz_to_mel, Greenwood, inverse_Gree
 
 
 def get_CFs(min_freq, max_freq, n_freqs, scale):
-    """
-    Returns n_freqs cochlear/center frequencies (CFs) scaled according to a function (typically logarithmic) within a
-    range.
+    """Return ``n_freqs`` cochlear/center frequencies (CFs) on a warped scale.
 
+    Parameters
+    ----------
+    min_freq, max_freq : float
+        Frequency range in Hz.
+    n_freqs : int
+        Number of CFs to return.
+    scale : {'mel', 'greenwood'}
+        Frequency-axis warping used to space the CFs.
+
+    Returns
+    -------
+    torch.Tensor
+        The ``n_freqs`` center frequencies in Hz.
+
+    Raises
+    ------
+    NotImplementedError
+        If ``scale`` is not ``'mel'`` or ``'greenwood'``.
     """
     if scale == 'mel':
         min_cf = Hz_to_mel(torch.tensor(min_freq))
@@ -29,25 +45,59 @@ def get_CFs(min_freq, max_freq, n_freqs, scale):
 
 
 def freq_to_tau(freqs):
-    """
-    Finds the associated midbrain neuron time constants (in ms) to a set of frequencies (in Hz)
-    For more details, see Willmore et al. (2016),
-        "Incorporating Midbrain Adaptation to Mean Sound Level Improves Models of Auditory Cortical Processing"
+    """Map frequencies (Hz) to midbrain-neuron time constants (ms).
 
+    Parameters
+    ----------
+    freqs : torch.Tensor
+        Frequencies in Hz.
+
+    Returns
+    -------
+    torch.Tensor
+        Associated time constants in ms.
+
+    References
+    ----------
+    Willmore et al. (2016). "Incorporating Midbrain Adaptation to Mean Sound
+    Level Improves Models of Auditory Cortical Processing."
     """
     return 500. - 105. * torch.log10(freqs)
 
 
 def tau_to_a(time_constants, dt: float = 1):
-    """
-    Converts values of physical time constants (in ms) to corresponding 'a' parameters (adimensional), given a fixed
-    time step (in ms)
+    """Convert physical time constants (ms) to dimensionless ``a`` parameters.
 
+    Parameters
+    ----------
+    time_constants : torch.Tensor
+        Time constants in ms.
+    dt : float, default 1
+        Time-step width in ms.
+
+    Returns
+    -------
+    torch.Tensor
+        The corresponding ``a = exp(-dt / tau)`` parameters.
     """
     return torch.exp(- dt / time_constants)
 
 
 def a_to_tau(a, dt: float = 1):
+    """Inverse of :func:`tau_to_a`: ``a`` parameter back to a time constant (ms).
+
+    Parameters
+    ----------
+    a : torch.Tensor
+        Dimensionless ``a`` parameters.
+    dt : float, default 1
+        Time-step width in ms.
+
+    Returns
+    -------
+    torch.Tensor
+        Time constants in ms.
+    """
     return - dt / torch.log(a)
 
 
@@ -75,8 +125,8 @@ class ICAdaptation(nn.Module):
     kernel_size : int, default 2
         Length of the temporal kernel (in frames).
 
-    Reference
-    ---------
+    References
+    ----------
     Willmore, Schoppe, King, Schnupp, Harper (2016). "Incorporating
     Midbrain Adaptation to Mean Sound Level Improves Models of
     Auditory Cortical Processing." J. Neurosci. 36(2): 280–289.
@@ -129,11 +179,19 @@ class ICAdaptation(nn.Module):
         return kernel
 
     def forward(self, spectro_in):
-        """
-        Convolves each frequency band of input 1-channel spectrogram with filters and standardize the output.
+        """High-pass filter and half-wave rectify each frequency band.
 
-        :param spectro_in: shape is (B, C, F, T) with B=Batch, C=Channels=1 (raw spectrogram), F=#Frequency_bands, T=#Timesteps
-        :return: a tensor of shape (B, 1, F, T) of the high-pass-filtered, full-wave-rectified spectrogram.
+        Parameters
+        ----------
+        spectro_in : torch.Tensor
+            Input spectrogram of shape ``(B, 1, F, T)`` (B=batch, 1 channel,
+            F frequency bands, T timesteps).
+
+        Returns
+        -------
+        torch.Tensor
+            High-pass-filtered, full-wave-rectified spectrogram of shape
+            ``(B, 1, F, T)``.
         """
         # reshape input spectrogram from single-channel 2D representation to multi-channel 1D
         spectro_in = spectro_in.squeeze(1)                                      # (B, 1, F, T)  --> (B, F, T)
@@ -199,8 +257,8 @@ class AdapTrans(nn.Module):
         If True, ``a`` and ``w`` are learnable nn.Parameters; if False,
         they are frozen buffers (still follow ``.to(device)``).
 
-    Reference
-    ---------
+    References
+    ----------
     Rançon, Bornschein, King, Schnupp, Willmore (2024). "A general
     theoretical framework unifying the adaptive, transient and
     sustained properties of ON and OFF auditory responses." BioRxiv.
@@ -295,11 +353,19 @@ class AdapTrans(nn.Module):
         return kernel_OFF
 
     def forward(self, spectro_in):
-        """
-        Convolves each frequency band of input 1-channel spectrogram with filters and standardize the output.
+        """Compute the ON and OFF high-pass-filtered spectrograms.
 
-        :param spectro_in: shape is (B, C, F, T) with B=Batch, C=Channels=1 (raw spectrogram), F=#Frequency_bands, T=#Timesteps
-        :return: a tensor of shape (B, 2, F, T). First channel is for the ON response, second channel for the OFF one.
+        Parameters
+        ----------
+        spectro_in : torch.Tensor
+            Input spectrogram of shape ``(B, 1, F, T)`` (B=batch, 1 channel,
+            F frequency bands, T timesteps).
+
+        Returns
+        -------
+        torch.Tensor
+            Tensor of shape ``(B, 2, F, T)``: channel 0 is the ON response,
+            channel 1 is the OFF response (both half-wave rectified).
         """
         # reshape input spectrogram from single-channel 2D representation to multi-channel 1D
         spectro_in = spectro_in.squeeze(1)                                      # (B, 1, F, T)  --> (B, F, T)
