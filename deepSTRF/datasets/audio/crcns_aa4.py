@@ -166,6 +166,7 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
     def __init__(self, path: Optional[str] = None, animals='all',
                  stimuli=('song', 'call', 'mlnoise'),
                  dt_ms=1.0, smooth=True, n_mels=32, compression='cubic',
+                 return_waveform: bool = False, audio_fs: int = 24000,
                  download: bool = False,
                  username: Optional[str] = None,
                  password: Optional[str] = None):
@@ -190,7 +191,21 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
         n_mels : int
             Number of mel frequency bands of the stimulus spectrogram.
         compression : {'cubic', 'log1p', 'none'}
-            Compression applied to the spectrogram (saturation effect of hair cells).
+            Compression applied to the spectrogram (saturation effect of hair
+            cells). Ignored when ``return_waveform=True``.
+        return_waveform : bool, default False
+            If True, ``self.stims[s]`` holds the raw audio waveform
+            ``(1, T_audio)`` at ``audio_fs`` Hz (grid-locked to ``T_audio =
+            T_neural * hop``) instead of the in-loader mel spectrogram. Pair
+            with a model whose ``wav2spec`` slot is a waveform front-end;
+            responses are unchanged.
+        audio_fs : int, default 24000
+            Sample rate for waveform mode. The AA4 wavs are 24414 Hz, which
+            gives a non-integer hop at dt=1 ms; the default 24 kHz resamples to
+            a clean ``hop = 24`` (exactly dt=1 ms bins, slightly better than the
+            native spec's 0.983 ms). Other values must keep
+            ``audio_fs * dt_ms / 1000`` an integer. Ignored unless
+            ``return_waveform=True``.
         download : bool, default False
             If True and an animal's data is missing under ``path``, fetch
             its tarball (~hundreds of MB per animal) from the NERSC mirror
@@ -213,8 +228,16 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
 
         # general
         self.species = 'zebra finch'
+        # Informational hearing range (zebra finch ≈ 250 Hz – 8 kHz).
+        self.hearing_range_hz = (250.0, 8000.0)
         self.F = n_mels
         self.compression = compression
+        # Waveform-input mode: store raw audio (resampled to a single audio_fs,
+        # since AA4 wavs are 24414 Hz which gives a non-integer hop at dt=1 ms)
+        # instead of the in-loader mel spec. 24 kHz -> integer hop=24 at dt=1 ms.
+        self.return_waveform = bool(return_waveform)
+        self.audio_fs = int(audio_fs) if return_waveform else None
+        self._wav_hop = int(round(audio_fs * self.dt / 1000)) if return_waveform else None
         self.animals = animals_to_load
         self.stim_types = set(stimuli)
 
@@ -225,9 +248,11 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
         # hop_length (samples) | dt (ms)   — at sr = stim wav's sr
         # the wav sample rate varies across animals so hop = sr * dt_ms / 1000
         wav_specs_by_animal = {}
+        wav_audio_by_animal = {}
         for animal in self.animals:
             wav_dir = os.path.join(path, animal, 'wavfiles')
             specs = {}
+            wavs = {}
             for fname in sorted(os.listdir(wav_dir)):
                 if not fname.endswith('.wav'):
                     continue
@@ -250,7 +275,24 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
                 if spec.ndim == 2:
                     spec = spec.unsqueeze(0)
                 specs[sid] = spec
+
+                if return_waveform:
+                    # store the raw audio, resampled to the dataset's single
+                    # audio_fs and grid-locked to T_neural * hop samples so it
+                    # aligns with the T_neural spec frames (= response bins). The
+                    # spec is still kept (it sets T_neural / the response length).
+                    T_audio = spec.shape[-1] * self._wav_hop
+                    w = (waveform if sr == audio_fs
+                         else torchaudio.functional.resample(waveform, sr, audio_fs))
+                    if w.shape[0] > 1:
+                        w = w.mean(dim=0, keepdim=True)   # downmix to mono
+                    if w.shape[-1] < T_audio:
+                        w = torch.nn.functional.pad(w, (0, T_audio - w.shape[-1]))
+                    else:
+                        w = w[..., :T_audio]
+                    wavs[sid] = w.contiguous().float()
             wav_specs_by_animal[animal] = specs
+            wav_audio_by_animal[animal] = wavs
 
         ###########################################
         # 2. walk h5 cell files per animal
@@ -260,6 +302,7 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
         stim_uids = []
         stim_meta_map = {}   # md5 -> {"name", "type", "class"}
         stim_spec_map = {}   # md5 -> spectrogram tensor (1, F, T)
+        stim_wav_map = {}    # md5 -> waveform tensor (1, T_audio)  [waveform mode]
 
         # per-neuron accumulator
         units_data = []  # list of dicts: {'meta': nrn_meta_dict, 'responses': {md5: (R, T) tensor}}
@@ -325,6 +368,9 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
                                     'duration_s': stim_dur_s,
                                 }
                                 stim_spec_map[stim_md5] = spec
+                                if return_waveform:
+                                    stim_wav_map[stim_md5] = \
+                                        wav_audio_by_animal[animal].get(f'stim{stim_key}')
 
                             T_stim = stim_spec_map[stim_md5].shape[-1]
 
@@ -365,7 +411,8 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
         ###########################################
 
         self.N_neurons = len(units_data)
-        self.stims = [stim_spec_map[uid] for uid in stim_uids]
+        _stim_map = stim_wav_map if self.return_waveform else stim_spec_map
+        self.stims = [_stim_map[uid] for uid in stim_uids]
         self.stim_meta = [stim_meta_map[uid] for uid in stim_uids]
         self.nrn_meta = [u['meta'] for u in units_data]
 

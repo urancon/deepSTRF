@@ -59,3 +59,37 @@ def test_aa_waveform_branch(label, module, cls, kw):
         for n in range(ds_wav.get_N()):
             assert torch.allclose(ds_spec.responses[s][n], ds_wav.responses[s][n],
                                   equal_nan=True)
+
+
+def _has_aa4() -> bool:
+    import glob
+    from deepSTRF.utils.data_download import default_cache_dir
+    root = str(default_cache_dir("AA4"))
+    return len(glob.glob(os.path.join(root, "*", "wavfiles"))) > 0
+
+
+def test_aa4_waveform_branch():
+    """AA4's waveform branch resamples its 24414 Hz wavs to a single audio_fs
+    (24 kHz -> integer hop=24) and grid-locks to the spec frame count, despite
+    AA4's per-animal / md5-keyed assembly. Skips unless AA4 is in the cache."""
+    if not _has_aa4():
+        pytest.skip("CRCNS-AA4 cache missing — skip integration test")
+    from deepSTRF.datasets.audio.crcns_aa4 import CRCNSAA4Dataset
+
+    ds_spec = CRCNSAA4Dataset()
+    ds_wav = CRCNSAA4Dataset(return_waveform=True)
+    assert ds_wav.get_S() == ds_spec.get_S() and ds_wav.get_N() == ds_spec.get_N()
+    assert ds_spec.audio_fs is None and ds_spec.hop is None
+    assert ds_wav.audio_fs == 24000 and ds_wav.hop == 24
+    assert ds_wav.hearing_range_hz == (250.0, 8000.0)
+
+    ds_wav.validate()
+    for s in range(ds_wav.get_S()):
+        stim = ds_wav.stims[s]
+        assert stim.dim() == 2 and stim.shape[0] == 1, \
+            f"AA4 stim {s} must be (1, T_audio); got {tuple(stim.shape)}"
+        assert stim.shape[-1] == ds_spec.stims[s].shape[-1] * ds_wav.hop
+    for s in range(ds_wav.get_S()):
+        for n in range(ds_wav.get_N()):
+            assert torch.allclose(ds_spec.responses[s][n], ds_wav.responses[s][n],
+                                  equal_nan=True)
