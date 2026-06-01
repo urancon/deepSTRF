@@ -23,8 +23,6 @@ from urllib.parse import quote
 
 import numpy as np
 import torch
-import torch.nn.functional as F
-import torchaudio
 from tqdm import tqdm
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
@@ -34,6 +32,7 @@ from deepSTRF.datasets.audio._espejo_native import (
     load_espejo_site,
     stim_occurrence_counts,
 )
+from deepSTRF.utils.audio_io import load_resampled_mono_wav
 from deepSTRF.utils.data_download import (
     default_cache_dir,
     stream_download,
@@ -587,11 +586,7 @@ class EspejoDataset(AudioNeuralDataset):
         silence. Resampled to ``self.audio_fs`` if the source rate differs,
         then cropped to the exact grid-locked length.
         """
-        wav, sr = torchaudio.load(wav_path)                  # (C, T_wav), float32
-        if wav.shape[0] > 1:
-            wav = wav.mean(dim=0, keepdim=True)              # -> mono
-        if int(sr) != self.audio_fs:
-            wav = torchaudio.functional.resample(wav, int(sr), self.audio_fs)
+        wav = load_resampled_mono_wav(wav_path, target_fs=self.audio_fs)  # (1, T_wav)
         T_audio = T_neural * self.hop
         pre = int(round(_NAT_PRESTIM_S * self.audio_fs))
         out = torch.zeros(1, T_audio, dtype=torch.float32)

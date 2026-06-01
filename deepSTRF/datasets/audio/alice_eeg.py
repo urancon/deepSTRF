@@ -15,6 +15,7 @@ import torch
 import torchaudio
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
+from deepSTRF.utils.audio_io import load_wav
 from deepSTRF.utils.data_download import default_cache_dir, stream_download, unzip
 
 
@@ -507,7 +508,7 @@ class AliceEEGDataset(AudioNeuralDataset):
 
         stims, stim_meta, t_neural = [], [], []
         for wav_path in wavs:
-            wav, sr = torchaudio.load(wav_path, normalize=True)
+            wav, sr = load_wav(wav_path)
             if wav.shape[0] > 1:
                 wav = wav.mean(dim=0, keepdim=True)
             n_samples = int(wav.shape[-1])

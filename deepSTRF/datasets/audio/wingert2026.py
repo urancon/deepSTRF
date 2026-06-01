@@ -36,6 +36,7 @@ from deepSTRF.datasets.audio._wingert_native import (
     parse_wingert_cell_id,
     rasterize_spike_times,
 )
+from deepSTRF.utils.audio_io import load_wav
 from deepSTRF.utils.data_download import (
     default_cache_dir,
     unzip,
@@ -506,7 +507,7 @@ class Wingert2026Dataset(AudioNeuralDataset):
                 f"Wingert waveform mode: no source wav for epoch {stim_name!r} in "
                 f"{self._wav_dir!r}. Pass download=True to fetch wav.zip from Zenodo."
             )
-        w, sr = torchaudio.load(os.path.join(self._wav_dir, resolved))   # (C, T)
+        w, sr = load_wav(os.path.join(self._wav_dir, resolved))   # (C, T)
         if w.shape[0] > 1:
             w = w.mean(dim=0, keepdim=True)                              # mono
         if sr != self.audio_fs:

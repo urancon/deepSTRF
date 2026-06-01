@@ -6,6 +6,7 @@ import torchaudio
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 from deepSTRF.datasets.audio._crcns_aa_loaders import load_spike_file, parse_cell_name
+from deepSTRF.utils.audio_io import load_wav
 from deepSTRF.utils.data_download import crcns_download, default_cache_dir, unzip
 
 
@@ -340,7 +341,7 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
 
             stims_dir = os.path.join(path, f"all_stims/{stim_type}/")
 
-            wav, sr = torchaudio.load(os.path.join(stims_dir, stim_name), normalize=True)  # sample rate: 32 kHz (mono)
+            wav, sr = load_wav(os.path.join(stims_dir, stim_name))  # sample rate: 32 kHz (mono)
             assert sr == 32000, f"found wav sr of {sr}, expected 32000"
             n_samples_wav = wav.shape[-1]
             spec = transform(wav)  # (T,) --> (1, F, T-)

@@ -1,7 +1,35 @@
 """Audio I/O helpers for the waveform-input branch of audio datasets."""
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
+
+
+def load_wav(path: str) -> Tuple[torch.Tensor, int]:
+    """Load a WAV file as a float32 ``(channels, samples)`` tensor + sample rate.
+
+    Uses ``soundfile`` (libsndfile) rather than ``torchaudio.load``: the latter
+    routes through ``torchcodec`` on torchaudio >= 2.x, which needs FFmpeg
+    shared libraries (``libavutil`` ...) that aren't present on bare CI runners
+    or minimal installs. ``soundfile`` decodes PCM/float WAV directly with no
+    FFmpeg dependency, and returns values bit-identical to
+    ``torchaudio.load(path, normalize=True)`` for PCM wavs.
+
+    Parameters
+    ----------
+    path : str
+        Path to the WAV file.
+
+    Returns
+    -------
+    (torch.Tensor, int)
+        ``(wav, sample_rate)`` where ``wav`` is float32 of shape
+        ``(channels, samples)`` (channels-first, matching ``torchaudio.load``).
+    """
+    import soundfile as sf
+
+    data, fs = sf.read(path, dtype="float32", always_2d=True)  # (samples, channels)
+    wav = torch.from_numpy(data.T).contiguous()                # (channels, samples)
+    return wav, int(fs)
 
 
 def load_resampled_mono_wav(path: str, target_fs: int,
@@ -26,9 +54,9 @@ def load_resampled_mono_wav(path: str, target_fs: int,
         Float32 mono waveform of shape ``(1, T)``. ``T == target_length`` if
         provided, else the natural resampled length.
     """
-    import torchaudio
+    import torchaudio  # only torchaudio.functional.resample (pure torch, no FFmpeg)
 
-    wav, fs_in = torchaudio.load(path)  # (channels, samples), float32
+    wav, fs_in = load_wav(path)              # (channels, samples), float32
     if wav.shape[0] > 1:
         wav = wav.mean(dim=0, keepdim=True)  # downmix to mono
 

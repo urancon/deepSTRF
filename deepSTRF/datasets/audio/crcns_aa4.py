@@ -9,6 +9,7 @@ import torchaudio
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 from deepSTRF.datasets.audio._crcns_aa_loaders import time_binning
+from deepSTRF.utils.audio_io import load_wav
 from deepSTRF.utils.data_download import (
     crcns_download,
     default_cache_dir,
@@ -254,7 +255,7 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
                 if not fname.endswith('.wav'):
                     continue
                 sid = os.path.splitext(fname)[0]    # e.g. 'stim85'
-                waveform, sr = torchaudio.load(os.path.join(wav_dir, fname))
+                waveform, sr = load_wav(os.path.join(wav_dir, fname))
                 hop = max(1, int(sr * self.dt / 1000))
                 # Derive n_fft from the (already-truncated) hop via the
                 # ratio ``window_ms / dt_ms``. At the default

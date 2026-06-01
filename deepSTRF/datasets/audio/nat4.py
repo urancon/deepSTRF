@@ -18,6 +18,7 @@ from deepSTRF.datasets.audio._nat4_native import (
     normalize_log1p_minmax_inplace,
     normalize_minmax_inplace,
 )
+from deepSTRF.utils.audio_io import load_wav
 from deepSTRF.utils.data_download import (
     default_cache_dir,
     unzip,
@@ -418,7 +419,7 @@ class NAT4Dataset(AudioNeuralDataset):
                 f"{self._wav_dir!r}. Pass download=True to fetch wav.zip from Zenodo."
             )
         wav_path = os.path.join(self._wav_dir, resolved)
-        w, sr = torchaudio.load(wav_path)            # (C, T)
+        w, sr = load_wav(wav_path)                   # (C, T)
         if w.shape[0] > 1:
             w = w.mean(dim=0, keepdim=True)          # downmix to mono
         if sr != self.audio_fs:
