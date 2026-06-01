@@ -16,10 +16,15 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Literal, Optional, Sequence
+import warnings
+from pathlib import Path
+from typing import Dict, Literal, Optional, Sequence
+from urllib.parse import quote
 
 import numpy as np
 import torch
+import torch.nn.functional as F
+import torchaudio
 from tqdm import tqdm
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
@@ -31,6 +36,7 @@ from deepSTRF.datasets.audio._espejo_native import (
 )
 from deepSTRF.utils.data_download import (
     default_cache_dir,
+    stream_download,
     untar,
     zenodo_download,
 )
@@ -38,6 +44,88 @@ from deepSTRF.utils.data_download import (
 
 # Public Zenodo record. https://doi.org/10.5281/zenodo.3445557
 ESPEJO_ZENODO_RECORD = 3445557
+
+# Raw NAT waveforms are NOT in the Zenodo deposit (only the precomputed
+# cochleagrams are). They live on the LBHB baphy bitbucket mirror, split
+# across two sound dirs; sounds are keyed by filename (the ``STIM_<name>``
+# epoch label minus the ``STIM_`` prefix). See the dataset README. The
+# natural-sounds-set-3 bank Espejo used is under ``sounds_set3/`` (the older
+# ``sounds/`` dir is tried as a fallback for any straggler).
+_NAT_WAVEFORM_BASE = (
+    "https://bitbucket.org/lbhb/baphy/raw/master/"
+    "Config/lbhb/SoundObjects/%40NaturalSounds"
+)
+_NAT_WAVEFORM_SUBDIRS = ("sounds_set3", "sounds")
+# Published protocol: each 4 s sound is flanked by 0.5 s pre- and post-stim
+# silence, so the cochleagram (and the waveform) begin with 0.5 s of silence.
+_NAT_PRESTIM_S = 0.5
+# Native sample rate of the bitbucket wavs (44.1 kHz mono PCM16, 4 s each).
+_NAT_WAVEFORM_FS = 44100
+
+
+def download_espejo_nat_waveforms(
+    names: Sequence[str],
+    dest: Optional[str] = None,
+    *,
+    progress: bool = True,
+) -> Dict[str, str]:
+    """Fetch the raw NAT waveforms from the LBHB baphy bitbucket mirror.
+
+    Parameters
+    ----------
+    names : sequence of str
+        Stim names as they appear in ``stim_meta`` (``STIM_<file>.wav``); the
+        ``STIM_`` prefix is stripped to get the on-mirror filename.
+    dest : str, optional
+        Parent directory; wavs are cached under ``<dest>/nat_waveforms/``.
+        Defaults to ``default_cache_dir('Espejo')``.
+    progress : bool, default True
+        Show a tqdm bar over the (missing) downloads.
+
+    Returns
+    -------
+    dict
+        ``name -> local wav path`` for every name found on the mirror.
+
+    Notes
+    -----
+    Idempotent — already-cached wavs are skipped. Each filename is tried in
+    ``sounds_set3/`` first, then ``sounds/``. Names found in neither are
+    collected and surfaced by the caller (the dataset raises on genuine
+    misses so waveform mode never silently substitutes silence).
+    """
+    dest_path = Path(default_cache_dir("Espejo") if dest is None else dest)
+    wav_dir = dest_path / "nat_waveforms"
+    wav_dir.mkdir(parents=True, exist_ok=True)
+
+    out: Dict[str, str] = {}
+    missing: list[str] = []
+    todo = list(dict.fromkeys(names))  # de-dup, keep order
+    bar = tqdm(todo, desc="Espejo NAT waveforms", disable=not progress)
+    for name in bar:
+        fn = name[len("STIM_"):] if name.startswith("STIM_") else name
+        local = wav_dir / fn
+        if local.exists():
+            out[name] = str(local)
+            continue
+        for sub in _NAT_WAVEFORM_SUBDIRS:
+            url = f"{_NAT_WAVEFORM_BASE}/{sub}/{quote(fn)}"
+            try:
+                stream_download(url, local, progress=False)
+                out[name] = str(local)
+                break
+            except Exception:
+                continue  # 404 in this subdir (or transient) -> try the next
+        else:
+            missing.append(fn)
+    if missing:
+        warnings.warn(
+            f"{len(missing)} NAT waveform(s) not found on the bitbucket mirror "
+            f"(tried {_NAT_WAVEFORM_SUBDIRS}): {missing[:5]}"
+            + (" ..." if len(missing) > 5 else ""),
+            RuntimeWarning,
+        )
+    return out
 
 # Per-stimuli-set constants. The Zenodo archive untars into ``<key>/NAT/`` or
 # ``<key>/VMN/``, with per-site ``<exptid>_<hash>.tgz`` files inside.
@@ -190,6 +278,8 @@ class EspejoDataset(AudioNeuralDataset):
         subset: Literal["all", "estimation", "test"] = "all",
         cells: Optional[Sequence[str]] = None,
         smooth: bool = False,
+        return_waveform: bool = False,
+        audio_fs: int = 44100,
         download: bool = False,
     ):
         """
@@ -219,6 +309,22 @@ class EspejoDataset(AudioNeuralDataset):
             If True, smooth PSTHs with a 21 ms Hanning window (Hsu /
             Borst / Theunissen 2004). Off by default — Espejo is
             typically used as-is.
+        return_waveform : bool, default False
+            If True (``stimuli='nat'`` only), hand out the raw natural-sound
+            waveform per stim as a ``(1, T_audio)`` mono tensor at
+            ``audio_fs`` instead of the precomputed ozgf cochleagram, for use
+            with a learnable ``wav2spec`` model front-end. The raw wavs are
+            **not** in the Zenodo deposit — they are fetched from the LBHB
+            baphy bitbucket mirror (see the README) and cached under
+            ``<path>/nat_waveforms/``. The 4 s sound is inset at the published
+            0.5 s pre-stim silence offset so it grid-locks to the cochleagram
+            frames (``T_audio = T_neural * hop``, ``hop = audio_fs·dt/1000``).
+            Responses are identical to cochleagram mode. **VMN is unsupported**
+            (its stimuli are synthesized 2-band envelopes with no raw audio).
+        audio_fs : int, default 44100
+            Sample rate for waveform mode (the native rate of the mirror
+            wavs; ignored — and reported as ``None`` — in cochleagram mode).
+            44.1 kHz grid-locks at dt=10 ms (hop=441).
         download : bool, default False
             If True and the data is missing under ``path``, fetch the
             requested archive from Zenodo (record 3445557) and untar
@@ -235,6 +341,20 @@ class EspejoDataset(AudioNeuralDataset):
             f"Re-binning would also require re-deriving cochleagrams from "
             f"the raw waveforms (not in the Zenodo deposit)."
         )
+        if return_waveform:
+            assert stimuli == "nat", (
+                f"return_waveform=True is only supported for stimuli='nat' "
+                f"(VMN stimuli are synthesized 2-band vocalization-modulated "
+                f"noise with no natural raw waveform on the mirror). Got "
+                f"stimuli={stimuli!r}."
+            )
+            ratio = audio_fs * dt_ms / 1000.0
+            assert abs(ratio - round(ratio)) < 1e-6 and round(ratio) >= 1, (
+                f"waveform grid-lock needs audio_fs * dt_ms / 1000 to be a "
+                f"positive integer (got audio_fs={audio_fs}, dt_ms={dt_ms} -> "
+                f"{ratio}). The default audio_fs=44100 grid-locks at dt=10 ms "
+                f"(hop=441)."
+            )
 
         if path is None:
             path = str(default_cache_dir("Espejo"))
@@ -248,6 +368,12 @@ class EspejoDataset(AudioNeuralDataset):
         self.behavioral_state = "awake-passive"
         self.F = cfg["F"]
         self.stimuli = stimuli
+        self.return_waveform = bool(return_waveform)
+        # audio_fs is the in-loader sample rate only in waveform mode; in
+        # cochleagram mode the stims have no associated audio, so report None
+        # (the base class's "this is a spectrogram dataset" signal).
+        self.audio_fs = int(audio_fs) if self.return_waveform else None
+        self.hearing_range_hz = (200.0, 40000.0)  # ferret (informational)
 
         sites_dir = os.path.join(path, cfg["subdir"])
         if not os.path.isdir(sites_dir):
@@ -375,6 +501,23 @@ class EspejoDataset(AudioNeuralDataset):
 
         bin_s = dt_ms / 1000.0
 
+        # In waveform mode, fetch the raw NAT wavs (cached under
+        # <path>/nat_waveforms/) for the kept stims. Raise on genuine misses
+        # so the (stim, response) grid stays identical to cochleagram mode.
+        wav_paths: Dict[str, str] = {}
+        if self.return_waveform:
+            wav_paths = download_espejo_nat_waveforms(stim_names, dest=path)
+            missing = [n for n in stim_names if n not in wav_paths]
+            if missing:
+                raise FileNotFoundError(
+                    f"{len(missing)} NAT stim(s) have no raw waveform on the "
+                    f"bitbucket mirror, so waveform mode cannot align them with "
+                    f"the responses: {missing[:5]}"
+                    + (" ..." if len(missing) > 5 else "")
+                    + ". Use return_waveform=False (cochleagram mode) or contact "
+                    "the dataset authors (see the README) for the missing sounds."
+                )
+
         self.stims = []
         self.responses = []
         self.stim_meta = []
@@ -387,7 +530,13 @@ class EspejoDataset(AudioNeuralDataset):
                 f"self.F={self.F}"
             )
             T = int(coch.shape[1])
-            spec = torch.from_numpy(coch).float().unsqueeze(0)  # (1, F, T)
+            if self.return_waveform:
+                # Grid-locked raw waveform (1, T*hop), the sound inset at the
+                # published 0.5 s pre-stim silence offset (T keeps the
+                # cochleagram frame count so responses stay identical).
+                stim = self._nat_waveform_for_stim(wav_paths[sname], T)
+            else:
+                stim = torch.from_numpy(coch).float().unsqueeze(0)  # (1, F, T)
 
             # responses: one tensor per cell. NaN sentinel where no session
             # the cell appears in played this stim. Otherwise concatenate
@@ -413,7 +562,7 @@ class EspejoDataset(AudioNeuralDataset):
                     stacked = np.concatenate(pieces, axis=0) if len(pieces) > 1 else pieces[0]
                     pop_resps.append(torch.from_numpy(stacked).float())
 
-            self.stims.append(spec)
+            self.stims.append(stim)
             self.responses.append(pop_resps)
             self.stim_meta.append({
                 "name": sname,
@@ -428,3 +577,25 @@ class EspejoDataset(AudioNeuralDataset):
             self.smooth_responses(window_ms=21.0)
 
         self.validate()
+
+    def _nat_waveform_for_stim(self, wav_path: str, T_neural: int) -> torch.Tensor:
+        """Load a NAT sound and grid-lock it to ``(1, T_neural * hop)``.
+
+        The 4 s sound is inset at the published 0.5 s pre-stim silence offset
+        (``_NAT_PRESTIM_S``) so it aligns with the cochleagram, whose first
+        ~50 bins are that same silence; the trailing 0.5 s is the post-stim
+        silence. Resampled to ``self.audio_fs`` if the source rate differs,
+        then cropped to the exact grid-locked length.
+        """
+        wav, sr = torchaudio.load(wav_path)                  # (C, T_wav), float32
+        if wav.shape[0] > 1:
+            wav = wav.mean(dim=0, keepdim=True)              # -> mono
+        if int(sr) != self.audio_fs:
+            wav = torchaudio.functional.resample(wav, int(sr), self.audio_fs)
+        T_audio = T_neural * self.hop
+        pre = int(round(_NAT_PRESTIM_S * self.audio_fs))
+        out = torch.zeros(1, T_audio, dtype=torch.float32)
+        end = min(pre + wav.shape[-1], T_audio)
+        if end > pre:
+            out[:, pre:end] = wav[:, : end - pre]
+        return out

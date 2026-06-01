@@ -10,7 +10,11 @@ from .crcns_ac1 import (
     WEHR_VALID_NEURONS,
     WEHR_NEURONS_SPLIT_NATURAL,
 )
-from .espejo import EspejoDataset
+from .espejo import (
+    EspejoDataset,
+    download_espejo,
+    download_espejo_nat_waveforms,
+)
 from .alice_eeg import AliceEEGDataset, download_alice_eeg
 from .meliza_2025 import Meliza2025Dataset
 from .downer2025 import Downer2025Dataset, download_downer2025
@@ -24,7 +28,7 @@ __all__ = ['AudioNeuralDataset',
            'CRCNSAA4Dataset', 'AA4_ANIMAL_IDS',
            'CRCNSAC1Dataset', 'download_ac1',
            'WEHR_VALID_NEURONS', 'WEHR_NEURONS_SPLIT_NATURAL',
-           'EspejoDataset',
+           'EspejoDataset', 'download_espejo', 'download_espejo_nat_waveforms',
            'AliceEEGDataset', 'download_alice_eeg',
            'Meliza2025Dataset',
            'Downer2025Dataset', 'download_downer2025',

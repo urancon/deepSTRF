@@ -149,6 +149,72 @@ def test_vmn_nat_concat_rejected():
 
 
 # ============================================================
+# Raw-waveform branch
+# ============================================================
+
+def test_nat_waveform_rejects_vmn():
+    """VMN has no raw waveform (synthesized envelopes) -> return_waveform=True
+    raises before any data access (no archive needed)."""
+    from deepSTRF.datasets.audio.espejo import EspejoDataset
+    with pytest.raises(AssertionError, match="stimuli='nat'"):
+        EspejoDataset(stimuli="vmn", return_waveform=True)
+
+
+def test_nat_waveform_rejects_bad_audio_fs():
+    """A non-integer audio_fs * dt / 1000 grid is rejected at construction
+    (before any data access)."""
+    from deepSTRF.datasets.audio.espejo import EspejoDataset
+    with pytest.raises(AssertionError, match="grid-lock|integer"):
+        EspejoDataset(stimuli="nat", return_waveform=True, audio_fs=97656)
+
+
+def test_nat_waveform_download_helper_uses_cache(tmp_path):
+    """The waveform helper strips the STIM_ prefix and returns already-cached
+    files without hitting the network."""
+    from deepSTRF.datasets.audio.espejo import download_espejo_nat_waveforms
+    wav_dir = tmp_path / "nat_waveforms"
+    wav_dir.mkdir()
+    (wav_dir / "00cat172_rec1_geese_excerpt1.wav").write_bytes(b"RIFFfake")
+    out = download_espejo_nat_waveforms(
+        ["STIM_00cat172_rec1_geese_excerpt1.wav"],
+        dest=str(tmp_path), progress=False,
+    )
+    assert out["STIM_00cat172_rec1_geese_excerpt1.wav"].endswith(
+        os.path.join("nat_waveforms", "00cat172_rec1_geese_excerpt1.wav")
+    )
+
+
+@pytest.mark.skipif(not HAS_NAT, reason="Espejo NAT local data missing")
+def test_nat_waveform_branch():
+    """NAT return_waveform=True hands out grid-locked raw waveforms (fetched
+    from the bitbucket mirror, inset at the 0.5 s pre-stim offset); responses
+    stay identical to cochleagram mode. subset='test' bounds the download."""
+    from deepSTRF.datasets.audio.espejo import EspejoDataset
+    kw = dict(path=ESPEJO_LOCAL, stimuli="nat", subset="test", dt_ms=10.0)
+    ds_spec = EspejoDataset(**kw)
+    ds_wav = EspejoDataset(return_waveform=True, **kw)
+
+    assert ds_spec.return_waveform is False and ds_wav.return_waveform is True
+    assert ds_spec.audio_fs is None and ds_spec.hop is None
+    assert ds_wav.audio_fs == 44100 and ds_wav.hop == 441
+    assert ds_wav.hearing_range_hz == (200.0, 40000.0)
+    assert len(ds_wav.stims) == len(ds_spec.stims)
+
+    ds_spec.validate()
+    ds_wav.validate()
+    for s in range(len(ds_wav.stims)):
+        stim = ds_wav.stims[s]
+        assert stim.dim() == 2 and stim.shape[0] == 1
+        assert not stim.isnan().any()
+        assert stim.shape[-1] == ds_spec.stims[s].shape[-1] * ds_wav.hop
+
+    for s in range(len(ds_wav.stims)):
+        for n in range(ds_wav.N_neurons):
+            assert torch.allclose(ds_spec.responses[s][n], ds_wav.responses[s][n],
+                                  equal_nan=True)
+
+
+# ============================================================
 # Native loader unit (independent of dataset class)
 # ============================================================
 
