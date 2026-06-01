@@ -207,6 +207,53 @@ def test_wehr_loads_and_validates():
 
 
 @pytest.mark.skipif(not HAS_DATA, reason="CRCNS-AC1 local archive missing")
+@pytest.mark.parametrize("dt_ms", [5.0, 10.0])
+def test_crcns_ac1_waveform_branch(dt_ms):
+    """``return_waveform=True`` hands out grid-locked source waveforms
+    (1, T_canon*hop) resampled to a common audio_fs (the native rates are
+    heterogeneous), instead of the log-spectrogram. Responses must stay
+    bit-identical to spectrogram mode, and spec mode reports audio_fs=None
+    so it never trips the waveform grid validator."""
+    from deepSTRF.datasets.audio import CRCNSAC1Dataset
+
+    kw = dict(path=CRCNS_AC1_LOCAL, experimenter="wehr", sites="A1", dt_ms=dt_ms)
+    ds_spec = CRCNSAC1Dataset(**kw)
+    ds_wav = CRCNSAC1Dataset(return_waveform=True, **kw)
+
+    assert ds_spec.return_waveform is False and ds_wav.return_waveform is True
+    assert ds_spec.audio_fs is None and ds_spec.hop is None
+    assert ds_wav.audio_fs == 96000
+    assert ds_wav.hop == int(round(96000 * dt_ms / 1000))
+    assert ds_wav.hearing_range_hz == (250.0, 76000.0)
+    assert len(ds_wav.stims) == len(ds_spec.stims)
+    assert ds_wav.N_neurons == ds_spec.N_neurons
+
+    ds_spec.validate()
+    ds_wav.validate()
+
+    for s in range(len(ds_wav.stims)):
+        stim = ds_wav.stims[s]
+        assert stim.dim() == 2 and stim.shape[0] == 1
+        assert not stim.isnan().any()
+        assert stim.shape[-1] == ds_spec.stims[s].shape[-1] * ds_wav.hop
+
+    # responses untouched by the input representation
+    for s in range(len(ds_wav.stims)):
+        for n in range(ds_wav.N_neurons):
+            assert torch.allclose(ds_spec.responses[s][n], ds_wav.responses[s][n],
+                                  equal_nan=True)
+
+
+@pytest.mark.skipif(not HAS_DATA, reason="CRCNS-AC1 local archive missing")
+def test_crcns_ac1_waveform_bad_audio_fs_raises():
+    """A non-integer audio_fs * dt_ms / 1000 grid is rejected at construction."""
+    from deepSTRF.datasets.audio import CRCNSAC1Dataset
+    with pytest.raises(AssertionError, match="grid-lock|integer"):
+        CRCNSAC1Dataset(path=CRCNS_AC1_LOCAL, experimenter="wehr",
+                        return_waveform=True, audio_fs=97656, dt_ms=5.0)
+
+
+@pytest.mark.skipif(not HAS_DATA, reason="CRCNS-AC1 local archive missing")
 def test_asari_a1_loads_and_validates():
     from deepSTRF.datasets.audio import CRCNSAC1Dataset
 

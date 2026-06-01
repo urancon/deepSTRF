@@ -43,6 +43,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
+import torch.nn.functional as F
+import torchaudio
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 from deepSTRF.datasets.audio._logspectrogram import logspectrogram, n_bands_for
@@ -218,6 +220,23 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         Per-repeat artifact-rejection thresholds. Default values gate
         out repeats with derivative-MAD jumps and excessive dynamic
         range; see :class:`._crcns_ac1_native.RepeatGating`.
+    return_waveform : bool, default False
+        If True, hand out the raw stimulus waveform per stim as a
+        ``(1, T_audio)`` mono tensor resampled to ``audio_fs`` instead
+        of the in-loader log-spectrogram, for use with a learnable
+        ``wav2spec`` model front-end. Because the source waveforms have
+        heterogeneous sample rates (Asari at 97656 Hz, Wehr differs), they
+        are all resampled to the single ``audio_fs`` so the grid-lock
+        (``T_audio = T_neural * hop``, ``hop = audio_fs * dt_ms / 1000``)
+        holds dataset-wide. offset 0 — the waveform starts at stimulus
+        onset, matching the response trace. Responses are identical to
+        spectrogram mode.
+    audio_fs : int, default 96000
+        Common sample rate the waveforms are resampled to in waveform
+        mode (ignored in spectrogram mode, where ``self.audio_fs`` is
+        ``None``). The default 96 kHz exceeds twice the default ``fmax``
+        (45 kHz) so no in-band content is lost, and grid-locks cleanly
+        for any integer ``dt_ms`` (96000/1000 = 96 samples per ms).
     download : bool, default False
         If True, fetch the three archives via :func:`download_ac1`
         before extraction. Requires CRCNS credentials.
@@ -260,6 +279,8 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         detrend_med_ms: float = 100.0,
         detrend_gauss_ms: float = 10.0,
         gating: Optional[RepeatGating] = None,
+        return_waveform: bool = False,
+        audio_fs: int = 96000,
         download: bool = False,
         username: Optional[str] = None,
         password: Optional[str] = None,
@@ -277,6 +298,14 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         assert dt_ms > 0, f"dt_ms must be positive (got {dt_ms})"
         assert fmax > fmin > 0, f"need 0 < fmin < fmax (got {fmin}, {fmax})"
         assert bins_per_octave >= 1, f"bins_per_octave >= 1 (got {bins_per_octave})"
+        if return_waveform:
+            ratio = audio_fs * dt_ms / 1000.0
+            assert abs(ratio - round(ratio)) < 1e-6 and round(ratio) >= 1, (
+                f"waveform mode needs audio_fs * dt_ms / 1000 to be a positive "
+                f"integer (got audio_fs={audio_fs}, dt_ms={dt_ms} -> {ratio}). "
+                f"Pick e.g. audio_fs=96000 (default), which grid-locks for any "
+                f"integer dt_ms."
+            )
 
         # --- resolve path ---
         if download:
@@ -295,6 +324,15 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         self.detrend_med_ms = float(detrend_med_ms)
         self.detrend_gauss_ms = float(detrend_gauss_ms)
         self.gating = gating or RepeatGating()
+        self.return_waveform = bool(return_waveform)
+        # audio_fs is the in-loader sample rate only in waveform mode; in
+        # spectrogram mode the stims keep heterogeneous native rates, so we
+        # report None (the base class's "this is a spectrogram dataset" signal).
+        self.audio_fs = int(audio_fs) if self.return_waveform else None
+        # Rat audiogram (Heffner & Heffner 2007): ~250 Hz – 76 kHz.
+        # Informational only; the in-loader audio is band-limited to
+        # audio_fs / 2 (48 kHz at the 96 kHz default).
+        self.hearing_range_hz = (250.0, 76000.0)
 
         self.F = n_bands_for(self.fmin, self.fmax, self.bins_per_octave)
 
@@ -446,21 +484,30 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
 
         stim_T_out: List[int] = []
         for s_idx, spec in enumerate(stim_specs):
-            S_db, _freqs = logspectrogram(
-                spec["waveform"], spec["sf_stim"],
-                dt_ms=self.dt, fmin=self.fmin, fmax=self.fmax,
-                bins_per_octave=self.bins_per_octave,
-                window_ms=self.window_ms,
-            )
-            T_spec = int(S_db.shape[1])
+            wav_np = np.asarray(spec["waveform"], dtype=np.float64).ravel()
+            sf_stim = float(spec["sf_stim"])
+            # T_spec = logspectrogram's frame count = ceil(len / hop_native).
+            # Compute it analytically (identical formula) so T_canon matches
+            # spectrogram mode exactly even in waveform mode -> responses are
+            # bit-identical across the two input representations.
+            hop_native = max(int(round(self.dt * sf_stim / 1000.0)), 1)
+            T_spec = int(np.ceil(len(wav_np) / hop_native))
             T_dur = int(round(spec["duration_ms"] / self.dt))
             T_resp_min = shortest_resp_T[s_idx]
             T_canon = min(t for t in (T_dur or 10**9, T_spec, T_resp_min) if t > 0)
             stim_T_out.append(T_canon)
 
-            self.stims.append(
-                torch.from_numpy(S_db[:, :T_canon]).unsqueeze(0).float()
-            )
+            if self.return_waveform:
+                stim_tensor = self._waveform_for_stim(wav_np, sf_stim, T_canon)
+            else:
+                S_db, _freqs = logspectrogram(
+                    wav_np, sf_stim,
+                    dt_ms=self.dt, fmin=self.fmin, fmax=self.fmax,
+                    bins_per_octave=self.bins_per_octave,
+                    window_ms=self.window_ms,
+                )
+                stim_tensor = torch.from_numpy(S_db[:, :T_canon]).unsqueeze(0).float()
+            self.stims.append(stim_tensor)
             self.stim_meta.append(spec["meta"])
 
         for (s_idx, n_idx, tens) in buffer:
@@ -470,3 +517,27 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
             self.responses[s_idx][n_idx] = tens[:, :T_canon]
 
         self.validate()
+
+    def _waveform_for_stim(
+        self, waveform: np.ndarray, sf_stim: float, T_canon: int,
+    ) -> torch.Tensor:
+        """Resample a stim waveform to ``self.audio_fs`` and grid-lock it.
+
+        Returns a ``(1, T_canon * hop)`` mono float32 tensor (``hop =
+        audio_fs * dt_ms / 1000``). offset 0 — the source waveform starts at
+        stimulus onset, matching the response trace, so no pre-silence inset
+        is needed. Right-padded / cropped to the exact grid-locked length.
+        """
+        wav = torch.as_tensor(np.asarray(waveform).ravel(),
+                              dtype=torch.float32).unsqueeze(0)   # (1, T_wav)
+        if int(round(sf_stim)) != self.audio_fs:
+            wav = torchaudio.functional.resample(
+                wav, orig_freq=int(round(sf_stim)), new_freq=self.audio_fs,
+            )
+        T_audio = T_canon * self.hop
+        n = wav.shape[-1]
+        if n > T_audio:
+            wav = wav[..., :T_audio]
+        elif n < T_audio:
+            wav = F.pad(wav, (0, T_audio - n), mode="constant", value=0.0)
+        return wav
