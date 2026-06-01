@@ -53,6 +53,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import soundfile as sf
 import torch
+import torchaudio
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 from deepSTRF.utils.data_download import default_cache_dir, figshare_download, unzip
@@ -304,6 +305,8 @@ class Meliza2025Dataset(AudioNeuralDataset):
         keep_areas: Optional[Sequence[str]] = None,
         compute_reliability: bool = True,
         download: bool = False,
+        return_waveform: bool = False,
+        audio_fs: int = 48000,
     ):
         if experiment not in EXPERIMENTS:
             raise ValueError(f"experiment must be one of {EXPERIMENTS}, got {experiment!r}")
@@ -330,6 +333,14 @@ class Meliza2025Dataset(AudioNeuralDataset):
         self.fmax = float(fmax)
         self.window_ms = float(window_ms)
         self.F = int(n_bands)
+        self.hearing_range_hz = (250.0, 8000.0)   # zebra finch (informational)
+
+        # Raw-waveform input mode (opt-in). The native stim is the in-loader
+        # gammatone-gram; here we instead hand out the source waveform (the wav
+        # IS the full stimulus — no silence flanks, so it aligns from t=0) and
+        # let a model's wav2spec slot build the spectrogram (strictly causally).
+        self.return_waveform = bool(return_waveform)
+        self.audio_fs = int(audio_fs) if return_waveform else None
 
         root = Path(path)
         if not root.exists():
@@ -375,7 +386,10 @@ class Meliza2025Dataset(AudioNeuralDataset):
         for rec in stim_records:
             sr_native, n_samples, duration_s, spec = self._load_stim(rec["wav_path"])
             ci_on, ci_off = self._ci_bounds_seconds(rec, sr_native, duration_s)
-            self.stims.append(spec)
+            if self.return_waveform:
+                self.stims.append(self._load_stim_waveform(rec["wav_path"], spec.shape[-1]))
+            else:
+                self.stims.append(spec)
             self.stim_meta.append({
                 "name":              rec["name"],
                 "motif":             rec["motif"],
@@ -558,6 +572,26 @@ class Meliza2025Dataset(AudioNeuralDataset):
         spec_t = torch.as_tensor(spec, dtype=torch.float32).unsqueeze(0)  # (1, F, T)
 
         return int(sr_native), int(n_samples_native), float(duration_s), spec_t
+
+    def _load_stim_waveform(self, wav_path: Path, T_neural: int) -> torch.Tensor:
+        """Return a stim's ``(1, T_audio)`` waveform, grid-locked for waveform mode.
+
+        Reads the source wav (the full stimulus — no silence flanks, so it aligns
+        from t=0), downmixes to mono, resamples to ``self.audio_fs`` if needed, and
+        crops / pads to exactly ``T_neural * hop`` samples (grid lock C1) so audio
+        sample ``j`` maps to gammatone-gram frame ``j // hop`` (= response bin).
+        """
+        wav, sr = sf.read(str(wav_path), always_2d=False)
+        if wav.ndim == 2:
+            wav = wav.mean(axis=-1)
+        w = torch.as_tensor(np.asarray(wav, dtype=np.float32)).view(1, -1)
+        if sr != self.audio_fs:
+            w = torchaudio.functional.resample(w, sr, self.audio_fs)
+        T_audio = T_neural * self.hop
+        full = torch.zeros(1, T_audio)
+        seg = w[0, :T_audio]
+        full[0, : seg.shape[0]] = seg
+        return full.contiguous().float()
 
     # -----------------------------------------------------------------------
     # Per-unit loading
