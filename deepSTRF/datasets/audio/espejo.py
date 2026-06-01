@@ -45,16 +45,22 @@ from deepSTRF.utils.data_download import (
 ESPEJO_ZENODO_RECORD = 3445557
 
 # Raw NAT waveforms are NOT in the Zenodo deposit (only the precomputed
-# cochleagrams are). They live on the LBHB baphy bitbucket mirror, split
-# across two sound dirs; sounds are keyed by filename (the ``STIM_<name>``
-# epoch label minus the ``STIM_`` prefix). See the dataset README. The
-# natural-sounds-set-3 bank Espejo used is under ``sounds_set3/`` (the older
-# ``sounds/`` dir is tried as a fallback for any straggler).
+# cochleagrams are). They live on the LBHB baphy bitbucket mirror, spread
+# across several sound dirs (see ``_NAT_WAVEFORM_SUBDIRS``); sounds are keyed
+# by filename (the ``STIM_<name>`` epoch label minus the ``STIM_`` prefix).
+# See the dataset README (which only names two of the dirs).
 _NAT_WAVEFORM_BASE = (
     "https://bitbucket.org/lbhb/baphy/raw/master/"
     "Config/lbhb/SoundObjects/%40NaturalSounds"
 )
-_NAT_WAVEFORM_SUBDIRS = ("sounds_set3", "sounds")
+# The natural-sound bank is spread across several mirror subdirs. The README
+# only names ``sounds/`` + ``sounds_set3/``, but Espejo's NAT stims also pull
+# from set2/4/6/7/8 (e.g. the ``cat10000_*`` series lives in ``sounds_set4/``).
+# Tried in rough order of hit frequency; first dir containing the file wins.
+_NAT_WAVEFORM_SUBDIRS = (
+    "sounds_set3", "sounds_set4", "sounds_set2", "sounds_set6",
+    "sounds_set7", "sounds_set8", "sounds", "Sounds_set3",
+)
 # Published protocol: each 4 s sound is flanked by 0.5 s pre- and post-stim
 # silence, so the cochleagram (and the waveform) begin with 0.5 s of silence.
 _NAT_PRESTIM_S = 0.5
