@@ -379,6 +379,51 @@ def test_missing_path_error_message_mentions_download():
 
 
 # ============================================================
+# Raw-waveform branch
+# ============================================================
+
+@pytest.mark.parametrize("stimuli,dt_ms", [("timit", 5.0), ("mvocs", 5.0),
+                                            ("timit", 50.0)])
+def test_downer_waveform_branch(stimuli, dt_ms):
+    """``return_waveform=True`` hands out grid-locked source waveforms
+    (1, T_canon*hop) instead of the Kaldi-fbank spectrogram. The responses
+    must stay bit-identical to spectrogram mode, and the spec mode (which
+    also sets audio_fs) must NOT trip the waveform grid validator."""
+    if not HAS_DATA:
+        pytest.skip("data missing")
+    from deepSTRF.datasets.audio import Downer2025Dataset
+
+    kw = dict(path=DOWNER_LOCAL, stimuli=stimuli, sessions=["180413"],
+              dt_ms=dt_ms, smooth=False)
+    ds_spec = Downer2025Dataset(**kw)
+    ds_wav = Downer2025Dataset(return_waveform=True, **kw)
+
+    assert ds_spec.return_waveform is False and ds_wav.return_waveform is True
+    assert ds_wav.audio_fs == 16000
+    assert ds_wav.hop == int(round(16000 * dt_ms / 1000))
+    assert ds_wav.hearing_range_hz == (250.0, 43000.0)
+    assert len(ds_wav.stims) == len(ds_spec.stims)
+    assert ds_wav.N_neurons == ds_spec.N_neurons
+
+    # spec mode also sets audio_fs but is NOT waveform mode -> grid validator
+    # must be skipped (the return_waveform gate, not audio_fs, is the signal).
+    ds_spec.validate()
+    ds_wav.validate()
+
+    for s in range(len(ds_wav.stims)):
+        stim = ds_wav.stims[s]
+        assert stim.dim() == 2 and stim.shape[0] == 1
+        assert not stim.isnan().any()
+        assert stim.shape[-1] == ds_spec.stims[s].shape[-1] * ds_wav.hop
+
+    # responses untouched by the input representation
+    for s in range(len(ds_wav.stims)):
+        for n in range(ds_wav.N_neurons):
+            assert torch.allclose(ds_spec.responses[s][n], ds_wav.responses[s][n],
+                                  equal_nan=True)
+
+
+# ============================================================
 # Hardcoded well-tuned lists (network-free)
 # ============================================================
 

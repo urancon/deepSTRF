@@ -785,7 +785,9 @@ class Downer2025Dataset(AudioNeuralDataset):
     ``audio_fs=16000`` / ``fmax=8000`` to match the Ahmed 2025 baseline
     (cochleagram capped at 8 kHz) and to allow two instances of this
     class (one per stim mode) to be concatenated via
-    ``deepSTRF.utils.concat_neural_datasets``.
+    ``deepSTRF.utils.concat_neural_datasets``. Pass ``return_waveform=True``
+    to hand out the raw source waveform per stim (grid-locked to the neural
+    bins) instead, for use with a learnable ``wav2spec`` model front-end.
 
     Notes
     -----
@@ -810,6 +812,7 @@ class Downer2025Dataset(AudioNeuralDataset):
         audio_fs: int = 16000,
         fmax: int = 8000,
         window_ms: float = 25.0,
+        return_waveform: bool = False,
         download: bool = False,
         _enumerate_only: bool = False,
     ):
@@ -865,6 +868,19 @@ class Downer2025Dataset(AudioNeuralDataset):
             cc_norm ≈ 0.40 on the well-tuned cohort. With ``window_ms=25``
             the same fit reaches cc_norm ≈ 0.53 — matching Ahmed 2025's
             paper-reported STRF baseline.
+        return_waveform : bool, default False
+            If True, hand out the raw source waveform per stim as a
+            ``(1, T_audio)`` mono tensor at ``audio_fs`` instead of the
+            Kaldi-fbank spectrogram, for use with a learnable ``wav2spec``
+            model front-end. The waveform is grid-locked to the neural bins
+            (``T_audio = T_neural * hop`` with ``hop = audio_fs * dt_ms / 1000``)
+            and right-padded / cropped to the canonical stim length. The
+            source audio is already speech-onset aligned (TIMIT ``befaft``
+            silence trimmed; mVocs snippet starts at voc onset), so there is
+            no pre-silence offset. Responses are identical to spectrogram
+            mode. Note the default ``audio_fs=16000`` is band-limited to
+            8 kHz — pass a higher ``audio_fs`` if you want a learnable
+            front-end to see energy above the paper's cochleagram cutoff.
         download : bool, default False
             Fetch the 29 GB Zenodo archive (record 16175377) if missing
             and unzip it. Idempotent — both the download and the unzip
@@ -903,6 +919,11 @@ class Downer2025Dataset(AudioNeuralDataset):
         self.spec_zscore = bool(spec_zscore)
         self.window_ms = float(window_ms)
         self.smooth = bool(smooth)
+        self.return_waveform = bool(return_waveform)
+        # Squirrel-monkey audiogram (Beecher 1974): ~250 Hz – 43 kHz.
+        # Informational only; the in-loader audio is band-limited to
+        # audio_fs / 2 (8 kHz at the 16 kHz default).
+        self.hearing_range_hz = (250.0, 43000.0)
 
         if not Path(path).is_dir():
             raise FileNotFoundError(
@@ -989,68 +1010,86 @@ class Downer2025Dataset(AudioNeuralDataset):
         # average-pool to dt-rate. For dt ≤ 10 ms we use frame_shift=dt
         # directly (no pooling); for dt > 10 ms we use the Kaldi default
         # 10 ms hop and pool by dt/10.
-        if self.dt <= 10.0:
-            frame_shift_ms = self.dt
-            pool_factor = 1
-        else:
-            frame_shift_ms = 10.0
-            ratio = self.dt / frame_shift_ms
-            pool_factor = int(round(ratio))
-            if abs(ratio - pool_factor) > 1e-6:
-                raise ValueError(
-                    f"dt_ms ({self.dt}) must be a multiple of 10 ms when dt > 10."
-                )
+        # frame_shift / pool_factor only steer the Kaldi-fbank spec arm; in
+        # waveform mode the sole timing constraint is the integer grid-lock
+        # (audio_fs * dt_ms / 1000), enforced by validate().
+        if not self.return_waveform:
+            if self.dt <= 10.0:
+                frame_shift_ms = self.dt
+                pool_factor = 1
+            else:
+                frame_shift_ms = 10.0
+                ratio = self.dt / frame_shift_ms
+                pool_factor = int(round(ratio))
+                if abs(ratio - pool_factor) > 1e-6:
+                    raise ValueError(
+                        f"dt_ms ({self.dt}) must be a multiple of 10 ms when dt > 10."
+                    )
 
         dt_s = self.dt / 1000.0
         S = len(entries)
         T_by_stim: list[int] = [0] * S
 
         for s_idx, entry in enumerate(entries):
+            # Canonical neural frame count — drives both the response binning
+            # and the spec / waveform time length.
+            T_canon = int(round(entry["duration_s"] * 1000.0 / self.dt))
+            T_by_stim[s_idx] = T_canon
+
+            # Source audio, resampled to the common audio_fs (shared by both
+            # branches). entry['sound'] is already speech-onset aligned (TIMIT
+            # befaft silence trimmed; mVocs snippet starts at voc onset), so
+            # there is no pre-silence offset to inset.
             wav = torch.from_numpy(entry["sound"]).unsqueeze(0)
             if entry["soundf"] != self.audio_fs:
                 wav = torchaudio.functional.resample(wav, entry["soundf"], self.audio_fs)
-            # Kaldi fbank expects int16-scale input (Ahmed multiplies wav by 2**15).
-            wav_k = wav * (2 ** 15)
-            spec_native = torchaudio.compliance.kaldi.fbank(
-                wav_k,
-                num_mel_bins=self.F,
-                window_type="hanning",
-                sample_frequency=float(self.audio_fs),
-                frame_length=float(self.window_ms),
-                frame_shift=float(frame_shift_ms),
-                low_freq=0.0, high_freq=float(self.fmax),
-            )                              # (T_native, F), log-mel
-            # average-pool to dt-rate: (T_native, F) -> (T_pool, F)
-            T_native = spec_native.shape[0]
-            T_pool = T_native // pool_factor
-            spec_pooled = spec_native[: T_pool * pool_factor].view(
-                T_pool, pool_factor, self.F).mean(dim=1)
-            # back to deepSTRF shape (1, F, T)
-            spec = spec_pooled.t().unsqueeze(0)
-            if self.compression == "cubic":
-                # Kaldi already applies log; cubic-root would undo that.
-                # Treat compression='cubic' as a no-op here for back-compat
-                # (or surface a warning). For now, leave the log-mel as is.
-                pass
-            elif self.compression == "log1p":
-                # Already log-compressed by Kaldi; no further transformation.
-                pass
-            # 'none' is also a no-op here for the same reason.
-            if self.spec_zscore:
-                # Per-stim, per-band z-score over the time axis -- matches
-                # Ahmed 2025 utils.normalize(). spec is (1, F, T_spec).
-                mean = spec.mean(dim=-1, keepdim=True)
-                std = spec.std(dim=-1, unbiased=False, keepdim=True).clamp(min=1e-9)
-                spec = (spec - mean) / std
-            T_canon = int(round(entry["duration_s"] * 1000.0 / self.dt))
-            T_by_stim[s_idx] = T_canon
-            T_spec = spec.shape[-1]
-            if T_spec > T_canon:
-                spec = spec[..., :T_canon]
-            elif T_spec < T_canon:
-                spec = F.pad(spec, (0, T_canon - T_spec), mode="constant", value=0.0)
+
+            if self.return_waveform:
+                # Grid-locked raw waveform (1, T_canon * hop) for the wav2spec
+                # model slot. Right-pad / crop so T_audio // hop == T_canon.
+                T_audio = T_canon * self.hop
+                n = wav.shape[-1]
+                if n > T_audio:
+                    wav = wav[..., :T_audio]
+                elif n < T_audio:
+                    wav = F.pad(wav, (0, T_audio - n), mode="constant", value=0.0)
+                stim = wav
+            else:
+                # Kaldi fbank expects int16-scale input (Ahmed multiplies by 2**15).
+                wav_k = wav * (2 ** 15)
+                spec_native = torchaudio.compliance.kaldi.fbank(
+                    wav_k,
+                    num_mel_bins=self.F,
+                    window_type="hanning",
+                    sample_frequency=float(self.audio_fs),
+                    frame_length=float(self.window_ms),
+                    frame_shift=float(frame_shift_ms),
+                    low_freq=0.0, high_freq=float(self.fmax),
+                )                              # (T_native, F), log-mel
+                # average-pool to dt-rate: (T_native, F) -> (T_pool, F)
+                T_native = spec_native.shape[0]
+                T_pool = T_native // pool_factor
+                spec_pooled = spec_native[: T_pool * pool_factor].view(
+                    T_pool, pool_factor, self.F).mean(dim=1)
+                # back to deepSTRF shape (1, F, T)
+                spec = spec_pooled.t().unsqueeze(0)
+                # Kaldi already applies log internally, so compression is a
+                # no-op here ('cubic'/'log1p'/'none' all kept for API symmetry).
+                if self.spec_zscore:
+                    # Per-stim, per-band z-score over the time axis -- matches
+                    # Ahmed 2025 utils.normalize(). spec is (1, F, T_spec).
+                    mean = spec.mean(dim=-1, keepdim=True)
+                    std = spec.std(dim=-1, unbiased=False, keepdim=True).clamp(min=1e-9)
+                    spec = (spec - mean) / std
+                T_spec = spec.shape[-1]
+                if T_spec > T_canon:
+                    spec = spec[..., :T_canon]
+                elif T_spec < T_canon:
+                    spec = F.pad(spec, (0, T_canon - T_spec), mode="constant", value=0.0)
+                stim = spec
+
             is_repeat = entry["stim_id"] in high_rep_ids
-            self.stims.append(spec)
+            self.stims.append(stim)
             meta = {
                 "name": entry["name"],
                 "type": stim_type_label,
