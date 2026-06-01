@@ -334,7 +334,9 @@ class AliceEEGDataset(AudioNeuralDataset):
                  fmin: float = 80.0,
                  fmax: Optional[float] = None,
                  spec_backend: str = "gaussian",
-                 download: bool = False):
+                 download: bool = False,
+                 return_waveform: bool = False,
+                 audio_fs: int = 44100):
         """
         Parameters
         ----------
@@ -428,6 +430,15 @@ class AliceEEGDataset(AudioNeuralDataset):
                 f"{spec_backend!r}"
             )
         self.spec_backend = spec_backend
+        self.hearing_range_hz = (20.0, 20000.0)   # human (informational)
+
+        # Raw-waveform input mode (opt-in). The native stim is the in-loader
+        # ERB/gammatone spectrogram; here we instead hand out the 44.1 kHz source
+        # audiobook waveform (continuous audio, no silence flanks → aligns from
+        # t=0) and let a model's wav2spec slot build the spectrogram. For the
+        # paper-faithful Heeris backend, ``Gammatonegram`` reproduces it exactly.
+        self.return_waveform = bool(return_waveform)
+        self.audio_fs = int(audio_fs) if return_waveform else None
 
         if treat_subjects_as not in ("neurons", "repeats"):
             raise ValueError(
@@ -455,9 +466,10 @@ class AliceEEGDataset(AudioNeuralDataset):
             )
 
         # 2. load stimuli (12 .wav segments) → ERB-band log spectrograms -----
-        self.stims, self.stim_meta = self._load_stimuli(path)
+        self.stims, self.stim_meta, T_per_stim = self._load_stimuli(path)
         S = len(self.stims)
-        T_per_stim = [s.shape[-1] for s in self.stims]
+        # T_per_stim is the neural (spec) frame count per stim — NOT the waveform
+        # length, which in return_waveform mode would mis-bin the EEG responses.
         wav_durations_s = [m["duration_s"] for m in self.stim_meta]
 
         # 3. load per-subject EEG, segment by stim onsets, downsample ---------
@@ -493,7 +505,7 @@ class AliceEEGDataset(AudioNeuralDataset):
                 f"Check that `stimuli.zip` has been unpacked."
             )
 
-        stims, stim_meta = [], []
+        stims, stim_meta, t_neural = [], [], []
         for wav_path in wavs:
             wav, sr = torchaudio.load(wav_path, normalize=True)
             if wav.shape[0] > 1:
@@ -504,7 +516,21 @@ class AliceEEGDataset(AudioNeuralDataset):
                 window_ms=self.window_ms, f_min=self.fmin, f_max=self.fmax,
                 backend=self.spec_backend,
             )  # (1, F, T)
-            stims.append(spec)
+            t_neural.append(int(spec.shape[-1]))   # neural frame count (drives EEG binning)
+            if self.return_waveform:
+                # store the source waveform (resampled to audio_fs if needed),
+                # grid-locked to T_neural*hop so it aligns with the spec frames
+                # (= EEG response bins). Continuous audio → no offset.
+                w = (wav if sr == self.audio_fs
+                     else torchaudio.functional.resample(wav, sr, self.audio_fs))
+                T_audio = spec.shape[-1] * self.hop
+                if w.shape[-1] < T_audio:
+                    w = torch.nn.functional.pad(w, (0, T_audio - w.shape[-1]))
+                else:
+                    w = w[..., :T_audio]
+                stims.append(w.contiguous().float())
+            else:
+                stims.append(spec)
             stim_meta.append({
                 "name": os.path.basename(wav_path),
                 "type": "alice_chapter1",
@@ -512,7 +538,7 @@ class AliceEEGDataset(AudioNeuralDataset):
                 "n_samples": n_samples,
                 "duration_s": n_samples / float(sr),
             })
-        return stims, stim_meta
+        return stims, stim_meta, t_neural
 
     # ------------------------------------------------------------------
     # EEG loading

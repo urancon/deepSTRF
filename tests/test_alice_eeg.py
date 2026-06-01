@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 
 import pytest
+import torch
 
 
 ALICE_DATA = os.path.normpath(os.path.join(
@@ -181,3 +182,38 @@ def test_alice_invalid_treat_mode():
     with pytest.raises(ValueError):
         AliceEEGDataset(path=ALICE_DATA, subjects=["S01"],
                           treat_subjects_as="bogus")
+
+
+# ============================================================
+# Raw-waveform branch
+# ============================================================
+
+@pytest.mark.skipif(not HAS_LOCAL, reason="Alice EEG data not unpacked under repo path")
+def test_alice_waveform_branch():
+    """Alice EEG's waveform branch hands out the 44.1 kHz audiobook waveforms,
+    grid-locked to the spectrogram frames (hop=441 at dt=10 ms, offset 0 —
+    continuous audio). The EEG responses must bin to the spec frame count, NOT
+    the waveform length, and stay identical to spectrogram mode."""
+    from deepSTRF.datasets.audio.alice_eeg import AliceEEGDataset
+
+    kw = dict(path=ALICE_DATA, subjects=["S01"], dt_ms=10.0, n_frequency_bands=8)
+    ds_spec = AliceEEGDataset(**kw)
+    ds_wav = AliceEEGDataset(return_waveform=True, **kw)
+
+    assert ds_wav.get_S() == ds_spec.get_S() and ds_wav.get_N() == ds_spec.get_N()
+    assert ds_spec.audio_fs is None and ds_spec.hop is None
+    assert ds_wav.audio_fs == 44100 and ds_wav.hop == 441
+    assert ds_wav.hearing_range_hz == (20.0, 20000.0)
+
+    ds_wav.validate()
+    for s in range(ds_wav.get_S()):
+        stim = ds_wav.stims[s]
+        assert stim.dim() == 2 and stim.shape[0] == 1
+        assert stim.shape[-1] == ds_spec.stims[s].shape[-1] * ds_wav.hop
+
+    # responses bin to the spec frame count (the T_per_stim fix), not T_audio,
+    # and are untouched by the input representation.
+    for s in range(ds_wav.get_S()):
+        for n in range(ds_wav.get_N()):
+            assert torch.allclose(ds_spec.responses[s][n], ds_wav.responses[s][n],
+                                  equal_nan=True)
