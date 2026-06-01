@@ -24,12 +24,13 @@ Modules expose:
 
 from .causal_mel import CausalMelSpectrogram
 from .gammatone import CausalGammatone
+from .gammatonegram import Gammatonegram
 from .leaf import CausalLEAF
 from .sincnet import SincNet
 
 
-__all__ = ["CausalMelSpectrogram", "CausalGammatone", "CausalLEAF", "SincNet",
-           "make_wav2spec"]
+__all__ = ["CausalMelSpectrogram", "CausalGammatone", "Gammatonegram",
+           "CausalLEAF", "SincNet", "make_wav2spec"]
 
 
 def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
@@ -37,11 +38,13 @@ def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
 
     Parameters
     ----------
-    kind : {'mel', 'gammatone', 'sincnet', 'leaf'}
+    kind : {'mel', 'gammatone', 'gammatonegram', 'sincnet', 'leaf'}
         Which front-end to build. ``'mel'`` and ``'gammatone'`` are
-        non-learnable cochleagrams; ``'sincnet'`` has learnable filter cutoffs;
-        ``'leaf'`` is the fully-learnable LEAF frontend (Gabor + pooling +
-        sPCEN).
+        non-learnable cochleagrams; ``'gammatonegram'`` is the faithful causal
+        reproduction of the canonical Slaney/Heeris gammatone-gram (the
+        ``gammatone`` package / NEMS / Meliza native transform); ``'sincnet'``
+        has learnable filter cutoffs; ``'leaf'`` is the fully-learnable LEAF
+        frontend (Gabor + pooling + sPCEN).
     audio_fs : int
         Audio sample rate (Hz). Must match the dataset's ``audio_fs``.
     dt_ms : float
@@ -63,11 +66,13 @@ def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
         return CausalMelSpectrogram(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
     if kind == "gammatone":
         return CausalGammatone(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
+    if kind == "gammatonegram":
+        return Gammatonegram(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
     if kind == "sincnet":
         return SincNet(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
     if kind == "leaf":
         return CausalLEAF(audio_fs=audio_fs, hop_ms=dt_ms, **kwargs)
     raise ValueError(
         f"Unknown wav2spec kind {kind!r}. Currently supported: "
-        f"'mel', 'gammatone', 'sincnet', 'leaf'."
+        f"'mel', 'gammatone', 'gammatonegram', 'sincnet', 'leaf'."
     )

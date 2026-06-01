@@ -60,6 +60,18 @@ WAV2SPEC_CASES = [
                          f_min=60.0, f_max=7000.0, kernel_ms=12.0)),
 ]
 
+# Gammatonegram needs the optional `gammatone` package (Slaney ERB coefficients);
+# add it to the parametrised causality/shape checks only when it's importable.
+try:
+    import gammatone.filters  # noqa: F401
+    WAV2SPEC_CASES.append(
+        ("Gammatonegram-16kHz-5ms-2.5ms-window",
+         lambda: __import__("deepSTRF.models.wav2spec", fromlist=["Gammatonegram"])
+                 .Gammatonegram(audio_fs=16000, n_filters=34, hop_ms=5.0,
+                                window_ms=2.5, f_min=300.0, f_max=7000.0)))
+except ImportError:
+    pass
+
 
 @pytest.fixture(params=WAV2SPEC_CASES, ids=[c[0] for c in WAV2SPEC_CASES])
 def wav2spec(request):
@@ -216,3 +228,45 @@ def test_wav2spec_rejects_nonhop_divisible_length(wav2spec):
     x = torch.randn(2, 1, 50 * wav2spec.hop + 1)
     with pytest.raises(ValueError, match="multiple of hop"):
         wav2spec(x)
+
+
+# --- Gammatonegram: faithful native reproduction + sub-hop causality guard ---
+
+gammatone = pytest.importorskip("gammatone.gtgram", reason="needs the `gammatone` package")
+
+
+def test_gammatonegram_reproduces_native_gtgram():
+    """Gammatonegram(wav) must reproduce gammatone.gtgram + log1p to fp precision —
+    that is the whole point of having the *native* transform in the zoo (the
+    deepSTRF CausalGammatone reimplementation only correlates ~0.27 to it on a
+    sub-hop window)."""
+    import numpy as np
+    from gammatone.gtgram import gtgram as _gtgram
+    from deepSTRF.models.wav2spec import Gammatonegram
+
+    fs, F, dt_ms, win_ms, fmin, fmax = 16000, 34, 5.0, 2.5, 300.0, 7000.0
+    hop = round(fs * dt_ms / 1000)
+    rng = np.random.default_rng(0)
+    wav = rng.standard_normal(200 * hop).astype(np.float64)
+
+    nat = np.log1p(np.clip(_gtgram(wav, fs, window_time=win_ms * 1e-3,
+                                   hop_time=dt_ms * 1e-3, channels=F,
+                                   f_min=fmin, f_max=fmax), 0.0, None))
+    gg = Gammatonegram(audio_fs=fs, n_filters=F, hop_ms=dt_ms, window_ms=win_ms,
+                       f_min=fmin, f_max=fmax, compression="log1p").eval()
+    T = nat.shape[-1] * hop
+    x = torch.zeros(1, 1, T)
+    x[0, 0, : wav.shape[0]] = torch.as_tensor(wav[:T], dtype=torch.float32)
+    with torch.no_grad():
+        out = gg(x)[0, 0].numpy()
+    Tm = min(out.shape[-1], nat.shape[-1])
+    assert out.shape[0] == F
+    assert np.abs(out[:, :Tm] - nat[:, :Tm]).max() < 1e-3
+
+
+def test_gammatonegram_rejects_superhop_window():
+    """window_ms > hop_ms would let a frame integrate audio past its bin boundary
+    (non-causal) — the constructor must refuse it."""
+    from deepSTRF.models.wav2spec import Gammatonegram
+    with pytest.raises(ValueError, match="causality"):
+        Gammatonegram(audio_fs=16000, n_filters=24, hop_ms=5.0, window_ms=10.0)
