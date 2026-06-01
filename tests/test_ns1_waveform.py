@@ -49,7 +49,7 @@ def test_filename_constant_layout():
 
 def test_load_resampled_mono_wav_unit(tmp_path):
     """Round-trip a synthetic stereo wav through the helper."""
-    import torchaudio
+    import soundfile as sf
     from deepSTRF.utils.audio_io import load_resampled_mono_wav
 
     fs_native = 48000
@@ -57,7 +57,8 @@ def test_load_resampled_mono_wav_unit(tmp_path):
     T_target = 8000  # 0.5 s at target_fs
     stereo = torch.randn(2, fs_native, dtype=torch.float32) * 0.1
     path = str(tmp_path / "tone.wav")
-    torchaudio.save(path, stereo, fs_native)
+    # soundfile.write wants (frames, channels); avoid torchaudio.save (FFmpeg).
+    sf.write(path, stereo.t().numpy(), fs_native)
 
     # exact target_length
     w = load_resampled_mono_wav(path, target_fs=fs_target, target_length=T_target)
@@ -264,6 +265,9 @@ class _ToyAudioWav(AudioNeuralDataset):
         super().__init__(path="toy", dt_ms=dt_ms)
         self.F = 34
         self.audio_fs = audio_fs
+        # validate() gates the waveform grid-lock check on return_waveform
+        # (not audio_fs — spec-mode datasets like Downer2025 set audio_fs too).
+        self.return_waveform = audio_fs is not None
         self.hearing_range_hz = hearing_range_hz
         hop = int(round(audio_fs * dt_ms / 1000)) if audio_fs else 1
         self.stims = [torch.zeros(1, T_neural * hop) for _ in range(n_stims)]
