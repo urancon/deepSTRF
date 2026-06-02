@@ -46,22 +46,22 @@ separable kernels. Similar to AdapTrans, prefiltering, hyperparameters for param
 to the class constructor.*
 
 
-Torch class: `Linear(...)`; Parameterization available
+Torch class: [`Linear`](https://deepstrf.readthedocs.io/en/latest/_source/deepSTRF.models.audio.html#deepSTRF.models.audio.audio_zoo.Linear); Parameterization available
 
 
 ### Linear-Nonlinear (LN)
 
 *Consists of a Linear model, with an added output activation which makes it nonlinear. The latter often takes the form of 
-a sigmoid or parameterized function (see e.g. [Rahman et al.]() or [Willmore et al.]()).*
+a sigmoid or parameterized function (see e.g. Rahman et al. or Willmore et al.).*
 
-Torch class: `LinearNonlinear(...)`; Parameterization available
+Torch class: [`LinearNonlinear`](https://deepstrf.readthedocs.io/en/latest/_source/deepSTRF.models.audio.html#deepSTRF.models.audio.audio_zoo.LinearNonlinear); Parameterization available
 
 
 ### Network Receptive Field (NRF)
 
 *In a nutshell, a LN model with several hidden units.*
 
-Torch class: `NetworkReceptiveField(...)`; Parameterization available; Original paper: [Harper et al. (2016)](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1005113)
+Torch class: [`NetworkReceptiveField`](https://deepstrf.readthedocs.io/en/latest/_source/deepSTRF.models.audio.html#deepSTRF.models.audio.audio_zoo.NetworkReceptiveField); Parameterization available; Original paper: [Harper et al. (2016)](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1005113)
 
 
 
@@ -72,7 +72,7 @@ Torch class: `NetworkReceptiveField(...)`; Parameterization available; Original 
 *In a nutshell, a NRF model in which hidden and output units follow leaky dynamics (as in LIF spiking neurons, but 
 without spikes), with learnable time constants.*
 
-Torch class: `DNet(...)`; Parameterization available; Original paper: [Rahman et al. (2016)](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1006618)
+Torch class: [`DNet`](https://deepstrf.readthedocs.io/en/latest/_source/deepSTRF.models.audio.html#deepSTRF.models.audio.audio_zoo.DNet); Parameterization available; Original paper: [Rahman et al. (2019)](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1006618)
 
 
 
@@ -83,7 +83,7 @@ Torch class: `DNet(...)`; Parameterization available; Original paper: [Rahman et
 kernels do not entirely span all frequencies of the input spectrogram. Fully connected prediction head after a convlutional 
 extraction stage.
 
-Torch class: `ConvNet2D(...)`;  Original paper: [Pennington et al.](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110)
+Torch class: [`ConvNet2D`](https://deepstrf.readthedocs.io/en/latest/_source/deepSTRF.models.audio.html#deepSTRF.models.audio.audio_zoo.ConvNet2D);  Original paper: [Pennington & David (2023)](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011110)
 
 
 ### Recurrent / state-space network (StateNet)
@@ -92,7 +92,7 @@ Torch class: `ConvNet2D(...)`;  Original paper: [Pennington et al.](https://jour
 / S4 / LMU). It captures long-range temporal dependencies through the recurrent
 state and is the strongest model in the zoo on NS1.*
 
-Torch class: `StateNet(...)`; Original paper: [Rançon et al. (2025)](https://doi.org/10.1038/s42003-025-08858-3)
+Torch class: [`StateNet`](https://deepstrf.readthedocs.io/en/latest/_source/deepSTRF.models.audio.html#deepSTRF.models.audio.audio_zoo.StateNet); Original paper: [Rançon et al. (2025)](https://doi.org/10.1038/s42003-025-08858-3)
 
 
 ### Transformer
@@ -101,7 +101,7 @@ Torch class: `StateNet(...)`; Original paper: [Rançon et al. (2025)](https://do
 self-attention mask, so it generalizes to any sequence length. An optional
 finite `context_window` makes attention band-causal.*
 
-Torch class: `Transformer(...)`
+Torch class: [`Transformer`](https://deepstrf.readthedocs.io/en/latest/_source/deepSTRF.models.audio.html#deepSTRF.models.audio.audio_zoo.Transformer); Architecture: [Vaswani et al. (2017)](https://arxiv.org/abs/1706.03762); designed as the attention baseline in [Rançon et al. (2025)](https://doi.org/10.1038/s42003-025-08858-3)
 
 
 ### ICNet
@@ -112,7 +112,7 @@ audio directly (no precomputed spectrogram). Designed for midbrain (IC)
 recordings; it ports cleanly into deepSTRF but is oversized for small cortical
 datasets like NS1.*
 
-Torch class: `ICNet(...)`; Original paper: [Drakopoulos et al. (2025)](https://doi.org/10.1038/s42256-025-01104-9)
+Torch class: [`ICNet`](https://deepstrf.readthedocs.io/en/latest/_source/deepSTRF.models.audio.html#deepSTRF.models.audio.ICNet); Original paper: [Drakopoulos et al. (2025)](https://doi.org/10.1038/s42256-025-01104-9)
 
 ---
 

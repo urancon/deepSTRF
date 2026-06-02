@@ -259,10 +259,10 @@ class AdapTrans(nn.Module):
 
     References
     ----------
-    Rançon, Bornschein, King, Schnupp, Willmore (2024). "A general
-    theoretical framework unifying the adaptive, transient and
-    sustained properties of ON and OFF auditory responses." BioRxiv.
-    https://doi.org/10.1101/2024.01.17.576002
+    Rançon, Masquelier & Cottereau (2024). "A general model unifying
+    the adaptive, transient and sustained properties of ON and OFF
+    auditory neural responses." PLOS Computational Biology
+    20(8):e1012288. https://doi.org/10.1371/journal.pcbi.1012288
 
     Notes
     -----
