@@ -142,6 +142,10 @@ where = ["."]
 include = ["deepSTRF*"]
 exclude = ["tests*", "docs*", "scripts*"]
 
+# Ship the PEP 561 marker so downstream type-checkers see deepSTRF's type hints.
+[tool.setuptools.package-data]
+deepSTRF = ["py.typed"]
+
 # -----------------------------------------------------------------------------
 # pytest
 # -----------------------------------------------------------------------------
