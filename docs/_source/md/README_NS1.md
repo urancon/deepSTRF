@@ -13,9 +13,9 @@
 **Population fitting:** ✅
 
 **Description of Stimuli:**
-- 20 clips of natural sounds (speech, ferret vocalizations, other animal vocalizations, and environmental sounds), and 12 Dynamic Random Chords (DRCs) each 5 seconds in duration.
+- 20 clips of natural sounds (speech, ferret vocalizations, other animal vocalizations, and environmental sounds), each ~5 seconds in duration.
 - Clips were played in random order
-- Natural sound clips were repeated 20 times, DRCs 5 times
+- Each natural sound clip was repeated 20 times
 
 **Description of Neurons:**
 - Total Number of Neurons: 119

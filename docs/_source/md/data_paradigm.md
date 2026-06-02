@@ -124,8 +124,9 @@ rate, and `hop` is the bridge between the two grids.
   modes (stims zero-padded, responses NaN-padded), so users never swap collate.
 - **C3 — mono.** Waveforms are `(1, T_audio)`, downmixed to mono.
 - **C4 — opt-in.** `return_waveform=True` is implemented only where genuine
-  source audio exists. Synthetic-spectrogram-only stimuli (e.g. some DRC) stay
-  spec-mode; a dataset with no source audio raises `NotImplementedError`.
+  source audio exists. Synthetic-spectrogram-only stimuli (with no underlying
+  waveform) stay spec-mode; a dataset with no source audio raises
+  `NotImplementedError`.
 
 **Matching a `wav2spec` to its dataset.** A front-end's `audio_fs` and `hop` must
 agree with the dataset's, or frames won't align with response bins. The simple,

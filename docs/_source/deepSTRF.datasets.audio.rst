@@ -15,7 +15,7 @@ deepSTRF.datasets.audio.audio\_dataset module
 deepSTRF.datasets.audio.ns1\_drc module
 ---------------------------------------
 
-.. automodule:: deepSTRF.datasets.audio.ns1_drc
+.. automodule:: deepSTRF.datasets.audio.ns1
    :members:
    :show-inheritance:
    :undoc-members:

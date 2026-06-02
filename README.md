@@ -48,7 +48,7 @@ Load a published checkpoint, score it on the canonical NS1 ferret-A1 dataset:
 
 ```python
 from torch.utils.data import DataLoader
-from deepSTRF.datasets.audio.ns1_drc import NS1Dataset
+from deepSTRF.datasets.audio.ns1 import NS1Dataset
 from deepSTRF.models.audio import StateNet
 from deepSTRF.metrics import corrcoef, normalized_corrcoef
 from deepSTRF.utils.data import neural_collate

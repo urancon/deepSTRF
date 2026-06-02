@@ -38,7 +38,7 @@ skip_no_data = pytest.mark.skipif(
 def test_filename_constant_layout():
     """The hard-coded wav-name table covers all 20 stims and matches the
     ``source.{1,2}.sound.0.snr.0.token.0.fw.{1,2}.frozen.{1..N}`` pattern."""
-    from deepSTRF.datasets.audio.ns1_drc import NS1_WAV_FILENAMES, NS1_NAT_SOUNDS
+    from deepSTRF.datasets.audio.ns1 import NS1_WAV_FILENAMES, NS1_NAT_SOUNDS
 
     assert len(NS1_WAV_FILENAMES) == NS1_NAT_SOUNDS == 20
     for i, fn in enumerate(NS1_WAV_FILENAMES[:12]):
@@ -80,7 +80,7 @@ def test_ns1_waveform_shape_and_metadata():
     """``return_waveform=True`` produces ``(1, T_audio)`` stims, advertises
     ``audio_fs`` and ``T_audio = 999 * (audio_fs // 200)`` (= 999 × 240 at
     the default 48 kHz). Also exercise the 16 kHz override path."""
-    from deepSTRF.datasets.audio.ns1_drc import NS1Dataset
+    from deepSTRF.datasets.audio.ns1 import NS1Dataset
 
     # Default audio_fs (48 kHz)
     ds = NS1Dataset(return_waveform=True)
@@ -103,7 +103,7 @@ def test_ns1_waveform_shape_and_metadata():
 def test_ns1_spec_unchanged():
     """Default ``return_waveform=False`` behaviour is unchanged: ``(1, 34, 999)``
     spec tensors, ``audio_fs is None``."""
-    from deepSTRF.datasets.audio.ns1_drc import NS1Dataset
+    from deepSTRF.datasets.audio.ns1 import NS1Dataset
 
     ds = NS1Dataset()
     assert ds.audio_fs is None
@@ -114,7 +114,7 @@ def test_ns1_spec_unchanged():
 @skip_no_data
 def test_ns1_responses_identical_between_modes():
     """Switching to waveform input does not touch the spike/response data."""
-    from deepSTRF.datasets.audio.ns1_drc import NS1Dataset
+    from deepSTRF.datasets.audio.ns1 import NS1Dataset
 
     ds_spec = NS1Dataset()
     ds_wav = NS1Dataset(return_waveform=True)
@@ -132,7 +132,7 @@ def test_ns1_waveform_collate():
     ``(B, N, R, T_neural)`` responses — the two time axes are independent."""
     from torch.utils.data import DataLoader
 
-    from deepSTRF.datasets.audio.ns1_drc import NS1Dataset
+    from deepSTRF.datasets.audio.ns1 import NS1Dataset
     from deepSTRF.utils import neural_collate
 
     ds = NS1Dataset(return_waveform=True)
@@ -159,7 +159,7 @@ def test_ns1_wav_stim_mapping_via_mel_correlation():
     import torchaudio
     import torchaudio.transforms as T_aud
 
-    from deepSTRF.datasets.audio.ns1_drc import (
+    from deepSTRF.datasets.audio.ns1 import (
         NS1_WAV_FILENAMES, NS1_WAV_DIR_NAME,
     )
 
@@ -215,7 +215,7 @@ def test_causal_mel_matches_groundtruth_spectrogram():
     20/20.
     """
     import torch
-    from deepSTRF.datasets.audio.ns1_drc import NS1Dataset
+    from deepSTRF.datasets.audio.ns1 import NS1Dataset
     from deepSTRF.models.wav2spec import CausalMelSpectrogram
 
     ds_wav = NS1Dataset(return_waveform=True)
@@ -342,7 +342,7 @@ def test_audio_hearing_range_validation():
 def test_ns1_waveform_validate_and_attrs():
     """The real NS1 waveform dataset passes the new grid-lock validation and
     advertises hop / hearing_range_hz; spec mode leaves hop None."""
-    from deepSTRF.datasets.audio.ns1_drc import NS1Dataset
+    from deepSTRF.datasets.audio.ns1 import NS1Dataset
 
     ds = NS1Dataset(return_waveform=True)
     ds.validate()  # exercised at construction too, but be explicit

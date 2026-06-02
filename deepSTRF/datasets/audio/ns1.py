@@ -140,9 +140,7 @@ class NS1Dataset(AudioNeuralDataset):
     119 multi/single units from primary auditory cortex (A1) of deeply
     anesthetized ferrets, recorded in response to 20 natural sound clips of
     4.995 s each, presented 20 times per neuron. Every neuron heard every
-    clip, so the response grid is fully dense (no NaN sentinels). The DRC
-    stimuli are not loaded here — their spectrograms are not packaged with
-    the OSF release.
+    clip, so the response grid is fully dense (no NaN sentinels).
 
     Of the 119 units, 73 pass the "single-unit at known depth" filter the
     original authors used (``single_t in {'Yes', 'Maybe'}`` and

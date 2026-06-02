@@ -1,5 +1,5 @@
 from .audio_dataset import AudioNeuralDataset
-from .ns1_drc import NS1Dataset
+from .ns1 import NS1Dataset
 from .nat4 import NAT4Dataset
 from .crcns_aa1 import CRCNSAA1Dataset
 from .crcns_aa2 import CRCNSAA2Dataset
