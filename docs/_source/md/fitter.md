@@ -67,7 +67,7 @@ fitter = Fitter(
     loss_fn       = mse_loss,             # callable(pred, gt_psth) -> scalar
     val_metrics   = None,                  # dict[name, callable] | None (None = canonical pair)
     optimizer     = None,                  # Optimizer | None (None = AdamW(lr=1e-3, wd=1e-4))
-    device        = 'cpu',                 # str | torch.device
+    device        = 'cpu',                 # str | torch.device — 'cpu' | 'cuda' | 'mps'
     max_epochs    = 1000,                  # int
     patience      = 10,                    # int — early-stop patience
     monitor       = 'val_cc_norm',         # str — key in epoch dict to early-stop on
@@ -81,6 +81,16 @@ test_metrics = fitter.evaluate(test_loader)  # dict[str, Tensor]
 
 Every constructor argument has a sensible default; the minimum
 invocation is `Fitter(model, train_loader, val_loader)`.
+
+```{note}
+**Device support.** deepSTRF is device-agnostic: pass `device='cpu'`,
+`'cuda'`, or `'mps'` (Apple silicon). Models follow the device of their
+parameters, and the canonical training loop moves each batch with
+`.to(device)`, so the standard audio models (Linear, ConvNet2D,
+Transformer, StateNet-GRU, DNet, NRF) run on all three. The state-space
+models (S4, LMU, Mamba) rely on complex-valued tensors and custom kernels
+that the MPS backend does not yet support — run those on CPU or CUDA.
+```
 
 ## 4. The default training loop
 

@@ -185,11 +185,13 @@ class LMU(nn.Module):
 
         # Initial state (h_0, m_0)
         if state == None:
-            h_0 = torch.zeros(batch_size, self.hidden_size)
-            m_0 = torch.zeros(batch_size, self.memory_size)
-            if x.is_cuda:
-                h_0 = h_0.cuda()
-                m_0 = m_0.cuda()
+            # Initialise hidden/memory state on the same device & dtype as the
+            # input so the cell runs on CPU, CUDA, or MPS unchanged (no hard
+            # ``.cuda()``).
+            h_0 = torch.zeros(batch_size, self.hidden_size,
+                              device=x.device, dtype=x.dtype)
+            m_0 = torch.zeros(batch_size, self.memory_size,
+                              device=x.device, dtype=x.dtype)
             state = (h_0, m_0)
 
         # Iterate over the timesteps
