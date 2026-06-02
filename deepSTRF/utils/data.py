@@ -109,43 +109,45 @@ def neural_collate(batch):
 
     Parameters
     ----------
-    batch : list of 4-tuples
-        Each tuple is ``(stim, per_neuron_responses, per_neuron_mask,
-        stim_meta)`` as yielded by ``NeuralDataset.__getitem__`` for a
-        single item:
+    batch : list of dict
+        Each dict is one item as yielded by ``NeuralDataset.__getitem__``,
+        with keys:
 
-        * ``stim`` — a stim tensor of shape ``(..., T_s)`` (modality-specific
+        * ``'stims'`` — a stim tensor of shape ``(..., T_s)`` (modality-specific
           leading dims, e.g. ``(1, F, T_s)`` for audio).
-        * ``per_neuron_responses`` — list of length ``N_selected``; each
-          element is a ``(R_{s,n}, T_s)`` spike-count tensor or a
-          ``(1, 1)`` NaN sentinel.
-        * ``per_neuron_mask`` — ``(N_selected,)`` bool tensor (currently
-          ignored; the fine-grained ``valid_mask`` returned by this
-          function subsumes it).
-        * ``stim_meta`` — per-stim metadata dict.
+        * ``'responses'`` — list of length ``N_selected``; each element is a
+          ``(R_{s,n}, T_s)`` spike-count tensor or a ``(1, 1)`` NaN sentinel.
+        * ``'valid_mask'`` — ``(N_selected,)`` per-neuron bool tensor (ignored
+          here; the fine-grained batch ``'valid_mask'`` below subsumes it).
+        * ``'stim_meta'`` — per-stim metadata dict.
+
+        Extra keys (e.g. ``'behav'``) are passed through untouched: any key
+        not handled explicitly is collected into a length-``B`` list.
 
     Returns
     -------
-    stims : torch.Tensor
-        ``(B, ..., T_stim_max)`` float tensor, zero-padded along the last
-        axis. Contains no NaN.
-    responses : torch.Tensor
-        ``(B, N_selected, R_max, T_resp_max)`` float tensor. NaN-padded
-        along both the repeat (``R``) and time (``T``) axes. Fully-NaN
-        slabs mark (stim, neuron) pairs with no recorded data. The
-        response-time axis is sized to ``T_resp_max`` independently of the
-        stim-time axis: in spectrogram mode the two are equal (one bin
-        per neural sample), but in waveform mode the stim axis runs at
-        ``audio_fs`` Hz while responses stay at the dataset's neural
-        ``dt_ms`` rate.
-    valid_mask : torch.Tensor
-        ``(B, N_selected, R_max, T_resp_max)`` bool tensor.
-        ``~responses.isnan()``, cached here so downstream loss code does
-        not have to recompute.
-    stim_metas : list
-        Length-``B`` list of the per-item stim_meta dicts.
+    dict
+        A dict with keys:
+
+        * ``'stims'`` — ``(B, ..., T_stim_max)`` float tensor, zero-padded
+          along the last axis. Contains no NaN.
+        * ``'responses'`` — ``(B, N_selected, R_max, T_resp_max)`` float
+          tensor. NaN-padded along both the repeat (``R``) and time (``T``)
+          axes. Fully-NaN slabs mark (stim, neuron) pairs with no recorded
+          data. The response-time axis is sized to ``T_resp_max``
+          independently of the stim-time axis: in spectrogram mode the two
+          are equal (one bin per neural sample), but in waveform mode the
+          stim axis runs at ``audio_fs`` Hz while responses stay at the
+          dataset's neural ``dt_ms`` rate.
+        * ``'valid_mask'`` — ``(B, N_selected, R_max, T_resp_max)`` bool
+          tensor, ``~responses.isnan()``, cached here so downstream loss code
+          does not have to recompute.
+        * ``'stim_meta'`` — length-``B`` list of the per-item stim_meta dicts.
+        * any extra per-item keys — length-``B`` lists, passed through.
     """
-    stims_list, resps_list, _masks_list, metas_list = zip(*batch)
+    stims_list = [item['stims'] for item in batch]
+    resps_list = [item['responses'] for item in batch]
+    metas_list = [item['stim_meta'] for item in batch]
     B = len(stims_list)
     N = len(resps_list[0])
 
@@ -171,7 +173,21 @@ def neural_collate(batch):
     # "for free" and does not need to scan again.
     valid_mask = ~responses.isnan()
 
-    return stims, responses, valid_mask, list(metas_list)
+    out = {
+        'stims': stims,
+        'responses': responses,
+        'valid_mask': valid_mask,
+        'stim_meta': list(metas_list),
+    }
+
+    # pass through any extra per-item keys (e.g. 'behav') as length-B lists,
+    # so datasets can add covariates without touching this collate.
+    handled = {'stims', 'responses', 'valid_mask', 'stim_meta'}
+    for key in batch[0]:
+        if key not in handled:
+            out[key] = [item[key] for item in batch]
+
+    return out
 
 
 def concat_neural_datasets(datasets: Sequence[NeuralDataset],

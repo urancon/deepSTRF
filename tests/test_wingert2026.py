@@ -417,7 +417,9 @@ def test_collate_roundtrip(clt027c_dataset):
     from torch.utils.data import DataLoader
     ds = clt027c_dataset
     ld = DataLoader(ds, batch_size=4, collate_fn=neural_collate)
-    stims, responses, valid_mask, metas = next(iter(ld))
+    batch = next(iter(ld))
+    stims, responses, valid_mask, metas = (batch['stims'], batch['responses'],
+                                           batch['valid_mask'], batch['stim_meta'])
     B = 4
     assert stims.shape == (B, 1, 32, 2200)
     assert responses.shape[0] == B

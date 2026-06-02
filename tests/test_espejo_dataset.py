@@ -128,7 +128,9 @@ def test_vmn_collate_produces_correct_shapes(vmn_dataset):
 
     loader = DataLoader(vmn_dataset, batch_size=2, shuffle=False,
                         collate_fn=neural_collate)
-    stims, resps, mask, metas = next(iter(loader))
+    batch = next(iter(loader))
+    stims, resps, mask, metas = (batch['stims'], batch['responses'],
+                                 batch['valid_mask'], batch['stim_meta'])
     assert stims.shape[:3] == (2, 1, vmn_dataset.F), stims.shape
     assert resps.shape[:2] == (2, vmn_dataset.N_neurons), resps.shape
     assert mask.shape == resps.shape

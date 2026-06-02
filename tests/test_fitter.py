@@ -64,7 +64,8 @@ class _ToyDataset(Dataset):
         stim = self.stims[i]
         responses = self.responses_per_stim[i]
         nrn_mask = torch.ones(self.N, dtype=torch.bool)
-        return stim, responses, nrn_mask, {"idx": i}
+        return {'stims': stim, 'responses': responses,
+                'valid_mask': nrn_mask, 'stim_meta': {"idx": i}}
 
 
 class _LinearReadout(torch.nn.Module):

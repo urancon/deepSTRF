@@ -134,7 +134,9 @@ def test_alice_dataloader_integration(alice_s01):
     from deepSTRF.utils.data import neural_collate
 
     loader = DataLoader(alice_s01, batch_size=4, collate_fn=neural_collate)
-    stims, responses, valid_mask, stim_metas = next(iter(loader))
+    batch = next(iter(loader))
+    stims, responses, valid_mask, stim_metas = (
+        batch['stims'], batch['responses'], batch['valid_mask'], batch['stim_meta'])
 
     assert stims.dim() == 4 and stims.shape[1:3] == (1, 8)        # (B, 1, F, T)
     assert responses.dim() == 4 and responses.shape[1] == 61      # (B, N, R, T)

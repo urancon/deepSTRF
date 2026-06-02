@@ -493,7 +493,8 @@ Mirroring `data_paradigm.md` §6, the canonical loop now looks like:
 ```python
 from deepSTRF.metrics import mse_loss, corrcoef, normalized_corrcoef
 
-for stims, responses, valid_mask, stim_metas in loader:
+for batch in loader:                                             # batch is a dict
+    stims, responses = batch['stims'], batch['responses']
     pred = model(stims)                                          # (B, N, 1, T)
 
     loss = mse_loss(pred, responses)                             # auto-PSTH inside

@@ -131,12 +131,12 @@ def test_concat_getitem_only_yields_iterable_stims_under_selection():
     # select only A's neurons -> only A's stims iterable
     c.select_population([0, 1])
     assert len(c) == 3
-    seen_metas = [c[i][3] for i in range(len(c))]
+    seen_metas = [c[i]['stim_meta'] for i in range(len(c))]
     assert seen_metas == c.stim_meta[:3]
 
     # every yielded item must have at least one non-NaN response
     for i in range(len(c)):
-        _, resps, _, _ = c[i]
+        resps = c[i]['responses']
         assert any(not r.isnan().any() for r in resps), \
             f"item {i} has fully-NaN responses under selection {c.I}"
 
@@ -147,10 +147,10 @@ def test_concat_getitem_only_yields_iterable_stims_under_selection():
     # select only B's neurons -> only B's stims iterable
     c.select_population([2, 3, 4])
     assert len(c) == 2
-    seen_metas = [c[i][3] for i in range(len(c))]
+    seen_metas = [c[i]['stim_meta'] for i in range(len(c))]
     assert seen_metas == c.stim_meta[3:]
     for i in range(len(c)):
-        _, resps, _, _ = c[i]
+        resps = c[i]['responses']
         assert any(not r.isnan().any() for r in resps)
 
 
@@ -169,11 +169,12 @@ def test_dataloader_over_concat_skips_cross_block_stims():
 
     # 3 iterable stims, batch_size 2 -> 2 batches (sizes 2 and 1)
     assert len(batches) == 2
-    total_items = sum(b_[0].shape[0] for b_ in batches)
+    total_items = sum(b_['stims'].shape[0] for b_ in batches)
     assert total_items == 3
 
     # every batch must contain only A's stims (i.e. valid_mask has at least one True per item)
-    for stims, responses, valid_mask, metas in batches:
+    for b_ in batches:
+        valid_mask = b_['valid_mask']
         per_item_has_data = valid_mask.any(dim=(1, 2, 3))  # (B,) bool
         assert per_item_has_data.all(), \
             "DataLoader yielded a batch item with no valid (s,n,r,t) data anywhere"

@@ -138,7 +138,9 @@ def test_ns1_waveform_collate():
     ds = NS1Dataset(return_waveform=True)
     ds.select_population(list(range(ds.get_N())))
     loader = DataLoader(ds, batch_size=4, collate_fn=neural_collate)
-    stims, responses, valid_mask, metas = next(iter(loader))
+    batch = next(iter(loader))
+    stims, responses, valid_mask, metas = (batch['stims'], batch['responses'],
+                                           batch['valid_mask'], batch['stim_meta'])
     expected_T = 999 * (ds.audio_fs // 200)
     assert stims.shape == (4, 1, expected_T)
     assert responses.shape == (4, ds.get_N(), 20, 999)
