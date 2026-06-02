@@ -95,12 +95,6 @@ allen = [
     "xarray>=2023.1",
 ]
 
-# LBHB NEMS interop (used by NAT4 preprocessing).
-# NEMS0 is NOT on PyPI — it installs from a git URL (PEP 440 direct reference).
-nems = [
-    "nems0 @ git+https://github.com/LBHB/NEMS0.git",
-]
-
 # Optional speed-ups for the S4 model (JIT-compiled CUDA kernels).
 # Pure-PyTorch fallback works without this.
 s4 = [

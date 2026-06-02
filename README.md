@@ -36,7 +36,7 @@ cd deepSTRF
 pip install -e ".[dev]"      # or `pip install -e .` for runtime only
 ```
 
-Optional extras: `[docs]`, `[allen]` (Allen Brain Observatory tooling), `[s4]` (CUDA kernels for S4 layers), `[nems]` (LBHB NEMS interop, used by NAT4 preprocessing), `[eeg]` (MNE for `.fif` parsing).
+Optional extras: `[docs]`, `[allen]` (Allen Brain Observatory tooling), `[s4]` (CUDA kernels for S4 layers), `[eeg]` (MNE for `.fif` parsing).
 
 See the [Installation guide](https://deepstrf.readthedocs.io/en/latest/_source/md/README_installation.html) for conda recipes and troubleshooting.
 
