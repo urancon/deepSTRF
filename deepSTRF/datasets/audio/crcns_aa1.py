@@ -133,8 +133,8 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
     Woolley et al. (2005). "Tuning for Spectro-temporal Modulations: a
     Mechanism for Auditory Discrimination of Natural Sound."
 
-    Hsu et al. (2004). "Modulation and phase spectrum of natural sounds
-    enhance neural discrimination performed by single auditory neurons."
+    Hsu et al. (2004). "Modulation power and phase spectrum of natural
+    sounds enhance neural encoding performed by single auditory neurons."
 
     Singh & Theunissen (2003). "Modulation spectra of natural sounds and
     ethological theories of auditory processing."
