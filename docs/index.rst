@@ -122,8 +122,8 @@ welcome to add yours.
    :hidden:
 
    _source/md/README_datasets.md
-   _source/md/README_video_datasets.md
    _source/md/README_audio_datasets.md
+   _source/md/README_video_datasets.md
 
 
 .. toctree::
