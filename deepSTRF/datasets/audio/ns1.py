@@ -30,7 +30,7 @@ NS1_OSF_FILES = {
 
 # The precomputed mel-spectrogram tensor (X_nfht: S=20, F=34, hopdim=1, T=999)
 # used by the original Harper/Rahman analyses is NOT on OSF, but it IS in the
-# DNet companion repo (Rahman et al. 2018 PLoS Comp Biol, doi: 10.1371/
+# DNet companion repo (Rahman et al. 2019 PLoS Comp Biol, doi: 10.1371/
 # journal.pcbi.1006618 — github.com/monzilur/DNet). The 5 ms version is
 # ``test_data_5ms.mat`` (5.2 MB); the 1 ms version (``test_data.mat``, 52 MB)
 # is also there but we don't use it. The same file also contains a ``y_nt``
@@ -93,7 +93,7 @@ def download_ns1(dest: Optional[str] = None) -> str:
       per-neuron metadata (.mat), and the spike + wav zip (~155 MB total).
     - **DNet GitHub** (https://github.com/monzilur/DNet, master branch): the
       precomputed 5 ms mel-spectrogram tensor ``test_data_5ms.mat``
-      (5.2 MB) accompanying Rahman et al. 2018 PLoS Comp Biol. NOT on OSF.
+      (5.2 MB) accompanying Rahman et al. 2019 PLoS Comp Biol. NOT on OSF.
 
     Idempotent: skips files that already exist; returns the destination path.
 

@@ -548,9 +548,10 @@ class Transformer(AudioEncodingModel):
 
     References
     ----------
-    Rançon, Bornschein, King, Schnupp, Willmore (2025). "Temporal
-    recurrence as a general mechanism to explain neural responses in
-    the auditory system." Comm. Bio. (preprint on BioRxiv).
+    Rançon, Masquelier & Cottereau (2025). "Temporal recurrence as a
+    general mechanism to explain neural responses in the auditory
+    system." Communications Biology 8:1456.
+    https://doi.org/10.1038/s42003-025-08858-3
 
     Vaswani et al. (2017). "Attention Is All You Need." NeurIPS.
 
@@ -710,9 +711,10 @@ class StateNet(AudioEncodingModel):
 
     References
     ----------
-    Rançon, Bornschein, King, Schnupp, Willmore (2025).
-    "Temporal recurrence as a general mechanism to explain neural
-    responses in the auditory system." Comm. Bio. (preprint on BioRxiv).
+    Rançon, Masquelier & Cottereau (2025). "Temporal recurrence as a
+    general mechanism to explain neural responses in the auditory
+    system." Communications Biology 8:1456.
+    https://doi.org/10.1038/s42003-025-08858-3
 
     Notes
     -----
