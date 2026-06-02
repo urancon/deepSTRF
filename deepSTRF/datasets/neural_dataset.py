@@ -260,9 +260,14 @@ class NeuralDataset(Dataset, ABC):
 
         Returns
         -------
-        stim, responses, mask, stim_meta
-            Tuple for a scalar index, or 4 lists for slice / list indexing.
-            ``responses`` and ``mask`` are restricted to the selected neurons.
+        dict
+            A dict with keys ``'stims'``, ``'responses'``, ``'valid_mask'``,
+            ``'stim_meta'``. For a scalar index each value is a single item;
+            for slice / list indexing each value is a list. ``'responses'``
+            and ``'valid_mask'`` are restricted to the selected neurons. The
+            dict container (rather than a positional tuple) lets datasets add
+            extra per-trial keys later — e.g. ``'behav'`` for behavioural
+            covariates — without changing the unpacking contract.
         """
         iter_idx = self._iter_idx  # snapshot once; O(S * |I|) per call
 
@@ -292,8 +297,10 @@ class NeuralDataset(Dataset, ABC):
         masks = [all_masks[i][selected] for i in indices]
 
         if single:
-            return stims[0], resps[0], masks[0], metas[0]
-        return stims, resps, masks, metas
+            return {'stims': stims[0], 'responses': resps[0],
+                    'valid_mask': masks[0], 'stim_meta': metas[0]}
+        return {'stims': stims, 'responses': resps,
+                'valid_mask': masks, 'stim_meta': metas}
 
     def __repr__(self):
         return (f"{self.__class__.__name__}(N_neurons={self.get_N()}, "

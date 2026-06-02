@@ -85,7 +85,7 @@ def test_select_stim_single():
     ds.select_stim(2)
     assert ds.S_sel == [2]
     assert len(ds) == 1
-    _, _, _, meta = ds[0]
+    meta = ds[0]['stim_meta']
     assert meta["name"] == "est2"
 
 
@@ -102,7 +102,7 @@ def test_select_stims_list():
     ds.select_stims([1, 3, 5])
     assert ds.S_sel == [1, 3, 5]
     assert len(ds) == 3
-    metas = [ds[i][3]["name"] for i in range(len(ds))]
+    metas = [ds[i]['stim_meta']["name"] for i in range(len(ds))]
     assert metas == ["est1", "est3", "val1"]
 
 
@@ -113,7 +113,7 @@ def test_select_stims_by_attr():
     assert ds.S_sel == [4, 5]
     assert len(ds) == 2
     for i in range(len(ds)):
-        _, _, _, meta = ds[i]
+        meta = ds[i]['stim_meta']
         assert meta["subset"] == "val"
 
 
@@ -145,7 +145,7 @@ def test_bidirectional_hides_neurons_outside_stim_subset():
     # _selected returns only neurons with at least one valid val response
     assert ds._selected() == [0, 1, 2]
     # __getitem__ batches contain only those neurons
-    _, resps, _, _ = ds[0]
+    resps = ds[0]['responses']
     assert len(resps) == 3
     # none of those responses are NaN sentinels
     for r in resps:

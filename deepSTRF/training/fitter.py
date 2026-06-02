@@ -376,9 +376,8 @@ class Fitter:
         responses_list: List[torch.Tensor] = []
 
         for batch in self.train_loader:
-            stims, responses, _valid_mask, _stim_metas = batch
-            stims = stims.to(self.device)
-            responses = responses.to(self.device)
+            stims = batch['stims'].to(self.device)
+            responses = batch['responses'].to(self.device)
 
             self.optimizer.zero_grad()
             pred = self.model(stims)
@@ -417,9 +416,8 @@ class Fitter:
 
         with torch.no_grad():
             for batch in loader:
-                stims, responses, _valid_mask, _stim_metas = batch
-                stims = stims.to(self.device)
-                responses = responses.to(self.device)
+                stims = batch['stims'].to(self.device)
+                responses = batch['responses'].to(self.device)
 
                 pred = self.model(stims)
                 if hasattr(self.model, "detach"):

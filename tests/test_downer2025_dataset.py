@@ -283,7 +283,9 @@ def test_timit_collate_produces_correct_shapes(ds_timit_one_session):
     from deepSTRF.utils.data import neural_collate
     loader = DataLoader(ds_timit_one_session, batch_size=2, shuffle=False,
                         collate_fn=neural_collate)
-    stims, resps, mask, metas = next(iter(loader))
+    batch = next(iter(loader))
+    stims, resps, mask, metas = (batch['stims'], batch['responses'],
+                                 batch['valid_mask'], batch['stim_meta'])
     assert stims.shape[:3] == (2, 1, ds_timit_one_session.F)
     assert resps.shape[:2] == (2, ds_timit_one_session.N_neurons)
     assert mask.shape == resps.shape
