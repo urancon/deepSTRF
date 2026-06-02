@@ -159,3 +159,6 @@ addopts = [
     "--strict-markers",  # unknown @pytest.mark.foo -> error
     "--strict-config",
 ]
+markers = [
+    "slow: real-dataset integration test (local data, skipped in CI). Auto-applied to the heavy dataset modules by tests/conftest.py; run the fast loop with `pytest -m 'not slow'`.",
+]
