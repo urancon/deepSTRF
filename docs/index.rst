@@ -68,7 +68,10 @@ The sidebar groups pages into five sections:
 
 **Examples**
    Runnable notebooks, also available under the ``examples/`` folder of the
-   repo. They are ordered from gentlest tutorial to deeper-dive analyses.
+   repo and one click from Colab. Grouped into *Start here* (the gentlest
+   end-to-end tutorials), *Dataset inspection* (per-dataset visual
+   walkthroughs), and *Advanced / analyses* (parameterized STRFs,
+   gradient-attribution receptive fields, learnable front-ends).
 
 **API**
    Auto-generated reference for every public class and function under
@@ -136,27 +139,39 @@ welcome to add yours.
 
 
 .. toctree::
-   :maxdepth: 2
-   :caption: Examples
+   :maxdepth: 1
+   :caption: Examples — Start here
    :hidden:
 
    _source/ipynb/crcns_aa_tutorial.ipynb
+   _source/ipynb/fit_ns1_statenet.ipynb
+   _source/ipynb/load_pretrained_statenet_ns1.ipynb
+   _source/ipynb/dataset_concatenation.ipynb
+   _source/ipynb/fit_ns1_linear_from_waveform.ipynb
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Examples — Dataset inspection
+   :hidden:
+
    _source/ipynb/aa4_inspection.ipynb
    _source/ipynb/inspect_crcns_ac1.ipynb
    _source/ipynb/explore_nat4.ipynb
    _source/ipynb/explore_downer2025.ipynb
    _source/ipynb/explore_wingert2026.ipynb
-   _source/ipynb/dataset_concatenation.ipynb
-   _source/ipynb/fit_ns1_statenet.ipynb
-   _source/ipynb/fit_ns1_linear_from_waveform.ipynb
-   _source/ipynb/learnable_frontend_ns1.ipynb
-   _source/ipynb/load_pretrained_statenet_ns1.ipynb
    _source/ipynb/alice_eeg_tutorial.ipynb
    _source/ipynb/meliza_2025_baseline.ipynb
+   _source/ipynb/espejo_nat_nrf.ipynb
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Examples — Advanced / analyses
+   :hidden:
+
    _source/ipynb/strf_parameterizations_ns1.ipynb
    _source/ipynb/strf_gradmap_aa2.ipynb
    _source/ipynb/adaptrans_transformer_aa1.ipynb
-   _source/ipynb/espejo_nat_nrf.ipynb
+   _source/ipynb/learnable_frontend_ns1.ipynb
 
 .. toctree::
    :maxdepth: 3
