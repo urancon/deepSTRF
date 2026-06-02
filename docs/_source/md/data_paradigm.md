@@ -219,7 +219,8 @@ NaN-aware by default. The training loop therefore stays simple:
 ```python
 from deepSTRF.metrics import mse_loss, corrcoef, normalized_corrcoef
 
-for stims, responses, valid_mask, stim_metas in loader:
+for batch in loader:                                      # batch is a dict with keys
+    stims, responses = batch['stims'], batch['responses'] #   'stims','responses','valid_mask','stim_meta'
     pred    = model(stims)                                # (B, N, 1, T_max)
     gt_psth = responses.nanmean(dim=2, keepdim=True)      # (B, N, 1, T_max)
 

@@ -60,12 +60,13 @@ loader = DataLoader(ds, batch_size=8, collate_fn=neural_collate)
 # 2) Load a pretrained model from the Hugging Face Hub.
 model = StateNet.from_pretrained("urancon/deepSTRF-statenet-gru-ns1").eval()
 
-# 3) Score it.
-stims, responses, _, _ = next(iter(loader))
-pred    = model(stims)                                      # (B, N, R=1, T)
-psth    = responses.nanmean(dim=2, keepdim=True)
-cc      = corrcoef(pred, psth, reduction='mean')
-cc_norm = normalized_corrcoef(pred, responses, method='schoppe', reduction='mean')
+# 3) Score it. Each batch is a dict: 'stims', 'responses', 'valid_mask', 'stim_meta'.
+batch     = next(iter(loader))
+responses = batch['responses']
+pred      = model(batch['stims'])                           # (B, N, R=1, T)
+psth      = responses.nanmean(dim=2, keepdim=True)
+cc        = corrcoef(pred, psth, reduction='mean')
+cc_norm   = normalized_corrcoef(pred, responses, method='schoppe', reduction='mean')
 print(f"CCraw = {cc:.3f}   CCnorm = {cc_norm:.3f}")
 ```
 

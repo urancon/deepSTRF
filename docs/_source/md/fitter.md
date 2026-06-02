@@ -21,9 +21,9 @@ canonical path is the three-line loop documented in
 `metrics_paradigm.md` §7:
 
 ```python
-for stims, responses, valid_mask, stim_metas in loader:
-    pred = model(stims)                                    # (B, N, 1, T)
-    loss = mse_loss(pred, responses)                       # auto-PSTH inside
+for batch in loader:                                       # batch is a dict
+    pred = model(batch['stims'])                           # (B, N, 1, T)
+    loss = mse_loss(pred, batch['responses'])              # auto-PSTH inside
     loss.backward(); optimizer.step(); optimizer.zero_grad()
 ```
 
@@ -553,11 +553,12 @@ The legacy module exposes `optimize_multiple_seeds`,
 | `set_random_seed`            | `deepSTRF.training.set_random_seed` (kept as deprecated re-export)  |
 
 Behavioral differences worth flagging:
-- The legacy code unpacks `(spectrogram, responses, ccmax, ttrc)`. The
-  new code unpacks `(stims, responses, valid_mask, stim_metas)` from
-  `neural_collate`. `ccmax` and `ttrc` are no longer dataloader-side
-  pre-computed tensors — they are computed on demand by
-  `normalized_corrcoef` from raw `responses`.
+- The legacy code unpacks a `(spectrogram, responses, ccmax, ttrc)`
+  tuple. `neural_collate` now yields a **dict** with keys `'stims'`,
+  `'responses'`, `'valid_mask'`, `'stim_meta'` (read fields by key:
+  `batch['stims']`, `batch['responses']`, …). `ccmax` and `ttrc` are no
+  longer dataloader-side pre-computed tensors — they are computed on demand
+  by `normalized_corrcoef` from raw `responses`.
 - The legacy code calls `prediction.squeeze(-2)` to drop the R-axis
   before metrics. The new metrics expect `(B, N, 1, T)` per the model
   paradigm — no squeeze.
