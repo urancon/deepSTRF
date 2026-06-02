@@ -160,7 +160,7 @@ welcome to add yours.
    _source/ipynb/explore_downer2025.ipynb
    _source/ipynb/explore_wingert2026.ipynb
    _source/ipynb/alice_eeg_tutorial.ipynb
-   _source/ipynb/meliza_2025_baseline.ipynb
+   _source/ipynb/le_2025_baseline.ipynb
    _source/ipynb/espejo_nat_nrf.ipynb
 
 .. toctree::

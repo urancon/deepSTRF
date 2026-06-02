@@ -1,4 +1,4 @@
-# Meliza 2025 Dataset
+# Le 2025 Dataset
 
 **Dataset Source:** [figshare 29203457](https://doi.org/10.6084/m9.figshare.29203457)
 
@@ -81,7 +81,7 @@ reconstructs occluded syllables in conspecific song. Nature Communications,
 
 ## Benchmark results
 
-Quick baseline established from `examples/meliza_2025_baseline.ipynb`:
+Quick baseline established from `examples/le_2025_baseline.ipynb`:
 `nat8b`, `dt_ms=5`, 50-band gammatone, train on 6 motifs, val/test 1 each,
 **Continuous variant only** (8 unoccluded motifs, no occlusion).
 
@@ -99,13 +99,13 @@ The figshare archive (zipped 105 MB; unpacks to ~720 MB) is auto-downloaded
 by the dataset class:
 
 ```python
-from deepSTRF.datasets.audio import Meliza2025Dataset
+from deepSTRF.datasets.audio import Le2025Dataset
 
-ds = Meliza2025Dataset(experiment='nat8b', download=True)
+ds = Le2025Dataset(experiment='nat8b', download=True)
 ```
 
 Default cache dir is
-`platformdirs.user_cache_dir('deepSTRF') / 'Meliza_2025'`, overridable via
+`platformdirs.user_cache_dir('deepSTRF') / 'Le_2025'`, overridable via
 `$DEEPSTRF_DATA_DIR`. `download=True` is idempotent — already-unpacked
 trees are reused.
 
@@ -114,14 +114,14 @@ Manual install:
    [figshare 29203457](https://doi.org/10.6084/m9.figshare.29203457).
 2. Unzip — the archive expands to a `zebf-auditory-restoration-1/`
    directory containing `metadata/`, `*-responses/`, `*-stimuli/`.
-3. `ds = Meliza2025Dataset(path='/path/to/zebf-auditory-restoration-1',
+3. `ds = Le2025Dataset(path='/path/to/zebf-auditory-restoration-1',
    experiment='nat8b')`.
 
 `gammatone>=1.0` is required for the paper-faithful spectrogram and is
 shipped as an optional extra:
 
 ```bash
-pip install 'deepSTRF[meliza]'
+pip install 'deepSTRF[le]'
 ```
 
 
@@ -185,7 +185,7 @@ Cross-experiment concatenation works via the standard
 [`concat_neural_datasets`](data_paradigm.md#concatenation):
 
 ```python
-nat = Meliza2025Dataset('...', experiment='nat8a')
-syn = Meliza2025Dataset('...', experiment='synth8b')
+nat = Le2025Dataset('...', experiment='nat8a')
+syn = Le2025Dataset('...', experiment='synth8b')
 both = nat + syn   # block-diagonal coverage matrix; bidirectional rule applies
 ```

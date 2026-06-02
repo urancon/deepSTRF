@@ -138,7 +138,7 @@ def _heeris_gammatone(wav: torch.Tensor, sr: int, n_bands: int, dt_ms: float,
     ``gtgram`` returns high → low).
 
     The ``gammatone`` PyPI package is optional — it's listed under the
-    ``[eeg]`` and ``[meliza]`` extras. Install via ``pip install
+    ``[eeg]`` and ``[le]`` extras. Install via ``pip install
     deepSTRF[eeg]`` or ``pip install gammatone``.
     """
     try:

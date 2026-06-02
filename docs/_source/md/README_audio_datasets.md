@@ -10,7 +10,7 @@ respective README, which gives link to their orginal paper / public repository.
 * [CRCNS AA4](README_CRCNS_AA4.md)
 * [Espejo 2019](README_Espejo.md)
 * [Alice EEG](README_Alice_EEG.md)
-* [Meliza 2025](README_Meliza_2025.md)
+* [Le 2025](README_Le_2025.md)
 * [Downer 2025](README_Downer2025.md)
 * [Wingert 2026](README_Wingert2026.md)
 
@@ -30,7 +30,7 @@ README_CRCNS_AA2.md
 README_CRCNS_AA4.md
 README_Espejo.md
 README_Alice_EEG.md
-README_Meliza_2025.md
+README_Le_2025.md
 README_Downer2025.md
 README_Wingert2026.md
 ```

@@ -1,14 +1,14 @@
 """Faithful causal gammatone-gram (Heeris / Slaney / Ellis) wav2spec front-end.
 
 This reproduces the *exact* gammatone-gram of the ``gammatone`` PyPI package
-(``gammatone.gtgram.gtgram``) — the one used by NEMS and by the Meliza 2025
+(``gammatone.gtgram.gtgram``) — the one used by NEMS and by the Le 2025
 dataset's in-loader spectrogram — but as a differentiable, strictly-causal
 ``torch`` module that lives in a model's ``wav2spec`` slot.
 
 It is distinct from :class:`~deepSTRF.models.wav2spec.gammatone.CausalGammatone`,
 which is a deepSTRF *reimplementation* with FIR gammatone kernels + an envelope
 pooling window ``>= hop``. That reimplementation over-smooths datasets whose
-native gammatone-gram uses a **sub-hop analysis window** (e.g. Meliza's 2.5 ms
+native gammatone-gram uses a **sub-hop analysis window** (e.g. Le 2025's 2.5 ms
 window at a 5 ms hop), matching them at only ~0.27 band-corr. This module instead
 uses the canonical Slaney ERB IIR filterbank (the package's own
 ``make_erb_filters`` coefficients) and the package's windowed-RMS integration, so
@@ -19,7 +19,7 @@ sections, and the windowed-RMS frame ``t`` integrates filterbank power over
 ``[t*hop, t*hop + nwin)`` with ``nwin <= hop`` — strictly inside ``[0, (t+1)*hop)``.
 Sub-hop windows (``window_ms <= dt_ms``) are therefore required and enforced.
 
-Needs the ``gammatone`` package (``pip install 'deepSTRF[meliza]'``) at
+Needs the ``gammatone`` package (``pip install 'deepSTRF[le]'``) at
 construction time only, to compute the ERB filter coefficients; the forward
 pass is pure ``torch`` / ``torchaudio``.
 """
@@ -48,12 +48,12 @@ class Gammatonegram(nn.Module):
     window_ms : float, default 2.5
         Analysis-window length in ms for the windowed-RMS integration. Must be
         ``<= hop_ms`` so each frame stays causal. The default 2.5 ms matches the
-        Meliza 2025 paper spectrogram.
+        Le 2025 paper spectrogram.
     f_min, f_max : float
         ERB filterbank frequency limits (Hz). ``f_max`` defaults to Nyquist.
     compression : {'log1p', 'log', 'none'}, default 'log1p'
         Post-integration compression. ``'log1p'`` = ``log(1 + clip(x, 0))`` is
-        the Meliza / NEMS convention.
+        the Le 2025 / NEMS convention.
     log_floor : float, default 1e-8
         Pre-log clamp for ``compression='log'``.
     """
@@ -68,7 +68,7 @@ class Gammatonegram(nn.Module):
         except ImportError as e:  # pragma: no cover - import-guard
             raise ImportError(
                 "Gammatonegram needs the `gammatone` package for the Slaney ERB "
-                "filter coefficients. Install with `pip install 'deepSTRF[meliza]'` "
+                "filter coefficients. Install with `pip install 'deepSTRF[le]'` "
                 "or `pip install gammatone`."
             ) from e
         if compression not in ("log1p", "log", "none"):

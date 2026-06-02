@@ -60,7 +60,7 @@ from deepSTRF.utils.data_download import default_cache_dir, figshare_download, u
 
 # Soft dep — the `gammatone` PyPI package provides the same filter bank used
 # in Le, Bjoring & Meliza (2025) Methods p. 10. Imported lazily inside the
-# spectrogram method so `from deepSTRF.datasets.audio import Meliza2025Dataset`
+# spectrogram method so `from deepSTRF.datasets.audio import Le2025Dataset`
 # still works in environments that don't have it.
 try:
     from gammatone.gtgram import gtgram as _gtgram
@@ -201,7 +201,7 @@ def _parse_age_to_days(age: str) -> Optional[int]:
 # ---------------------------------------------------------------------------
 
 
-class Meliza2025Dataset(AudioNeuralDataset):
+class Le2025Dataset(AudioNeuralDataset):
     """deepSTRF wrapper for one sub-experiment of Le, Bjoring & Meliza (2025).
 
     Instantiate one per experiment (``"nat8a"`` | ``"nat8b"`` | ``"synth8b"``)
@@ -312,7 +312,7 @@ class Meliza2025Dataset(AudioNeuralDataset):
             raise ValueError(f"experiment must be one of {EXPERIMENTS}, got {experiment!r}")
         if _gtgram is None:
             raise ImportError(
-                "Meliza2025Dataset requires the `gammatone` package to compute "
+                "Le2025Dataset requires the `gammatone` package to compute "
                 "the paper's spectrogram representation. `pip install gammatone`."
             )
 
@@ -468,7 +468,7 @@ class Meliza2025Dataset(AudioNeuralDataset):
         2. Stream-download the ~105 MB zip into ``target_root``.
         3. Unzip in place.
         """
-        base = target_root.expanduser() if target_root is not None else default_cache_dir("Meliza_2025")
+        base = target_root.expanduser() if target_root is not None else default_cache_dir("Le_2025")
         base.mkdir(parents=True, exist_ok=True)
         unpacked = base / FIGSHARE_UNPACKED_DIR
         if unpacked.is_dir():

@@ -42,7 +42,7 @@ def make_wav2spec(kind: str, audio_fs: int, dt_ms: float, **kwargs):
         Which front-end to build. ``'mel'`` and ``'gammatone'`` are
         non-learnable cochleagrams; ``'gammatonegram'`` is the faithful causal
         reproduction of the canonical Slaney/Heeris gammatone-gram (the
-        ``gammatone`` package / NEMS / Meliza native transform); ``'sincnet'``
+        ``gammatone`` package / NEMS / Le 2025 native transform); ``'sincnet'``
         has learnable filter cutoffs; ``'leaf'`` is the fully-learnable LEAF
         frontend (Gabor + pooling + sPCEN).
     audio_fs : int

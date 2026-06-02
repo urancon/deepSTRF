@@ -300,8 +300,8 @@ def figshare_download(
 
     Example
     -------
-    >>> figshare_download(29203457, "/tmp/meliza")
-    PosixPath('/tmp/meliza/zebf-auditory-restoration-1.zip')
+    >>> figshare_download(29203457, "/tmp/le2025")
+    PosixPath('/tmp/le2025/zebf-auditory-restoration-1.zip')
     """
     api_url = f"https://api.figshare.com/v2/articles/{article_id}"
     resp = requests.get(api_url, timeout=(30, 60))

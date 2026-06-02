@@ -84,10 +84,10 @@ deepSTRF.datasets.audio.alice\_eeg module
    :show-inheritance:
    :undoc-members:
 
-deepSTRF.datasets.audio.meliza\_2025 module
+deepSTRF.datasets.audio.le\_2025 module
 -------------------------------------------
 
-.. automodule:: deepSTRF.datasets.audio.meliza_2025
+.. automodule:: deepSTRF.datasets.audio.le_2025
    :members:
    :show-inheritance:
    :undoc-members:

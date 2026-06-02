@@ -109,7 +109,7 @@ Runnable notebooks live under [`examples/`](examples/) — each opens in Colab i
 | `fit_ns1_statenet.ipynb` | Fit StateNet on NS1 from scratch. |
 | `load_pretrained_statenet_ns1.ipynb` | Reuse the published HF Hub checkpoint. |
 | `alice_eeg_tutorial.ipynb` | EEG (Brodbeck 2023, "Alice"). |
-| `meliza_2025_baseline.ipynb` | Zebra finch responses to occluded conspecific song. |
+| `le_2025_baseline.ipynb` | Zebra finch responses to occluded conspecific song. |
 | `strf_parameterizations_ns1.ipynb` | Parametric Gaussian-mixture STRFs. |
 | `strf_gradmap_aa2.ipynb` | Gradient-attribution receptive fields on AA2. |
 | `adaptrans_transformer_aa1.ipynb` | AdapTrans + Transformer on AA1 Field L. |
@@ -137,7 +137,7 @@ Current top model on each dataset. Want to claim the podium? Open a PR with a re
 
 deepSTRF wraps publicly available recordings — please cite the original authors when you use them. See each dataset page on the [docs](https://deepstrf.readthedocs.io/) for details and download instructions.
 
-- **Auditory:** [NS1](docs/_source/md/README_NS1.md), [NAT4](docs/_source/md/README_NAT4.md), [CRCNS AA1](docs/_source/md/README_CRCNS_AA1.md), [CRCNS AA2](docs/_source/md/README_CRCNS_AA2.md), [CRCNS AA4](docs/_source/md/README_CRCNS_AA4.md), [CRCNS AC1 (Wehr + Asari)](docs/_source/md/README_CRCNS_AC1.md), [Espejo 2019](docs/_source/md/README_Espejo.md), [Alice EEG (Brodbeck 2023)](docs/_source/md/README_Alice_EEG.md), [Meliza 2025](docs/_source/md/README_Meliza_2025.md), [Wingert 2026](docs/_source/md/README_Wingert2026.md).
+- **Auditory:** [NS1](docs/_source/md/README_NS1.md), [NAT4](docs/_source/md/README_NAT4.md), [CRCNS AA1](docs/_source/md/README_CRCNS_AA1.md), [CRCNS AA2](docs/_source/md/README_CRCNS_AA2.md), [CRCNS AA4](docs/_source/md/README_CRCNS_AA4.md), [CRCNS AC1 (Wehr + Asari)](docs/_source/md/README_CRCNS_AC1.md), [Espejo 2019](docs/_source/md/README_Espejo.md), [Alice EEG (Brodbeck 2023)](docs/_source/md/README_Alice_EEG.md), [Le 2025](docs/_source/md/README_Le_2025.md), [Wingert 2026](docs/_source/md/README_Wingert2026.md).
 - **Visual:** under construction — see [Status](#-status--audio-first) below.
 
 ----

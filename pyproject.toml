@@ -118,9 +118,9 @@ eeg = [
     "gammatone>=1.0",
 ]
 
-# Meliza 2025 (zebra finch occluded-song restoration). Uses the paper's
+# Le 2025 (zebra finch occluded-song restoration). Uses the paper's
 # gammatone filter bank (Methods p. 10) for stimulus spectrograms.
-meliza = [
+le = [
     "gammatone>=1.0",
 ]
 

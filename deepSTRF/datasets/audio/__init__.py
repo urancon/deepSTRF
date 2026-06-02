@@ -16,7 +16,7 @@ from .espejo import (
     download_espejo_nat_waveforms,
 )
 from .alice_eeg import AliceEEGDataset, download_alice_eeg
-from .meliza_2025 import Meliza2025Dataset
+from .le_2025 import Le2025Dataset
 from .downer2025 import Downer2025Dataset, download_downer2025
 from .wingert2026 import Wingert2026Dataset, download_wingert2026
 
@@ -30,6 +30,6 @@ __all__ = ['AudioNeuralDataset',
            'WEHR_VALID_NEURONS', 'WEHR_NEURONS_SPLIT_NATURAL',
            'EspejoDataset', 'download_espejo', 'download_espejo_nat_waveforms',
            'AliceEEGDataset', 'download_alice_eeg',
-           'Meliza2025Dataset',
+           'Le2025Dataset',
            'Downer2025Dataset', 'download_downer2025',
            'Wingert2026Dataset', 'download_wingert2026']

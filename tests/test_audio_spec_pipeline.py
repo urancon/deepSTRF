@@ -19,7 +19,7 @@ What this file pins down:
 3. ``window_ms`` is honoured: setting it higher than the default
    enlarges the FFT window in samples (up to the STFT floor at
    ``hop_length``).
-4. Meliza 2025 already exposes a ``window_ms`` kwarg with the same
+4. Le 2025 already exposes a ``window_ms`` kwarg with the same
    semantics (its gammatone front-end takes ``window_time`` directly,
    no n_fft / hop scaling). Smoke check that the attribute exists with
    the documented default.
@@ -157,23 +157,23 @@ def test_window_ms_floor_at_hop_length():
 
 
 # -----------------------------------------------------------------------------
-# 4. Meliza 2025 already had this contract — smoke check it's intact
+# 4. Le 2025 already had this contract — smoke check it's intact
 # -----------------------------------------------------------------------------
 
 
-def test_meliza_window_ms_kwarg_exists():
-    """Meliza 2025 uses a gammatone filterbank with ``window_time``
+def test_le_window_ms_kwarg_exists():
+    """Le 2025 uses a gammatone filterbank with ``window_time``
     directly, so it never had the n_fft-scaling bug. Pin the existence
     of the ``window_ms`` kwarg so a future rename can't silently break
     the cross-dataset audit story.
     """
     import inspect
 
-    from deepSTRF.datasets.audio.meliza_2025 import Meliza2025Dataset
+    from deepSTRF.datasets.audio.le_2025 import Le2025Dataset
 
-    sig = inspect.signature(Meliza2025Dataset.__init__)
+    sig = inspect.signature(Le2025Dataset.__init__)
     assert "window_ms" in sig.parameters, (
-        "Meliza2025Dataset must keep the ``window_ms`` kwarg — it documents the "
+        "Le2025Dataset must keep the ``window_ms`` kwarg — it documents the "
         "audit story (the spec window is independent of dt_ms by design)."
     )
     default = sig.parameters["window_ms"].default
