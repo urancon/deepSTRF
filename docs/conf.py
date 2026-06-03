@@ -9,7 +9,15 @@
 project = 'deepSTRF'
 copyright = '2025, Ulysse Rancon'
 author = 'Ulysse Rancon'
-release = '0.0.1'
+
+# Read the version from the single source of truth (deepSTRF/_version.py, the
+# same file pyproject.toml reads) so the docs never drift from the package.
+import os as _os
+_version_ns = {}
+with open(_os.path.join(_os.path.dirname(__file__), '..', 'deepSTRF', '_version.py')) as _vf:
+    exec(_vf.read(), _version_ns)
+release = _version_ns['__version__']            # full version, e.g. "0.1.0"
+version = '.'.join(release.split('.')[:2])      # short X.Y, e.g. "0.1"
 
 
 # -- General configuration ---------------------------------------------------
