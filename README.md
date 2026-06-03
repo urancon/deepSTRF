@@ -28,7 +28,13 @@ deepSTRF is a community-oriented library for **system identification of sensory 
 
 ## ⚡ Installation
 
-deepSTRF requires **Python ≥ 3.10**. It is not yet on PyPI; install from source:
+deepSTRF requires **Python ≥ 3.10**. Install the latest release from PyPI:
+
+```shell
+pip install deepSTRF
+```
+
+For a development checkout, install from source instead:
 
 ```shell
 git clone https://github.com/urancon/deepSTRF
