@@ -144,10 +144,15 @@ class Fitter:
         ``base_lr * lr_factor`` so exactly **one** reduction can occur. When the
         LR drops, the early-stop patience counter is reset so the model gets a
         fresh window at the lower LR before stopping. Default ``False``.
-    lr_factor, lr_patience
-        Multiplicative LR-drop factor (default ``0.2``) and the plateau patience
-        for the scheduler (default ``30``). Used only when
-        ``reduce_lr_on_plateau=True``.
+    lr_factor, lr_patience, lr_threshold
+        Multiplicative LR-drop factor (default ``0.2``), plateau patience
+        (default ``30``), and the relative improvement threshold below which an
+        epoch counts as "no improvement" for the scheduler (default ``1e-4``,
+        PyTorch's default). Used only when ``reduce_lr_on_plateau=True``. With
+        ``min_delta=0`` (keep every best-on-val), a too-small ``lr_threshold``
+        lets sub-noise val_loss creep masquerade as progress so the LR never
+        drops — raise it (e.g. ``1e-3``) so the drop fires on a genuine plateau.
+        Re-applied on resume, so it can be changed when continuing a run.
     monitor
         Key in the per-epoch dict to track for early stopping. Default
         ``'val_cc_norm'``. Use ``'val_loss'``, ``'val_cc'``, or any custom
@@ -209,6 +214,7 @@ class Fitter:
         reduce_lr_on_plateau: bool = False,
         lr_factor: float = 0.2,
         lr_patience: int = 30,
+        lr_threshold: float = 1e-4,
         monitor: str = "val_cc_norm",
         mode: str = "max",
         ckpt_path: Optional[Union[str, Path]] = None,
@@ -243,6 +249,7 @@ class Fitter:
         self.reduce_lr_on_plateau = reduce_lr_on_plateau
         self.lr_factor = float(lr_factor)
         self.lr_patience = int(lr_patience)
+        self.lr_threshold = float(lr_threshold)
         self.monitor = monitor
         self.mode = mode
         self.ckpt_path = Path(ckpt_path) if ckpt_path is not None else None
@@ -301,7 +308,8 @@ class Fitter:
             base_lr = self.optimizer.param_groups[0]["lr"]
             scheduler = ReduceLROnPlateau(
                 self.optimizer, mode=self.mode, factor=self.lr_factor,
-                patience=self.lr_patience, min_lr=base_lr * self.lr_factor,
+                patience=self.lr_patience, threshold=self.lr_threshold,
+                min_lr=base_lr * self.lr_factor,
             )
 
         # Resume full training state if a checkpoint exists at state_path.
@@ -312,6 +320,9 @@ class Fitter:
             self.optimizer.load_state_dict(st["optimizer"])
             if scheduler is not None and st.get("scheduler") is not None:
                 scheduler.load_state_dict(st["scheduler"])
+                # state_dict restores the saved threshold; re-apply the current
+                # one so a resume can change the plateau-detection sensitivity.
+                scheduler.threshold = self.lr_threshold
             start_epoch = st["epoch"] + 1
             best_score = st["best_score"]
             epochs_no_improvement = st["epochs_no_improvement"]
