@@ -17,6 +17,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader
 
@@ -131,6 +132,22 @@ class Fitter:
         loop never early-stops, forcing reliance on ``max_epochs``. With
         ``min_delta > 0`` patience can be the sole stopping criterion and
         ``max_epochs`` set effectively unbounded.
+
+        Note: leaving ``min_delta = 0`` (the default) is often *better* for final
+        accuracy — validation noise is unbiased, so a new best-on-val is a
+        genuinely better point worth keeping (and the ckpt captures it). Pair
+        ``min_delta = 0`` with ``reduce_lr_on_plateau`` for long, high-quality fits.
+    reduce_lr_on_plateau
+        If ``True``, attach a :class:`~torch.optim.lr_scheduler.ReduceLROnPlateau`
+        on ``monitor`` that drops the learning rate by ``lr_factor`` after
+        ``lr_patience`` epochs without improvement. ``min_lr`` is pinned to
+        ``base_lr * lr_factor`` so exactly **one** reduction can occur. When the
+        LR drops, the early-stop patience counter is reset so the model gets a
+        fresh window at the lower LR before stopping. Default ``False``.
+    lr_factor, lr_patience
+        Multiplicative LR-drop factor (default ``0.2``) and the plateau patience
+        for the scheduler (default ``30``). Used only when
+        ``reduce_lr_on_plateau=True``.
     monitor
         Key in the per-epoch dict to track for early stopping. Default
         ``'val_cc_norm'``. Use ``'val_loss'``, ``'val_cc'``, or any custom
@@ -182,6 +199,9 @@ class Fitter:
         max_epochs: int = 1000,
         patience: int = 10,
         min_delta: float = 0.0,
+        reduce_lr_on_plateau: bool = False,
+        lr_factor: float = 0.2,
+        lr_patience: int = 30,
         monitor: str = "val_cc_norm",
         mode: str = "max",
         ckpt_path: Optional[Union[str, Path]] = None,
@@ -212,6 +232,9 @@ class Fitter:
         self.max_epochs = max_epochs
         self.patience = patience
         self.min_delta = float(min_delta)
+        self.reduce_lr_on_plateau = reduce_lr_on_plateau
+        self.lr_factor = float(lr_factor)
+        self.lr_patience = int(lr_patience)
         self.monitor = monitor
         self.mode = mode
         self.ckpt_path = Path(ckpt_path) if ckpt_path is not None else None
@@ -264,6 +287,14 @@ class Fitter:
             )
             self._per_cell_snapshots: Dict[int, List[torch.Tensor]] = {}
 
+        scheduler = None
+        if self.reduce_lr_on_plateau:
+            base_lr = self.optimizer.param_groups[0]["lr"]
+            scheduler = ReduceLROnPlateau(
+                self.optimizer, mode=self.mode, factor=self.lr_factor,
+                patience=self.lr_patience, min_lr=base_lr * self.lr_factor,
+            )
+
         for epoch in range(self.max_epochs):
             train = self._train_one_epoch()
             val = self._evaluate(self.val_loader)
@@ -295,6 +326,14 @@ class Fitter:
                 epochs_no_improvement = 0
             else:
                 epochs_no_improvement += 1
+
+            if scheduler is not None:
+                prev_lr = self.optimizer.param_groups[0]["lr"]
+                scheduler.step(score)
+                if self.optimizer.param_groups[0]["lr"] < prev_lr - 1e-12:
+                    # One LR drop happened — give a fresh patience window at the
+                    # lower LR before early-stopping.
+                    epochs_no_improvement = 0
 
             if epochs_no_improvement >= self.patience:
                 break

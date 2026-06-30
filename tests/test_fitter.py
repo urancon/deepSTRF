@@ -238,6 +238,36 @@ def test_min_delta_treats_subthreshold_improvement_as_plateau():
     assert _run(0.0) == 50
 
 
+def test_reduce_lr_on_plateau_drops_once_and_resets_patience():
+    """On a flat monitor the LR drops exactly once (min_lr pinned to
+    base*factor) and the early-stop counter resets at the drop, so the run
+    lasts longer than the plain patience+1 it would without the reset."""
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders()
+    model = _LinearReadout(F=4, N=2)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-2)
+    fitter = Fitter(
+        model, train_loader, val_loader, optimizer=opt,
+        max_epochs=100, patience=3,
+        reduce_lr_on_plateau=True, lr_factor=0.1, lr_patience=2,
+        monitor="val_cc_norm", mode="max", log_fn=lambda d: None,
+    )
+    flat = torch.tensor([0.0])
+    original_evaluate = fitter._evaluate
+
+    def _flat(loader):
+        out = original_evaluate(loader)
+        out["cc_norm"] = flat.clone()
+        return out
+
+    fitter._evaluate = _flat
+    history = fitter.fit()
+    # exactly one reduction: lr pinned at base*factor, no further drops
+    assert abs(opt.param_groups[0]["lr"] - 1e-2 * 0.1) < 1e-9
+    # the LR-drop reset extends the run past the no-scheduler patience+1 (=4)
+    assert len(history) > 4
+
+
 # -----------------------------------------------------------------------------
 # (c) checkpoint round-trip
 # -----------------------------------------------------------------------------
