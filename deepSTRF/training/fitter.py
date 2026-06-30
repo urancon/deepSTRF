@@ -122,6 +122,15 @@ class Fitter:
     patience
         Early-stop patience: number of epochs without improvement on
         ``monitor`` before the loop terminates.
+    min_delta
+        Minimum change in ``monitor`` that counts as an improvement (and so
+        resets the patience counter / saves a new best checkpoint). Default
+        ``0.0`` (any strict improvement counts). Set a small positive value
+        (e.g. ``1e-5``) when the monitored quantity micro-fluctuates on a
+        plateau — otherwise sub-noise wiggles keep resetting patience and the
+        loop never early-stops, forcing reliance on ``max_epochs``. With
+        ``min_delta > 0`` patience can be the sole stopping criterion and
+        ``max_epochs`` set effectively unbounded.
     monitor
         Key in the per-epoch dict to track for early stopping. Default
         ``'val_cc_norm'``. Use ``'val_loss'``, ``'val_cc'``, or any custom
@@ -172,6 +181,7 @@ class Fitter:
         device: Union[str, torch.device] = "cpu",
         max_epochs: int = 1000,
         patience: int = 10,
+        min_delta: float = 0.0,
         monitor: str = "val_cc_norm",
         mode: str = "max",
         ckpt_path: Optional[Union[str, Path]] = None,
@@ -201,6 +211,7 @@ class Fitter:
         )
         self.max_epochs = max_epochs
         self.patience = patience
+        self.min_delta = float(min_delta)
         self.monitor = monitor
         self.mode = mode
         self.ckpt_path = Path(ckpt_path) if ckpt_path is not None else None
@@ -238,9 +249,9 @@ class Fitter:
         history: List[Dict[str, Any]] = []
         best_score = -float("inf") if self.mode == "max" else float("inf")
         better = (
-            (lambda new, best: new > best)
+            (lambda new, best: new > best + self.min_delta)
             if self.mode == "max"
-            else (lambda new, best: new < best)
+            else (lambda new, best: new < best - self.min_delta)
         )
         epochs_no_improvement = 0
 

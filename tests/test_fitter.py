@@ -206,6 +206,38 @@ def test_early_stop_fires_when_monitor_plateaus():
     assert len(history) == fitter.patience + 1
 
 
+def test_min_delta_treats_subthreshold_improvement_as_plateau():
+    """Improvements smaller than min_delta don't reset patience → early-stop
+    fires even when the monitor micro-fluctuates upward forever. Without
+    min_delta the same trickle would run to max_epochs."""
+    train_loader, val_loader = _make_loaders()
+
+    def _run(min_delta):
+        set_random_seed(0)
+        model = _LinearReadout(F=4, N=2)
+        fitter = Fitter(
+            model, train_loader, val_loader,
+            max_epochs=50, patience=3, min_delta=min_delta,
+            monitor="val_cc_norm", mode="max", log_fn=lambda d: None,
+        )
+        state = {"v": 0.5}
+        original_evaluate = fitter._evaluate
+
+        def _trickle(loader):
+            out = original_evaluate(loader)
+            state["v"] += 1e-6          # below a 1e-3 min_delta
+            out["cc_norm"] = torch.tensor([state["v"]])
+            return out
+
+        fitter._evaluate = _trickle
+        return len(fitter.fit())
+
+    # With min_delta the sub-threshold trickle is a plateau → stop at patience+1.
+    assert _run(1e-3) == 4
+    # With the old behaviour (min_delta=0) the trickle keeps resetting → max_epochs.
+    assert _run(0.0) == 50
+
+
 # -----------------------------------------------------------------------------
 # (c) checkpoint round-trip
 # -----------------------------------------------------------------------------
