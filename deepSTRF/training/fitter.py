@@ -158,6 +158,12 @@ class Fitter:
         value once the LR has dropped — the model is annealed and near-converged
         then, so it needn't wait as long. Default ``None`` (use ``patience``
         throughout). Tracked across resume via the saved state.
+    ema_decay
+        If set (e.g. ``0.999``), maintain an exponential moving average of the
+        model's weights (updated every optimizer step) and use the EMA weights
+        for validation, the best checkpoint, and the final restored model — a
+        cheap generalization boost, especially with noisy validation. Default
+        ``None`` (no EMA). Resumable (EMA state saved/restored via ``state_path``).
     monitor
         Key in the per-epoch dict to track for early stopping. Default
         ``'val_cc_norm'``. Use ``'val_loss'``, ``'val_cc'``, or any custom
@@ -221,6 +227,7 @@ class Fitter:
         lr_patience: int = 30,
         lr_threshold: float = 1e-4,
         patience_after_lr_drop: Optional[int] = None,
+        ema_decay: Optional[float] = None,
         monitor: str = "val_cc_norm",
         mode: str = "max",
         ckpt_path: Optional[Union[str, Path]] = None,
@@ -257,6 +264,8 @@ class Fitter:
         self.lr_patience = int(lr_patience)
         self.lr_threshold = float(lr_threshold)
         self.patience_after_lr_drop = patience_after_lr_drop
+        self.ema_decay = ema_decay
+        self._ema_state: Optional[Dict[str, torch.Tensor]] = None
         self.monitor = monitor
         self.mode = mode
         self.ckpt_path = Path(ckpt_path) if ckpt_path is not None else None
@@ -336,6 +345,7 @@ class Fitter:
             epochs_no_improvement = st["epochs_no_improvement"]
             history = st["history"]
             lr_dropped = st.get("lr_dropped", False)
+            self._ema_state = st.get("ema_state")
 
         for epoch in range(start_epoch, self.max_epochs):
             train = self._train_one_epoch()
@@ -364,7 +374,13 @@ class Fitter:
                 best_score = score
                 if self.ckpt_path is not None:
                     self.ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-                    torch.save(self.model.state_dict(), self.ckpt_path)
+                    # With EMA on, the monitor was computed on the EMA weights,
+                    # so the best checkpoint must hold the EMA weights too.
+                    torch.save(
+                        self._ema_state if self._ema_state is not None
+                        else self.model.state_dict(),
+                        self.ckpt_path,
+                    )
                 epochs_no_improvement = 0
             else:
                 epochs_no_improvement += 1
@@ -391,6 +407,7 @@ class Fitter:
                     "epochs_no_improvement": epochs_no_improvement,
                     "history": history,
                     "lr_dropped": lr_dropped,
+                    "ema_state": self._ema_state,
                 }, tmp)
                 tmp.replace(self.state_path)
 
@@ -416,6 +433,12 @@ class Fitter:
         # cell's readout slice with its individual-best.
         if self.track_per_cell_best:
             self._restore_per_cell_snapshots()
+
+        # With EMA and no ckpt_path, leave the model at the EMA weights (the
+        # ckpt_path branch above already restored the EMA-saved best).
+        if (self.ema_decay is not None and self.ckpt_path is None
+                and self._ema_state is not None):
+            self.model.load_state_dict(self._ema_state)
 
         return history
 
@@ -502,6 +525,8 @@ class Fitter:
             self.optimizer.step()
             if hasattr(self.model, "detach"):
                 self.model.detach()
+            if self.ema_decay is not None:
+                self._update_ema()
 
             loss_sum += float(loss.detach().item())
             n_batches += 1
@@ -525,7 +550,33 @@ class Fitter:
                     out[name] = fn(preds_cat, responses_cat)
         return out
 
+    def _update_ema(self) -> None:
+        """In-place EMA of the model's full state_dict (params + buffers)."""
+        sd = self.model.state_dict()
+        if self._ema_state is None:
+            self._ema_state = {k: v.detach().clone() for k, v in sd.items()}
+            return
+        d = self.ema_decay
+        for k, v in sd.items():
+            e = self._ema_state[k]
+            if v.is_floating_point():
+                e.mul_(d).add_(v.detach(), alpha=1.0 - d)
+            else:
+                e.copy_(v)            # integer/bool buffers: track latest
+
     def _evaluate(self, loader: DataLoader) -> Dict[str, Any]:
+        """Evaluate the EMA weights if EMA is on (swap in, eval, restore),
+        else the live weights."""
+        if self._ema_state is None:
+            return self._evaluate_raw(loader)
+        backup = {k: v.detach().clone() for k, v in self.model.state_dict().items()}
+        self.model.load_state_dict(self._ema_state)
+        try:
+            return self._evaluate_raw(loader)
+        finally:
+            self.model.load_state_dict(backup)
+
+    def _evaluate_raw(self, loader: DataLoader) -> Dict[str, Any]:
         self.model.eval()
         preds_list: List[torch.Tensor] = []
         responses_list: List[torch.Tensor] = []

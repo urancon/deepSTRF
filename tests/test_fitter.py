@@ -299,6 +299,22 @@ def test_patience_after_lr_drop_tightens_post_drop_window():
     assert len(history) < 10
 
 
+def test_ema_changes_final_weights():
+    """ema_decay maintains an EMA shadow and finalizes the model to it, so the
+    final weights differ from plain training (same seed/data)."""
+    def _run(ema):
+        set_random_seed(0)
+        train_loader, val_loader = _make_loaders()
+        model = _LinearReadout(F=4, N=2)
+        Fitter(model, train_loader, val_loader, max_epochs=5, patience=100,
+               ema_decay=ema, log_fn=lambda d: None).fit()
+        return {k: v.clone() for k, v in model.state_dict().items()}
+
+    plain = _run(None)
+    ema = _run(0.9)
+    assert any(not torch.allclose(plain[k], ema[k]) for k in plain)
+
+
 def test_state_path_resumes_training(tmp_path):
     """A run interrupted at max_epochs=3 resumes from state_path and continues
     to epoch 5 with the restored history (epochs 0..5)."""
