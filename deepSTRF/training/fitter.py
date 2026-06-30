@@ -153,6 +153,11 @@ class Fitter:
         lets sub-noise val_loss creep masquerade as progress so the LR never
         drops — raise it (e.g. ``1e-3``) so the drop fires on a genuine plateau.
         Re-applied on resume, so it can be changed when continuing a run.
+    patience_after_lr_drop
+        If set, the early-stop patience switches to this (typically smaller)
+        value once the LR has dropped — the model is annealed and near-converged
+        then, so it needn't wait as long. Default ``None`` (use ``patience``
+        throughout). Tracked across resume via the saved state.
     monitor
         Key in the per-epoch dict to track for early stopping. Default
         ``'val_cc_norm'``. Use ``'val_loss'``, ``'val_cc'``, or any custom
@@ -215,6 +220,7 @@ class Fitter:
         lr_factor: float = 0.2,
         lr_patience: int = 30,
         lr_threshold: float = 1e-4,
+        patience_after_lr_drop: Optional[int] = None,
         monitor: str = "val_cc_norm",
         mode: str = "max",
         ckpt_path: Optional[Union[str, Path]] = None,
@@ -250,6 +256,7 @@ class Fitter:
         self.lr_factor = float(lr_factor)
         self.lr_patience = int(lr_patience)
         self.lr_threshold = float(lr_threshold)
+        self.patience_after_lr_drop = patience_after_lr_drop
         self.monitor = monitor
         self.mode = mode
         self.ckpt_path = Path(ckpt_path) if ckpt_path is not None else None
@@ -293,6 +300,7 @@ class Fitter:
             else (lambda new, best: new < best - self.min_delta)
         )
         epochs_no_improvement = 0
+        lr_dropped = False
 
         if self.track_per_cell_best:
             N = self.model.O
@@ -327,6 +335,7 @@ class Fitter:
             best_score = st["best_score"]
             epochs_no_improvement = st["epochs_no_improvement"]
             history = st["history"]
+            lr_dropped = st.get("lr_dropped", False)
 
         for epoch in range(start_epoch, self.max_epochs):
             train = self._train_one_epoch()
@@ -367,6 +376,7 @@ class Fitter:
                     # One LR drop happened — give a fresh patience window at the
                     # lower LR before early-stopping.
                     epochs_no_improvement = 0
+                    lr_dropped = True
 
             # Persist full training state (atomically) so a killed run resumes.
             if self.state_path is not None:
@@ -380,10 +390,18 @@ class Fitter:
                     "best_score": best_score,
                     "epochs_no_improvement": epochs_no_improvement,
                     "history": history,
+                    "lr_dropped": lr_dropped,
                 }, tmp)
                 tmp.replace(self.state_path)
 
-            if epochs_no_improvement >= self.patience:
+            # After the (single) LR drop, optionally tighten patience: the model
+            # is annealed and near-converged, so it needn't wait as long.
+            eff_patience = (
+                self.patience_after_lr_drop
+                if (self.patience_after_lr_drop is not None and lr_dropped)
+                else self.patience
+            )
+            if epochs_no_improvement >= eff_patience:
                 break
 
         if self.ckpt_path is not None and self.ckpt_path.exists():

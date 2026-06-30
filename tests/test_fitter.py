@@ -268,6 +268,37 @@ def test_reduce_lr_on_plateau_drops_once_and_resets_patience():
     assert len(history) > 4
 
 
+def test_patience_after_lr_drop_tightens_post_drop_window():
+    """With patience_after_lr_drop set, the run stops sooner after the LR drop.
+    Flat monitor, patience=10, lr_patience=2, patience_after_lr_drop=3:
+    LR drops at epoch 2 (resets counter), then 3 idle epochs → stop at epoch 5."""
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders()
+    model = _LinearReadout(F=4, N=2)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-2)
+    fitter = Fitter(
+        model, train_loader, val_loader, optimizer=opt,
+        max_epochs=100, patience=10,
+        reduce_lr_on_plateau=True, lr_factor=0.1, lr_patience=2,
+        patience_after_lr_drop=3,
+        monitor="val_cc_norm", mode="max", log_fn=lambda d: None,
+    )
+    flat = torch.tensor([0.0])
+    original_evaluate = fitter._evaluate
+
+    def _flat(loader):
+        out = original_evaluate(loader)
+        out["cc_norm"] = flat.clone()
+        return out
+
+    fitter._evaluate = _flat
+    history = fitter.fit()
+    assert abs(opt.param_groups[0]["lr"] - 1e-2 * 0.1) < 1e-9   # dropped once
+    # post-drop window of 3 stops it well before the full patience=10 would
+    # (which, with the LR-drop counter reset, would run to ~13 epochs).
+    assert len(history) < 10
+
+
 def test_state_path_resumes_training(tmp_path):
     """A run interrupted at max_epochs=3 resumes from state_path and continues
     to epoch 5 with the restored history (epochs 0..5)."""
