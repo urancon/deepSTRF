@@ -158,6 +158,13 @@ class Fitter:
     ckpt_path
         If given, save the best-on-``monitor`` ``state_dict`` to this path
         and restore it at the end of ``fit()``.
+    state_path
+        If given, save the FULL training state (model + optimizer + LR-scheduler
+        state + epoch + best score + patience counter + history) to this path
+        after every epoch (atomically). If the file already exists at the start
+        of ``fit()``, training **resumes** from it — so a killed/interrupted run
+        continues exactly where it left off (unlike ``ckpt_path``, which only
+        holds best model weights). Default ``None``.
     log_fn
         Called as ``log_fn(epoch_dict)`` once per epoch. Default: a small
         formatter that prints ``epoch | k=v | ...``. Override to log to
@@ -205,6 +212,7 @@ class Fitter:
         monitor: str = "val_cc_norm",
         mode: str = "max",
         ckpt_path: Optional[Union[str, Path]] = None,
+        state_path: Optional[Union[str, Path]] = None,
         log_fn: Callable[[Mapping[str, Any]], None] = _format_epoch,
         track_train_metrics: bool = True,
         track_per_cell_best: bool = False,
@@ -238,6 +246,7 @@ class Fitter:
         self.monitor = monitor
         self.mode = mode
         self.ckpt_path = Path(ckpt_path) if ckpt_path is not None else None
+        self.state_path = Path(state_path) if state_path is not None else None
         self.log_fn = log_fn
         self.track_train_metrics = track_train_metrics
         self.track_per_cell_best = track_per_cell_best
@@ -295,7 +304,20 @@ class Fitter:
                 patience=self.lr_patience, min_lr=base_lr * self.lr_factor,
             )
 
-        for epoch in range(self.max_epochs):
+        # Resume full training state if a checkpoint exists at state_path.
+        start_epoch = 0
+        if self.state_path is not None and self.state_path.exists():
+            st = torch.load(self.state_path, map_location=self.device)
+            self.model.load_state_dict(st["model"])
+            self.optimizer.load_state_dict(st["optimizer"])
+            if scheduler is not None and st.get("scheduler") is not None:
+                scheduler.load_state_dict(st["scheduler"])
+            start_epoch = st["epoch"] + 1
+            best_score = st["best_score"]
+            epochs_no_improvement = st["epochs_no_improvement"]
+            history = st["history"]
+
+        for epoch in range(start_epoch, self.max_epochs):
             train = self._train_one_epoch()
             val = self._evaluate(self.val_loader)
             epoch_dict: Dict[str, Any] = {"epoch": epoch}
@@ -334,6 +356,21 @@ class Fitter:
                     # One LR drop happened — give a fresh patience window at the
                     # lower LR before early-stopping.
                     epochs_no_improvement = 0
+
+            # Persist full training state (atomically) so a killed run resumes.
+            if self.state_path is not None:
+                self.state_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
+                torch.save({
+                    "model": self.model.state_dict(),
+                    "optimizer": self.optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict() if scheduler is not None else None,
+                    "epoch": epoch,
+                    "best_score": best_score,
+                    "epochs_no_improvement": epochs_no_improvement,
+                    "history": history,
+                }, tmp)
+                tmp.replace(self.state_path)
 
             if epochs_no_improvement >= self.patience:
                 break

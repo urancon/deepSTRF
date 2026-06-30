@@ -268,6 +268,27 @@ def test_reduce_lr_on_plateau_drops_once_and_resets_patience():
     assert len(history) > 4
 
 
+def test_state_path_resumes_training(tmp_path):
+    """A run interrupted at max_epochs=3 resumes from state_path and continues
+    to epoch 5 with the restored history (epochs 0..5)."""
+    sp = tmp_path / "state.pt"
+    train_loader, val_loader = _make_loaders()
+
+    set_random_seed(0)
+    f1 = Fitter(_LinearReadout(F=4, N=2), train_loader, val_loader,
+                max_epochs=3, patience=100, state_path=sp, log_fn=lambda d: None)
+    h1 = f1.fit()
+    assert len(h1) == 3 and sp.exists()
+
+    # Fresh model object; the resume must overwrite it from the saved state and
+    # continue from epoch 3.
+    set_random_seed(1)
+    f2 = Fitter(_LinearReadout(F=4, N=2), train_loader, val_loader,
+                max_epochs=6, patience=100, state_path=sp, log_fn=lambda d: None)
+    h2 = f2.fit()
+    assert [d["epoch"] for d in h2] == list(range(6))   # restored 0,1,2 + ran 3,4,5
+
+
 # -----------------------------------------------------------------------------
 # (c) checkpoint round-trip
 # -----------------------------------------------------------------------------
