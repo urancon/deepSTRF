@@ -277,3 +277,45 @@ def test_parametric_activations_pair_with_poisson_loss():
         gt = torch.full_like(pred, 1.0)
         loss = poisson_loss(pred, gt)
         assert torch.isfinite(loss).all(), f"{cls.__name__} produced non-finite poisson_loss"
+
+
+# ---------------------------------------------------------------------------
+# ParametricDoubleExponential — monotonicity + init scale (regression tests)
+# ---------------------------------------------------------------------------
+def test_dexp_is_monotonically_increasing_for_any_k():
+    """Thorson/NEMS parameterisation: the curvature enters as -exp(k), so the curve rises
+    with the drive for ANY k. Regression: k used to be applied unconstrained, so ~half the
+    neurons initialised anti-tuned and a shared core's gradients cancelled (mean-collapse)."""
+    torch.manual_seed(0)
+    m = ParametricDoubleExponential(num_features=256)
+    with torch.no_grad():
+        # force both signs of k, including large magnitudes
+        m.k.copy_(torch.linspace(-3.0, 3.0, 256))
+        x = torch.linspace(-5.0, 5.0, 100).unsqueeze(1).expand(-1, 256)
+        y = m(x)
+    diffs = y[1:] - y[:-1]
+    assert (diffs >= -1e-6).all(), "f must be non-decreasing in x for every k"
+    assert (y[-1] - y[0] > 0).all(), "f must strictly increase across the input range"
+
+
+def test_dexp_init_is_on_the_scale_of_sparse_psth_targets():
+    """f(0) must start near zero, not ~1: neural PSTHs are sparse and low-rate (NAT4 mean
+    0.0066), and a floor far above the target mean makes training shrink the prediction
+    instead of learning structure. Mirrors the guard in ParametricSoftplus."""
+    torch.manual_seed(0)
+    m = ParametricDoubleExponential(num_features=512)
+    with torch.no_grad():
+        f0 = m(torch.zeros(1, 512))
+    assert float(f0.median()) < 0.1, f"f(0) median {float(f0.median()):.3f} too high"
+    assert float(m.b.max()) < 0.1, "baseline floor should init near zero"
+    assert float(m.a.max()) < 0.5, "amplitude should init on the PSTH scale"
+
+
+def test_dexp_signed_mode_still_permits_negative_output():
+    """non_negative_output=False keeps the signed-target (LFP/Vm) escape hatch."""
+    torch.manual_seed(0)
+    m = ParametricDoubleExponential(num_features=64, non_negative_output=False)
+    with torch.no_grad():
+        m._raw_b.copy_(torch.full((64,), -1.0))      # negative baseline
+        y = m(torch.zeros(1, 64))
+    assert (y < 0).any(), "signed mode must allow negative outputs"

@@ -138,11 +138,41 @@ class ParametricDoubleExponential(nn.Module):
 
     .. math::
 
-        f(x) = a \\cdot \\exp(-\\exp(k \\cdot x - s)) + b
+        f(x) = a \\cdot \\exp(-\\exp(-\\exp(k) \\cdot (x - s))) + b
         \\quad\\text{(bias=True)}
 
     where ``a`` is the saturated firing rate, ``b`` the baseline, ``s``
-    the firing threshold, and ``k`` the gain.
+    the firing threshold, and ``k`` the curvature (Thorson's / NEMS'
+    ``kappa``: larger means a steeper slope).
+
+    The curvature enters as :math:`-\\exp(k)`, which is negative for any
+    real ``k``, so **the curve is monotonically increasing by
+    construction** — a firing rate that rises with the drive — matching
+    the reference implementation (NEMS ``DoubleExponential``:
+    ``base + amplitude * exp(-exp(-exp(kappa) * (x + shift)))``).
+
+    .. versionchanged:: 0.1.1
+        Two fixes, both of which caused silent **mean-collapse** (training
+        drives the loss down while the prediction stays ~constant and the
+        correlation stays ~0):
+
+        1. The curvature was previously applied unconstrained
+           (``exp(k * x - s)``), so ``f`` was increasing only for
+           ``k < 0``; with the ``k ~ U(-0.5, 0.5)`` init roughly **half of
+           the neurons started anti-tuned** (predicted rate *falling* as
+           the drive rose). Sharing one core across such a population makes
+           the feature gradients cancel.
+        2. The init put the output floor at ``f(0) ~ b in (0.22, 0.93)``
+           with amplitude ``a in (0.5, 1.6)``, far above the scale of
+           sparse neural targets (NAT4's PSTH: 95.5 % exact zeros, mean
+           0.0066), so training merely shrank the prediction. ``a`` and
+           ``b`` now initialise near the PSTH scale, mirroring the guard
+           already present in :class:`ParametricSoftplus`.
+
+        Together these took NAT4 / ConvNet2D from test ``cc_norm`` 0.043
+        (collapsed) to 0.649. ``k`` keeps its name and shape, so old
+        state-dicts still load, **but a checkpoint trained under the old
+        parameterisation will not reproduce its previous outputs.**
 
     Parameters
     ----------
@@ -175,25 +205,33 @@ class ParametricDoubleExponential(nn.Module):
         self.bias = bias
         self.non_negative_output = non_negative_output
 
-        # Threshold and gain are unconstrained.
+        # Curvature (k, = Thorson/NEMS ``kappa``) and threshold. ``k`` is unconstrained but
+        # enters ``forward`` as ``-exp(k)``, so its SIGN cannot flip the curve; only its
+        # magnitude sets steepness.
         self.k = nn.Parameter(torch.empty(self.N))
         self.s = nn.Parameter(torch.empty(self.N))
         nn.init.uniform_(self.k, -0.5, 0.5)
         nn.init.uniform_(self.s, 0.5, 1.5)
 
-        # Saturated rate (and optionally baseline) gate non-negativity.
+        # Saturated rate (and optionally baseline) gate non-negativity. The init keeps
+        # ``f(0)`` SMALL: neural PSTH targets are sparse and low-rate (NAT4: 95.5 % exact
+        # zeros, mean 0.0066), and an output floor far above the target mean makes training
+        # reduce the loss by shrinking the prediction rather than learning structure — the
+        # mean-collapse failure that :class:`ParametricSoftplus` guards against the same way.
         self._raw_a = nn.Parameter(torch.empty(self.N))
         if non_negative_output:
-            nn.init.uniform_(self._raw_a, -0.43, 1.40)
+            # softplus(_raw_a) ~ uniform(0.05, 0.35): dynamic range on the scale of a PSTH
+            nn.init.uniform_(self._raw_a, -3.0, -0.85)
         else:
-            nn.init.uniform_(self._raw_a, 0.5, 1.5)
+            nn.init.uniform_(self._raw_a, 0.05, 0.35)
 
         if bias:
             self._raw_b = nn.Parameter(torch.empty(self.N))
             if non_negative_output:
-                nn.init.uniform_(self._raw_b, -1.43, 0.43)
+                # softplus(_raw_b) ~ uniform(0.005, 0.05): floor near zero
+                nn.init.uniform_(self._raw_b, -5.0, -3.0)
             else:
-                nn.init.uniform_(self._raw_b, 0.0, 1.0)
+                nn.init.uniform_(self._raw_b, -0.05, 0.05)
 
     @property
     def a(self) -> torch.Tensor:
@@ -206,7 +244,9 @@ class ParametricDoubleExponential(nn.Module):
         return F.softplus(self._raw_b) if self.non_negative_output else self._raw_b
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = self.a * torch.exp(-torch.exp(self.k * x - self.s))
+        # Gain enters as -exp(k) (Thorson 2015 / NEMS), which is negative for ANY real k, so
+        # the curve is monotonically INCREASING by construction. See the class docstring.
+        out = self.a * torch.exp(-torch.exp(-torch.exp(self.k) * (x - self.s)))
         if self.bias:
             out = out + self.b
         return out
