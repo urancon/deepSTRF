@@ -108,9 +108,25 @@ class NeuralDataset(Dataset, ABC):
         -------
         int
             ``self.N_neurons`` (the full population size, not the current
-            selection).
+            selection). See :attr:`n_selected` for the number of neurons the
+            dataset currently *exposes* through ``__getitem__``.
         """
         return self.N_neurons
+
+    @property
+    def n_selected(self) -> int:
+        """Number of neurons currently exposed by ``__getitem__``.
+
+        This is what a model's ``out_neurons`` must match after a selection.
+        ``select_population`` / ``select_pop_by_*`` set ``self.I`` but leave
+        ``self.N_neurons`` (and ``get_N()``) at the full-population value — so
+        sizing a model from ``N_neurons`` after a selection gives the wrong
+        output width. Use this property instead. It respects both the neuron
+        selection (``self.I``) and the bidirectional stim cross-filter (neurons
+        with no valid response among the selected stimuli are hidden), matching
+        exactly the neuron axis of the batches ``__getitem__`` returns.
+        """
+        return len(self._selected())
 
     def get_S(self):
         """Return the total number of stimuli in the dataset.
@@ -324,6 +340,11 @@ class NeuralDataset(Dataset, ABC):
 
     def select_population(self, neuron_indices):
         """Restrict the selection to the listed neurons.
+
+        Sets ``self.I`` to ``neuron_indices``. Note this does **not** change
+        ``self.N_neurons`` / ``get_N()`` (which stay at the full-population
+        value) — size a model's ``out_neurons`` from :attr:`n_selected`, not
+        from ``N_neurons``, after calling this.
 
         Parameters
         ----------

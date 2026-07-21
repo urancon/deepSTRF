@@ -206,6 +206,136 @@ def test_early_stop_fires_when_monitor_plateaus():
     assert len(history) == fitter.patience + 1
 
 
+def test_min_delta_treats_subthreshold_improvement_as_plateau():
+    """Improvements smaller than min_delta don't reset patience → early-stop
+    fires even when the monitor micro-fluctuates upward forever. Without
+    min_delta the same trickle would run to max_epochs."""
+    train_loader, val_loader = _make_loaders()
+
+    def _run(min_delta):
+        set_random_seed(0)
+        model = _LinearReadout(F=4, N=2)
+        fitter = Fitter(
+            model, train_loader, val_loader,
+            max_epochs=50, patience=3, min_delta=min_delta,
+            monitor="val_cc_norm", mode="max", log_fn=lambda d: None,
+        )
+        state = {"v": 0.5}
+        original_evaluate = fitter._evaluate
+
+        def _trickle(loader):
+            out = original_evaluate(loader)
+            state["v"] += 1e-6          # below a 1e-3 min_delta
+            out["cc_norm"] = torch.tensor([state["v"]])
+            return out
+
+        fitter._evaluate = _trickle
+        return len(fitter.fit())
+
+    # With min_delta the sub-threshold trickle is a plateau → stop at patience+1.
+    assert _run(1e-3) == 4
+    # With the old behaviour (min_delta=0) the trickle keeps resetting → max_epochs.
+    assert _run(0.0) == 50
+
+
+def test_reduce_lr_on_plateau_drops_once_and_resets_patience():
+    """On a flat monitor the LR drops exactly once (min_lr pinned to
+    base*factor) and the early-stop counter resets at the drop, so the run
+    lasts longer than the plain patience+1 it would without the reset."""
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders()
+    model = _LinearReadout(F=4, N=2)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-2)
+    fitter = Fitter(
+        model, train_loader, val_loader, optimizer=opt,
+        max_epochs=100, patience=3,
+        reduce_lr_on_plateau=True, lr_factor=0.1, lr_patience=2,
+        monitor="val_cc_norm", mode="max", log_fn=lambda d: None,
+    )
+    flat = torch.tensor([0.0])
+    original_evaluate = fitter._evaluate
+
+    def _flat(loader):
+        out = original_evaluate(loader)
+        out["cc_norm"] = flat.clone()
+        return out
+
+    fitter._evaluate = _flat
+    history = fitter.fit()
+    # exactly one reduction: lr pinned at base*factor, no further drops
+    assert abs(opt.param_groups[0]["lr"] - 1e-2 * 0.1) < 1e-9
+    # the LR-drop reset extends the run past the no-scheduler patience+1 (=4)
+    assert len(history) > 4
+
+
+def test_patience_after_lr_drop_tightens_post_drop_window():
+    """With patience_after_lr_drop set, the run stops sooner after the LR drop.
+    Flat monitor, patience=10, lr_patience=2, patience_after_lr_drop=3:
+    LR drops at epoch 2 (resets counter), then 3 idle epochs → stop at epoch 5."""
+    set_random_seed(0)
+    train_loader, val_loader = _make_loaders()
+    model = _LinearReadout(F=4, N=2)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-2)
+    fitter = Fitter(
+        model, train_loader, val_loader, optimizer=opt,
+        max_epochs=100, patience=10,
+        reduce_lr_on_plateau=True, lr_factor=0.1, lr_patience=2,
+        patience_after_lr_drop=3,
+        monitor="val_cc_norm", mode="max", log_fn=lambda d: None,
+    )
+    flat = torch.tensor([0.0])
+    original_evaluate = fitter._evaluate
+
+    def _flat(loader):
+        out = original_evaluate(loader)
+        out["cc_norm"] = flat.clone()
+        return out
+
+    fitter._evaluate = _flat
+    history = fitter.fit()
+    assert abs(opt.param_groups[0]["lr"] - 1e-2 * 0.1) < 1e-9   # dropped once
+    # post-drop window of 3 stops it well before the full patience=10 would
+    # (which, with the LR-drop counter reset, would run to ~13 epochs).
+    assert len(history) < 10
+
+
+def test_ema_changes_final_weights():
+    """ema_decay maintains an EMA shadow and finalizes the model to it, so the
+    final weights differ from plain training (same seed/data)."""
+    def _run(ema):
+        set_random_seed(0)
+        train_loader, val_loader = _make_loaders()
+        model = _LinearReadout(F=4, N=2)
+        Fitter(model, train_loader, val_loader, max_epochs=5, patience=100,
+               ema_decay=ema, log_fn=lambda d: None).fit()
+        return {k: v.clone() for k, v in model.state_dict().items()}
+
+    plain = _run(None)
+    ema = _run(0.9)
+    assert any(not torch.allclose(plain[k], ema[k]) for k in plain)
+
+
+def test_state_path_resumes_training(tmp_path):
+    """A run interrupted at max_epochs=3 resumes from state_path and continues
+    to epoch 5 with the restored history (epochs 0..5)."""
+    sp = tmp_path / "state.pt"
+    train_loader, val_loader = _make_loaders()
+
+    set_random_seed(0)
+    f1 = Fitter(_LinearReadout(F=4, N=2), train_loader, val_loader,
+                max_epochs=3, patience=100, state_path=sp, log_fn=lambda d: None)
+    h1 = f1.fit()
+    assert len(h1) == 3 and sp.exists()
+
+    # Fresh model object; the resume must overwrite it from the saved state and
+    # continue from epoch 3.
+    set_random_seed(1)
+    f2 = Fitter(_LinearReadout(F=4, N=2), train_loader, val_loader,
+                max_epochs=6, patience=100, state_path=sp, log_fn=lambda d: None)
+    h2 = f2.fit()
+    assert [d["epoch"] for d in h2] == list(range(6))   # restored 0,1,2 + ran 3,4,5
+
+
 # -----------------------------------------------------------------------------
 # (c) checkpoint round-trip
 # -----------------------------------------------------------------------------

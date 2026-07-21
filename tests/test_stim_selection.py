@@ -355,3 +355,30 @@ def test_select_pop_by_stim_predicate_empty_s_idxs_returns_empty():
     ds = _audio_with_subset_meta(N=3, S_est=4, S_val=2)
     assert ds.select_pop_by_stim_predicate(lambda s: s["subset"] == "nope") == []
     assert ds.I == []
+
+
+def test_n_selected_reflects_population_selection():
+    """n_selected == neurons exposed by __getitem__; N_neurons/get_N stay at full pop.
+
+    Regression for the select_population footgun: models must size out_neurons to
+    n_selected, not N_neurons (which select_population leaves unchanged)."""
+    ds = _audio_with_subset_meta(N=5, S_est=4, S_val=2)
+    assert ds.n_selected == 5 and ds.get_N() == 5      # no selection -> full
+
+    ds.select_population([0, 2, 4])
+    assert ds.N_neurons == 5 and ds.get_N() == 5        # full pop unchanged
+    assert ds.n_selected == 3                           # exposed subset
+    # the neuron axis of a batch matches n_selected, not N_neurons
+    batch = ds[0]
+    assert len(batch["responses"]) == ds.n_selected
+
+
+def test_n_selected_respects_bidirectional_stim_filter():
+    """With a stim subset selected, n_selected also drops neurons hidden by the
+    bidirectional rule (no valid response among the selected stims)."""
+    # last 2 neurons are val-only (NaN on est stims)
+    ds = _audio_with_subset_meta(N=5, S_est=4, S_val=2, val_only_neurons=2)
+    ds.select_stims_by_attr("subset", "est")            # est stims only
+    # the 2 val-only neurons have no est responses -> hidden -> n_selected == 3
+    assert ds.n_selected == 3
+    assert len(ds[0]["responses"]) == 3

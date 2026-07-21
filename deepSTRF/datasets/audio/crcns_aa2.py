@@ -368,6 +368,13 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
         cell_areas = []
         if areas == 'all':
             areas = ('Field_L', 'OV', 'CM', 'mld', 'None')
+        _valid_areas = ('Field_L', 'L', 'L1', 'L2a', 'L2b', 'L3', 'OV', 'CM', 'mld', 'None')
+        for area in areas:
+            if area not in _valid_areas:
+                raise ValueError(
+                    f"Unknown AA2 area {area!r}. Valid areas (case-sensitive): "
+                    f"{_valid_areas}. Note the casing: lowercase 'mld' but capitalized "
+                    f"'OV', 'CM', 'Field_L'.")
         for area in areas:
             if (area == 'Field_L') or (area == 'L'):
                 cells += AREA_CELLs['L'] + AREA_CELLs['L1'] + AREA_CELLs['L2a'] + AREA_CELLs['L2b'] + AREA_CELLs['L3']

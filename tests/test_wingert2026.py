@@ -368,22 +368,25 @@ def two_site_dataset():
 @skip_if_no_data
 def test_two_site_block_diagonal(two_site_dataset):
     ds = two_site_dataset
-    by_session = {}
-    for n_idx, meta in enumerate(ds.nrn_meta):
-        by_session.setdefault(meta["session"], []).append(n_idx)
-    # For each session's stim entries, only same-session cells should be real;
-    # all other-session cells should be NaN sentinels.
+    # Stims are deduped by unique sound: one row per sound, with each session
+    # that presented it listed in stim_meta['sessions']. A neuron has real data
+    # iff its recording session presented the sound (cross-session pairs stay
+    # NaN sentinels). A sound shared by both sessions is real for BOTH sessions'
+    # cells — there is no longer a single-session block per stim row.
     for s_idx, smeta in enumerate(ds.stim_meta):
-        same = by_session[smeta["session"]]
-        other = [n for n in range(ds.N_neurons) if n not in same]
-        for n in same:
-            assert ds.responses[s_idx][n].numel() > 1, (
-                f"expected real data at s={s_idx},n={n} (same session)"
-            )
-        for n in other:
-            assert ds.responses[s_idx][n].numel() == 1, (
-                f"expected NaN sentinel at s={s_idx},n={n} (other session)"
-            )
+        playing = set(smeta["sessions"])
+        for n_idx, nmeta in enumerate(ds.nrn_meta):
+            is_real = ds.responses[s_idx][n_idx].numel() > 1
+            if is_real:
+                assert nmeta["session"] in playing, (
+                    f"real data at s={s_idx},n={n_idx} but session "
+                    f"{nmeta['session']!r} not in {playing}"
+                )
+            if nmeta["session"] not in playing:
+                assert not is_real, (
+                    f"expected NaN sentinel at s={s_idx},n={n_idx}: session "
+                    f"{nmeta['session']!r} did not present this sound"
+                )
 
 
 @skip_if_no_data
@@ -405,7 +408,7 @@ def test_slj032a_shared_session_stims():
     )
     assert ds.N_neurons == 76 + 47
     # One session => one stim entry per stim name, not two.
-    sessions = {m["session"] for m in ds.stim_meta}
+    sessions = set().union(*(m["sessions"] for m in ds.stim_meta))
     assert sessions == {"SLJ032a"}
 
 
@@ -465,7 +468,7 @@ def test_rasterize_matches_nems0_convention():
     assert len(ds.stim_meta) == 6
     for s_idx, smeta in enumerate(ds.stim_meta):
         assert smeta["subset"] == "val"
-        assert smeta["session"] == "PRN018a"
+        assert smeta["sessions"] == ["PRN018a"]
         for n_idx in range(ds.N_neurons):
             r = ds.responses[s_idx][n_idx]
             assert r.shape == (30, 2000), (

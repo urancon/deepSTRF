@@ -17,6 +17,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader
 
@@ -122,6 +123,47 @@ class Fitter:
     patience
         Early-stop patience: number of epochs without improvement on
         ``monitor`` before the loop terminates.
+    min_delta
+        Minimum change in ``monitor`` that counts as an improvement (and so
+        resets the patience counter / saves a new best checkpoint). Default
+        ``0.0`` (any strict improvement counts). Set a small positive value
+        (e.g. ``1e-5``) when the monitored quantity micro-fluctuates on a
+        plateau — otherwise sub-noise wiggles keep resetting patience and the
+        loop never early-stops, forcing reliance on ``max_epochs``. With
+        ``min_delta > 0`` patience can be the sole stopping criterion and
+        ``max_epochs`` set effectively unbounded.
+
+        Note: leaving ``min_delta = 0`` (the default) is often *better* for final
+        accuracy — validation noise is unbiased, so a new best-on-val is a
+        genuinely better point worth keeping (and the ckpt captures it). Pair
+        ``min_delta = 0`` with ``reduce_lr_on_plateau`` for long, high-quality fits.
+    reduce_lr_on_plateau
+        If ``True``, attach a :class:`~torch.optim.lr_scheduler.ReduceLROnPlateau`
+        on ``monitor`` that drops the learning rate by ``lr_factor`` after
+        ``lr_patience`` epochs without improvement. ``min_lr`` is pinned to
+        ``base_lr * lr_factor`` so exactly **one** reduction can occur. When the
+        LR drops, the early-stop patience counter is reset so the model gets a
+        fresh window at the lower LR before stopping. Default ``False``.
+    lr_factor, lr_patience, lr_threshold
+        Multiplicative LR-drop factor (default ``0.2``), plateau patience
+        (default ``30``), and the relative improvement threshold below which an
+        epoch counts as "no improvement" for the scheduler (default ``1e-4``,
+        PyTorch's default). Used only when ``reduce_lr_on_plateau=True``. With
+        ``min_delta=0`` (keep every best-on-val), a too-small ``lr_threshold``
+        lets sub-noise val_loss creep masquerade as progress so the LR never
+        drops — raise it (e.g. ``1e-3``) so the drop fires on a genuine plateau.
+        Re-applied on resume, so it can be changed when continuing a run.
+    patience_after_lr_drop
+        If set, the early-stop patience switches to this (typically smaller)
+        value once the LR has dropped — the model is annealed and near-converged
+        then, so it needn't wait as long. Default ``None`` (use ``patience``
+        throughout). Tracked across resume via the saved state.
+    ema_decay
+        If set (e.g. ``0.999``), maintain an exponential moving average of the
+        model's weights (updated every optimizer step) and use the EMA weights
+        for validation, the best checkpoint, and the final restored model — a
+        cheap generalization boost, especially with noisy validation. Default
+        ``None`` (no EMA). Resumable (EMA state saved/restored via ``state_path``).
     monitor
         Key in the per-epoch dict to track for early stopping. Default
         ``'val_cc_norm'``. Use ``'val_loss'``, ``'val_cc'``, or any custom
@@ -132,6 +174,13 @@ class Fitter:
     ckpt_path
         If given, save the best-on-``monitor`` ``state_dict`` to this path
         and restore it at the end of ``fit()``.
+    state_path
+        If given, save the FULL training state (model + optimizer + LR-scheduler
+        state + epoch + best score + patience counter + history) to this path
+        after every epoch (atomically). If the file already exists at the start
+        of ``fit()``, training **resumes** from it — so a killed/interrupted run
+        continues exactly where it left off (unlike ``ckpt_path``, which only
+        holds best model weights). Default ``None``.
     log_fn
         Called as ``log_fn(epoch_dict)`` once per epoch. Default: a small
         formatter that prints ``epoch | k=v | ...``. Override to log to
@@ -172,9 +221,17 @@ class Fitter:
         device: Union[str, torch.device] = "cpu",
         max_epochs: int = 1000,
         patience: int = 10,
+        min_delta: float = 0.0,
+        reduce_lr_on_plateau: bool = False,
+        lr_factor: float = 0.2,
+        lr_patience: int = 30,
+        lr_threshold: float = 1e-4,
+        patience_after_lr_drop: Optional[int] = None,
+        ema_decay: Optional[float] = None,
         monitor: str = "val_cc_norm",
         mode: str = "max",
         ckpt_path: Optional[Union[str, Path]] = None,
+        state_path: Optional[Union[str, Path]] = None,
         log_fn: Callable[[Mapping[str, Any]], None] = _format_epoch,
         track_train_metrics: bool = True,
         track_per_cell_best: bool = False,
@@ -201,9 +258,18 @@ class Fitter:
         )
         self.max_epochs = max_epochs
         self.patience = patience
+        self.min_delta = float(min_delta)
+        self.reduce_lr_on_plateau = reduce_lr_on_plateau
+        self.lr_factor = float(lr_factor)
+        self.lr_patience = int(lr_patience)
+        self.lr_threshold = float(lr_threshold)
+        self.patience_after_lr_drop = patience_after_lr_drop
+        self.ema_decay = ema_decay
+        self._ema_state: Optional[Dict[str, torch.Tensor]] = None
         self.monitor = monitor
         self.mode = mode
         self.ckpt_path = Path(ckpt_path) if ckpt_path is not None else None
+        self.state_path = Path(state_path) if state_path is not None else None
         self.log_fn = log_fn
         self.track_train_metrics = track_train_metrics
         self.track_per_cell_best = track_per_cell_best
@@ -238,11 +304,12 @@ class Fitter:
         history: List[Dict[str, Any]] = []
         best_score = -float("inf") if self.mode == "max" else float("inf")
         better = (
-            (lambda new, best: new > best)
+            (lambda new, best: new > best + self.min_delta)
             if self.mode == "max"
-            else (lambda new, best: new < best)
+            else (lambda new, best: new < best - self.min_delta)
         )
         epochs_no_improvement = 0
+        lr_dropped = False
 
         if self.track_per_cell_best:
             N = self.model.O
@@ -253,7 +320,34 @@ class Fitter:
             )
             self._per_cell_snapshots: Dict[int, List[torch.Tensor]] = {}
 
-        for epoch in range(self.max_epochs):
+        scheduler = None
+        if self.reduce_lr_on_plateau:
+            base_lr = self.optimizer.param_groups[0]["lr"]
+            scheduler = ReduceLROnPlateau(
+                self.optimizer, mode=self.mode, factor=self.lr_factor,
+                patience=self.lr_patience, threshold=self.lr_threshold,
+                min_lr=base_lr * self.lr_factor,
+            )
+
+        # Resume full training state if a checkpoint exists at state_path.
+        start_epoch = 0
+        if self.state_path is not None and self.state_path.exists():
+            st = torch.load(self.state_path, map_location=self.device)
+            self.model.load_state_dict(st["model"])
+            self.optimizer.load_state_dict(st["optimizer"])
+            if scheduler is not None and st.get("scheduler") is not None:
+                scheduler.load_state_dict(st["scheduler"])
+                # state_dict restores the saved threshold; re-apply the current
+                # one so a resume can change the plateau-detection sensitivity.
+                scheduler.threshold = self.lr_threshold
+            start_epoch = st["epoch"] + 1
+            best_score = st["best_score"]
+            epochs_no_improvement = st["epochs_no_improvement"]
+            history = st["history"]
+            lr_dropped = st.get("lr_dropped", False)
+            self._ema_state = st.get("ema_state")
+
+        for epoch in range(start_epoch, self.max_epochs):
             train = self._train_one_epoch()
             val = self._evaluate(self.val_loader)
             epoch_dict: Dict[str, Any] = {"epoch": epoch}
@@ -280,12 +374,51 @@ class Fitter:
                 best_score = score
                 if self.ckpt_path is not None:
                     self.ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-                    torch.save(self.model.state_dict(), self.ckpt_path)
+                    # With EMA on, the monitor was computed on the EMA weights,
+                    # so the best checkpoint must hold the EMA weights too.
+                    torch.save(
+                        self._ema_state if self._ema_state is not None
+                        else self.model.state_dict(),
+                        self.ckpt_path,
+                    )
                 epochs_no_improvement = 0
             else:
                 epochs_no_improvement += 1
 
-            if epochs_no_improvement >= self.patience:
+            if scheduler is not None:
+                prev_lr = self.optimizer.param_groups[0]["lr"]
+                scheduler.step(score)
+                if self.optimizer.param_groups[0]["lr"] < prev_lr - 1e-12:
+                    # One LR drop happened — give a fresh patience window at the
+                    # lower LR before early-stopping.
+                    epochs_no_improvement = 0
+                    lr_dropped = True
+
+            # Persist full training state (atomically) so a killed run resumes.
+            if self.state_path is not None:
+                self.state_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
+                torch.save({
+                    "model": self.model.state_dict(),
+                    "optimizer": self.optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict() if scheduler is not None else None,
+                    "epoch": epoch,
+                    "best_score": best_score,
+                    "epochs_no_improvement": epochs_no_improvement,
+                    "history": history,
+                    "lr_dropped": lr_dropped,
+                    "ema_state": self._ema_state,
+                }, tmp)
+                tmp.replace(self.state_path)
+
+            # After the (single) LR drop, optionally tighten patience: the model
+            # is annealed and near-converged, so it needn't wait as long.
+            eff_patience = (
+                self.patience_after_lr_drop
+                if (self.patience_after_lr_drop is not None and lr_dropped)
+                else self.patience
+            )
+            if epochs_no_improvement >= eff_patience:
                 break
 
         if self.ckpt_path is not None and self.ckpt_path.exists():
@@ -300,6 +433,12 @@ class Fitter:
         # cell's readout slice with its individual-best.
         if self.track_per_cell_best:
             self._restore_per_cell_snapshots()
+
+        # With EMA and no ckpt_path, leave the model at the EMA weights (the
+        # ckpt_path branch above already restored the EMA-saved best).
+        if (self.ema_decay is not None and self.ckpt_path is None
+                and self._ema_state is not None):
+            self.model.load_state_dict(self._ema_state)
 
         return history
 
@@ -386,6 +525,8 @@ class Fitter:
             self.optimizer.step()
             if hasattr(self.model, "detach"):
                 self.model.detach()
+            if self.ema_decay is not None:
+                self._update_ema()
 
             loss_sum += float(loss.detach().item())
             n_batches += 1
@@ -409,7 +550,33 @@ class Fitter:
                     out[name] = fn(preds_cat, responses_cat)
         return out
 
+    def _update_ema(self) -> None:
+        """In-place EMA of the model's full state_dict (params + buffers)."""
+        sd = self.model.state_dict()
+        if self._ema_state is None:
+            self._ema_state = {k: v.detach().clone() for k, v in sd.items()}
+            return
+        d = self.ema_decay
+        for k, v in sd.items():
+            e = self._ema_state[k]
+            if v.is_floating_point():
+                e.mul_(d).add_(v.detach(), alpha=1.0 - d)
+            else:
+                e.copy_(v)            # integer/bool buffers: track latest
+
     def _evaluate(self, loader: DataLoader) -> Dict[str, Any]:
+        """Evaluate the EMA weights if EMA is on (swap in, eval, restore),
+        else the live weights."""
+        if self._ema_state is None:
+            return self._evaluate_raw(loader)
+        backup = {k: v.detach().clone() for k, v in self.model.state_dict().items()}
+        self.model.load_state_dict(self._ema_state)
+        try:
+            return self._evaluate_raw(loader)
+        finally:
+            self.model.load_state_dict(backup)
+
+    def _evaluate_raw(self, loader: DataLoader) -> Dict[str, Any]:
         self.model.eval()
         preds_list: List[torch.Tensor] = []
         responses_list: List[torch.Tensor] = []

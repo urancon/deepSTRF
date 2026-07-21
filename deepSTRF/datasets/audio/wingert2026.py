@@ -156,10 +156,16 @@ class Wingert2026Dataset(AudioNeuralDataset):
 
     - ``stim_meta`` dicts hold ``name`` (e.g. ``'STIM_seq0032.wav'``),
       ``subset`` (``'est'`` for ``STIM_seq*``, ``'val'`` for ``STIM_00*``),
-      and ``site`` (the cell_list-canonical site id this stim was presented
-      at). The same source wav can appear under multiple ``(name, site)``
-      pairs because each session re-rasterizes its own copy and the two
-      duration cohorts produce different-shape tensors.
+      and ``sessions`` (the sorted list of recording sessions that presented
+      this sound). Stimuli are **deduplicated by unique sound** (canonical
+      deepSTRF paradigm): one row per sound, not one per ``(name, session)``.
+      The first-presenting session's spectrogram is canonical and every
+      session's own response raster is pooled onto it, NaN-padded/truncated
+      to that sound's canonical T. Same-named specs are bit-identical within
+      a session-T cohort; the modest cross-cohort (T=2000 vs 2200) difference
+      is a re-render/gain nuisance over identical sound content, so reusing one
+      canonical spectrogram is sound. (Before 2026-06, the loader emitted one
+      row per ``(name, session)`` — a ~50x-redundant block-sparse grid.)
     - ``nrn_meta`` dicts hold ``cell_id``, ``site`` (from
       ``cell_list.csv``, authoritative), ``area``, ``layer``, ``depth``,
       ``narrow``, ``celltype``, ``sw``, ``goodpred``, and the parsed
@@ -391,8 +397,43 @@ class Wingert2026Dataset(AudioNeuralDataset):
         self.stim_meta = []
         self.responses = []
 
-        # Deterministic session order so concat'd / persisted instances are
-        # bit-stable across runs.
+        # ---- dedup by unique stimulus name (canonical deepSTRF paradigm) ----
+        # The same sounds are presented across many sessions. Emitting one row
+        # per (name, session) would blow the stim axis up ~50x (e.g. the 6 fixed
+        # test sequences -> 6 x ~50 = ~300 rows, a ~98%-NaN block-sparse grid),
+        # contradicting the "unique stimuli, NaN sentinels for unrecorded
+        # (stim, neuron) pairs" contract (data_paradigm.md §2-3) and the way
+        # every other multi-site dataset (e.g. espejo.py) assembles its stims.
+        # We therefore keep ONE row per unique sound: the first-seen session's
+        # spectrogram is canonical, and every session's own raster is pooled
+        # onto it (neurons are disjoint across sessions, so each neuron is
+        # filled from exactly its own session). Same-named specs are bit-
+        # identical within a session-T group; the modest cross-T (T=2000 vs
+        # 2200) difference is a re-render/gain nuisance over identical sound
+        # content (same segments/gaps/timing; see untracked/benchmark figures),
+        # so reusing one canonical spectrogram is sound.
+        spec_by_name: Dict[str, torch.Tensor] = {}
+        Tcanon_by_name: Dict[str, int] = {}
+        sessions_by_name: Dict[str, List[str]] = {}
+        resp_by_name: Dict[str, List[torch.Tensor]] = {}
+
+        def _align_T(raster: torch.Tensor, T: int) -> torch.Tensor:
+            """Pad (NaN, trailing) / truncate a ``(R, T_s)`` raster to ``T``.
+
+            T differences across sessions of the same sound are trailing
+            silence; truncation drops only silence, padding marks the
+            unrecorded trailing bins NaN (masked downstream).
+            """
+            Ts = raster.shape[-1]
+            if Ts == T:
+                return raster
+            if Ts > T:
+                return raster[..., :T].contiguous()
+            pad = torch.full((raster.shape[0], T - Ts), float("nan"))
+            return torch.cat([raster, pad], dim=-1)
+
+        # Deterministic session order so the first-seen canonical spectrogram
+        # (and persisted instances) are bit-stable across runs.
         for session in tqdm(sorted(cells_by_session.keys()),
                             desc="Wingert2026 sites"):
             tgz_path = session_to_tgz[session]
@@ -413,25 +454,25 @@ class Wingert2026Dataset(AudioNeuralDataset):
                     f"unexpected F={F_s} for stim {stim_name!r} in session "
                     f"{session!r}; expected F={self.F}"
                 )
-                s_idx = len(self.stims)
-                if self.return_waveform:
-                    self.stims.append(self._load_stim_waveform(stim_name, T_s))
-                else:
-                    self.stims.append(torch.from_numpy(spec).unsqueeze(0).float())
-                self.stim_meta.append({
-                    "name": stim_name,
-                    "subset": "val" if stim_name.startswith("STIM_00") else "est",
-                    "session": session,
-                })
-
-                # Default response row: NaN sentinel everywhere.
-                row: List[torch.Tensor] = [NAN] * self.N_neurons
+                # First session to present this sound sets the canonical
+                # spectrogram + T; later sessions reuse it (responses aligned).
+                if stim_name not in spec_by_name:
+                    if self.return_waveform:
+                        spec_by_name[stim_name] = self._load_stim_waveform(stim_name, T_s)
+                    else:
+                        spec_by_name[stim_name] = (
+                            torch.from_numpy(spec).unsqueeze(0).float()
+                        )
+                    Tcanon_by_name[stim_name] = T_s
+                    sessions_by_name[stim_name] = []
+                    resp_by_name[stim_name] = [NAN] * self.N_neurons
+                sessions_by_name[stim_name].append(session)
+                Tc = Tcanon_by_name[stim_name]
 
                 # Epoch rows giving R presentation windows for this stim.
                 epoch_rows = rec.epochs[rec.epochs["name"] == stim_name]
                 R = len(epoch_rows)
                 if R == 0 or not in_session:
-                    self.responses.append(row)
                     continue
 
                 # Rasterize R repeats × T_s per cell.
@@ -461,10 +502,24 @@ class Wingert2026Dataset(AudioNeuralDataset):
                         rel_bin = rel_bin[(rel_bin >= 0) & (rel_bin < T_s)]
                         if rel_bin.size:
                             np.add.at(reps[r_idx], rel_bin, 1.0)
-                    row[session_cell_idx[cell_id]] = torch.from_numpy(reps)
-                self.responses.append(row)
+                    # Align this session's raster to the sound's canonical T,
+                    # then store it on the unique-sound row (one session per
+                    # cell, so no cross-session concatenation needed).
+                    resp_by_name[stim_name][session_cell_idx[cell_id]] = _align_T(
+                        torch.from_numpy(reps), Tc
+                    )
 
-            del rec  # free per-site spike-time / stim memory ASAP
+            del rec  # free per-session spike-time / stim memory ASAP
+
+        # Emit one row per unique sound, in stable name order.
+        for stim_name in sorted(spec_by_name.keys()):
+            self.stims.append(spec_by_name[stim_name])
+            self.responses.append(resp_by_name[stim_name])
+            self.stim_meta.append({
+                "name": stim_name,
+                "subset": "val" if stim_name.startswith("STIM_00") else "est",
+                "sessions": sorted(sessions_by_name[stim_name]),
+            })
 
         # ---- preprocessing: log-compress + per-channel minmax ----
         # Reproduces the paper's pipeline (see aud_subspace_fit_demo.ipynb):
@@ -668,8 +723,13 @@ def _preprocess_inplace(stims: List[torch.Tensor],
     for row in responses:
         for n, t in enumerate(row):
             if t.numel() > 1:                      # skip (1,1) NaN sentinels
-                n_min[n] = min(n_min[n], float(t.min()))
-                n_max[n] = max(n_max[n], float(t.max()))
+                # NaN-aware: aligned rasters may carry trailing NaN padding
+                # where a session recorded the sound at a shorter T than the
+                # sound's canonical T (data_paradigm.md §7.3).
+                v = t[~torch.isnan(t)]
+                if v.numel():
+                    n_min[n] = min(n_min[n], float(v.min()))
+                    n_max[n] = max(n_max[n], float(v.max()))
     for row in responses:
         for n, t in enumerate(row):
             if t.numel() > 1 and n_max[n] > n_min[n]:
