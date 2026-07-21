@@ -14,25 +14,49 @@ from deepSTRF.models.wav2spec.sincnet import SincNet
 def _factor_into_strides(total: int, n_layers: int) -> list[int]:
     """Choose a length-``n_layers`` stride list that multiplies to ``total``.
 
-    Default heuristic: emit as many 2s as possible, put any remaining factor
-    at the end. Matches the paper's ``[2,2,2,2,2]`` for ``total = 32`` and
-    NS1's ``[2,2,2,2,5]`` for ``total = 80``.
+    Strides are chosen to be as evenly *balanced* as possible: each prime factor
+    of ``total`` (largest first) is assigned to the currently-smallest slot, and
+    the result is returned in descending order (largest downsampling first, so
+    the sequence shortens fastest). This spreads the downsampling across every
+    layer for *any* ``total`` — including non-2-smooth sample-counts.
+
+    Examples: ``total = 32`` -> ``[2, 2, 2, 2, 2]`` (the paper's uniform
+    stride 2, since gerbil-IC audio at 24414 Hz / 762 Hz bins gives exactly
+    2**5); ``total = 80`` -> ``[5, 2, 2, 2, 2]``; ``total = 441`` (a 44.1 kHz
+    corpus binned at 10 ms) -> ``[7, 7, 3, 3, 1]`` (max stride 7, well under the
+    kernel size). A greedy powers-of-two split, by contrast, degenerates on
+    non-2-smooth counts — 441 would become ``[1, 1, 1, 1, 441]``, four conv
+    layers running at the full audio rate plus a final stride-441/kernel-64 conv
+    that skips most of its input. Pass an explicit ``encoder_strides`` list to
+    :class:`ICNet` to override.
+
+    .. versionchanged:: 0.1.1
+       Balanced factorisation replaces the previous greedy powers-of-two
+       heuristic, so auto-factored strides stay small for arbitrary
+       ``(audio_fs, dt_ms)``. The stride *order* also changed (largest first);
+       this only affects models built without an explicit ``encoder_strides``.
     """
     if total < 1 or n_layers < 1:
         raise ValueError(f"total ({total}) and n_layers ({n_layers}) must be >= 1")
+    # prime-factorise total
+    factors, d, n = [], 2, total
+    while d * d <= n:
+        while n % d == 0:
+            factors.append(d)
+            n //= d
+        d += 1
+    if n > 1:
+        factors.append(n)
+    # assign each factor (largest first) to the currently-smallest slot -> balanced
     strides = [1] * n_layers
-    remaining = total
-    for i in range(n_layers - 1):
-        if remaining % 2 == 0 and remaining // 2 >= 1:
-            strides[i] = 2
-            remaining //= 2
-        else:
-            break
-    strides[-1] = remaining
+    for p in sorted(factors, reverse=True):
+        i = min(range(n_layers), key=lambda j: strides[j])
+        strides[i] *= p
+    strides.sort(reverse=True)
     product = 1
     for s in strides:
         product *= s
-    if product != total:
+    if product != total:  # defensive; balanced assignment always multiplies to total
         raise ValueError(
             f"Cannot factor total={total} into {n_layers} strides; got "
             f"{strides} with product {product}. Pass an explicit "
@@ -156,10 +180,11 @@ class ICNet(AudioEncodingModel):
     The paper trains on 24 414 Hz gerbil-IC audio binned at ~1.31 ms (32
     samples per bin, 5 stride-2 conv layers). To use the same architecture
     on a dataset at a different ``(audio_fs, dt_ms)``, the encoder strides
-    are auto-factored so they multiply to ``audio_fs · dt_ms / 1000`` (the
-    number of audio samples per neural bin). For NS1 (48 kHz / 5 ms) that's
-    240 samples / bin and the default factorisation is ``[2, 2, 2, 2, 15]``.
-    Pass an explicit ``encoder_strides`` list to override. The layer
+    are auto-factored (balanced, see :func:`_factor_into_strides`) so they
+    multiply to ``audio_fs · dt_ms / 1000`` (the number of audio samples per
+    neural bin). For NS1 (48 kHz / 5 ms) that's 240 samples / bin and the
+    default factorisation is ``[5, 4, 3, 2, 2]``. Pass an explicit
+    ``encoder_strides`` list to override. The layer
     structure (kernel sizes, channel counts, activations) stays
     paper-faithful; only the strides scale with the dataset, per the
     deepSTRF policy of adapting hyperparameters to each dataset's temporal

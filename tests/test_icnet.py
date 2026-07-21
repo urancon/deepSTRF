@@ -8,16 +8,29 @@ import torch
 def test_icnet_factor_into_strides():
     from deepSTRF.models.audio.icnet import _factor_into_strides
 
-    # Paper config: 32 samples / bin
+    # Paper config: 32 = 2**5 samples / bin -> uniform stride 2
     assert _factor_into_strides(32, 5) == [2, 2, 2, 2, 2]
-    # NS1 16 kHz / 5 ms config (kept for regression): 80 samples / bin
-    assert _factor_into_strides(80, 5) == [2, 2, 2, 2, 5]
-    # NS1 48 kHz / 5 ms (new default): 240 samples / bin
-    assert _factor_into_strides(240, 5) == [2, 2, 2, 2, 15]
-    # NAT4-style config: 10 ms at 16 kHz → 160 samples / bin
-    assert _factor_into_strides(160, 5) == [2, 2, 2, 2, 10]
-    # Odd total, can't peel any 2s — single layer covers it
+    # Balanced factorisation (largest first): 80, 240, 160 samples / bin
+    assert _factor_into_strides(80, 5) == [5, 2, 2, 2, 2]
+    assert _factor_into_strides(240, 5) == [5, 4, 3, 2, 2]
+    assert _factor_into_strides(160, 5) == [5, 4, 2, 2, 2]
+    # Regression: a NON-2-smooth total must NOT collapse to one huge tail stride.
+    # 44.1 kHz / 10 ms -> 441 = 3**2 * 7**2; the old greedy split gave [1,1,1,1,441]
+    # (four full-rate conv layers + a stride-441/kernel-64 conv skipping most input).
+    assert _factor_into_strides(441, 5) == [7, 7, 3, 3, 1]
+    assert _factor_into_strides(960, 3) == [12, 10, 8]     # ac1_mgb S-tier
+    # Odd total, single layer covers it
     assert _factor_into_strides(7, 1) == [7]
+
+    # Invariants for arbitrary (total, n_layers): product matches, length matches,
+    # descending order, and every stride stays under the encoder kernel size (64).
+    for total, nl in [(32, 5), (80, 5), (240, 5), (441, 5), (240, 3),
+                      (960, 3), (120, 5), (1, 3), (513, 4)]:
+        s = _factor_into_strides(total, nl)
+        prod = 1
+        for x in s:
+            prod *= x
+        assert prod == total and len(s) == nl and s == sorted(s, reverse=True)
 
     with pytest.raises(ValueError):
         _factor_into_strides(0, 5)
@@ -33,7 +46,7 @@ def test_icnet_encoder_shape_and_out_channels():
     m = ICNet(audio_fs=16000, out_neurons=5, dt_ms=5.0)
     encoder = m.wav2spec
     assert encoder.out_channels == 64
-    assert encoder.encoder_strides == [2, 2, 2, 2, 5]
+    assert encoder.encoder_strides == [5, 2, 2, 2, 2]   # balanced factorisation of 80
     x = torch.randn(2, 1, 999 * 80) * 0.1
     y = encoder(x)
     assert y.shape == (2, 1, 64, 999)
