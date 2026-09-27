@@ -115,17 +115,38 @@ except ImportError:            # pandas >= 2
     _NEED_INDEX_SHIM = True
 
 
+def _new_block_compat(values, placement, *args, **kwargs):
+    """``pandas.core.internals.blocks.new_block`` accepting a raw placement.
+
+    Some AA5 pickles were written by a pandas version that pickled each
+    DataFrame block's placement as a plain ``slice`` / array; recent pandas
+    requires a ``BlockPlacement``.
+    """
+    from pandas._libs.internals import BlockPlacement
+    from pandas.core.internals.blocks import new_block
+    if not isinstance(placement, BlockPlacement):
+        placement = BlockPlacement(placement)
+    return new_block(values, placement, *args, **kwargs)
+
+
 class _AA5Unpickler(pickle.Unpickler):
     """Unpickler for the pandas-1.x pickles of the AA5 release.
 
-    ``Int64Index`` / ``Float64Index`` lived in ``pandas.core.indexes.numeric``,
-    which pandas 2 removed; plain ``pd.Index`` reconstructs them faithfully.
+    Two pandas internals changed since the release was written:
+
+    - ``Int64Index`` / ``Float64Index`` lived in
+      ``pandas.core.indexes.numeric``, removed in pandas 2; plain ``pd.Index``
+      reconstructs them faithfully;
+    - blocks were rebuilt with ``new_block(values, placement=<slice>)``;
+      recent pandas wants a ``BlockPlacement`` (:func:`_new_block_compat`).
     """
 
     def find_class(self, module, name):
         if _NEED_INDEX_SHIM and module == "pandas.core.indexes.numeric":
             import pandas as pd
             return pd.Index
+        if module == "pandas.core.internals.blocks" and name == "new_block":
+            return _new_block_compat
         return super().find_class(module, name)
 
 
