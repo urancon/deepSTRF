@@ -8,6 +8,16 @@ While the version is `0.x`, the public API may still change between minor releas
 
 ## [Unreleased]
 
+### Added
+- **CRCNS-AA5 dataset** (`CRCNSAA5Dataset`) — awake, freely behaving zebra
+  finches (Robotka, Gahr & Theunissen; Robotka et al. 2023, *Cell Reports*)
+  hearing their full vocal repertoire (110 calls over 10 call types, songs,
+  spectrally / temporally filtered songs, ripples). A one-time streaming
+  step (`prepare_aa5`) turns the ~163 GB release into a compact cache and
+  works on any subset of its 50 recording sites. Playbacks whose sound the
+  cage microphone places away from the logged onset, or that overlap the
+  next playback, are dropped by default.
+
 ## [0.1.0] - 2026-06-03
 
 First public release, available on PyPI: `pip install deepSTRF`.

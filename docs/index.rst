@@ -155,6 +155,7 @@ welcome to add yours.
    :hidden:
 
    _source/ipynb/aa4_inspection.ipynb
+   _source/ipynb/aa5_inspection.ipynb
    _source/ipynb/inspect_crcns_ac1.ipynb
    _source/ipynb/explore_nat4.ipynb
    _source/ipynb/explore_downer2025.ipynb
