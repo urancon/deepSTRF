@@ -54,7 +54,7 @@ STIMS = {
 # trialInd -> (file, start_time, mic shift in s)
 PLAYBACKS = {
     3: ("BlaBla0506_MAF_Te_8-1-9_fs25k.wav", 100.0, 0.0),
-    7: ("stim3.wav", 110.0, 0.0),
+    7: ("stim3.wav", 103.0, 0.0),                           # starts 3 s after trial 3
     9: ("BlaBla0506_MAF_Te_8-1-9_fs25k.wav", 118.0, 1.0),   # sound played 1 s late
     12: ("stim3.wav", 124.0, 0.0),
 }
@@ -170,7 +170,6 @@ def test_spikes_roundtrip(cache):
     got = {}
     for u, t, a, b in zip(z["unit"], z["trial"], z["start"], z["stop"]):
         got[(units[u]["file"], int(t))] = z["spike_times"][a:b]
-    global RNG
     for unit, trials in UNITS.items():
         for t in trials:
             assert (unit, t) in got
@@ -186,7 +185,7 @@ def test_playbacks_and_mic_alignment(cache):
         assert p["file"] == f and p["start_time"] == start
         assert abs(p["mic_offset_ms"] - 1e3 * shift) < 5.0, (t, p["mic_offset_ms"])
         assert p["mic_peak"] > 0.5
-    assert pbs[3]["next_onset_s"] == pytest.approx(10.0)
+    assert pbs[3]["next_onset_s"] == pytest.approx(3.0)
     assert "next_onset_s" not in pbs[12]                      # last playback
 
 

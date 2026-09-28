@@ -4,6 +4,7 @@ from .nat4 import NAT4Dataset
 from .crcns_aa1 import CRCNSAA1Dataset
 from .crcns_aa2 import CRCNSAA2Dataset
 from .crcns_aa4 import CRCNSAA4Dataset, AA4_ANIMAL_IDS
+from .crcns_aa5 import CRCNSAA5Dataset, AA5_BIRDS, AA5_SITES, prepare_aa5, download_aa5
 from .crcns_ac1 import (
     CRCNSAC1Dataset,
     download_ac1,
@@ -26,6 +27,7 @@ __all__ = ['AudioNeuralDataset',
            'CRCNSAA1Dataset',
            'CRCNSAA2Dataset',
            'CRCNSAA4Dataset', 'AA4_ANIMAL_IDS',
+           'CRCNSAA5Dataset', 'AA5_BIRDS', 'AA5_SITES', 'prepare_aa5', 'download_aa5',
            'CRCNSAC1Dataset', 'download_ac1',
            'WEHR_VALID_NEURONS', 'WEHR_NEURONS_SPLIT_NATURAL',
            'EspejoDataset', 'download_espejo', 'download_espejo_nat_waveforms',
