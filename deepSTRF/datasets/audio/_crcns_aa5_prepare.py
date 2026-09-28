@@ -544,10 +544,11 @@ def download_aa5(dest: Union[str, Path], *,
     are skipped. Needs a free CRCNS account (``$CRCNS_USERNAME`` /
     ``$CRCNS_PASSWORD``).
 
-    The remote layout ``aa-5/<bird>/<site>.tar.gz`` follows the other CRCNS
-    datasets but has not been verified against the portal yet.
+    Each archive's path inside the dataset is looked up in the CRCNS file
+    list (:func:`~deepSTRF.utils.data_download.crcns_file_list`), and its
+    size checked against ``AA5_SITES``.
     """
-    from deepSTRF.utils.data_download import crcns_download
+    from deepSTRF.utils.data_download import crcns_download, crcns_file_list
 
     dest = Path(dest).expanduser()
     todo = list(AA5_SITES)
@@ -559,13 +560,23 @@ def download_aa5(dest: Union[str, Path], *,
         todo = [s for s in todo if s in wanted]
     if birds is not None:
         todo = [s for s in todo if parse_site(s)["bird"] in set(birds)]
+    todo = [s for s in todo if not is_site_prepared(dest, s)]
+    if not todo:
+        return sorted(s for s in AA5_SITES if is_site_prepared(dest, s))
+
+    remote = {Path(p).name: (p, size) for p, size in
+              crcns_file_list("aa-5", username=username, password=password).items()}
     for site in todo:
-        if is_site_prepared(dest, site):
-            continue
-        bird = parse_site(site)["bird"]
-        archive = dest / "_archives" / bird / f"{site}.tar.gz"
+        entry = remote.get(f"{site}.tar.gz")
+        if entry is None:
+            raise RuntimeError(f"CRCNS-AA5: {site}.tar.gz is not in the aa-5 file list.")
+        rel, size = entry
+        if size != AA5_SITES[site]:
+            warnings.warn(f"CRCNS-AA5: {rel} is listed at {size} bytes, expected "
+                          f"{AA5_SITES[site]}; downloading anyway.")
+        archive = dest / "_archives" / parse_site(site)["bird"] / f"{site}.tar.gz"
         if not archive.exists():
-            crcns_download(f"aa-5/{bird}/{site}.tar.gz", archive,
+            crcns_download(f"aa-5/{rel}", archive,
                            username=username, password=password, progress=progress)
         prepare_site(archive, dest, mic_alignment_check=mic_alignment_check, progress=progress)
         if not keep_archives:

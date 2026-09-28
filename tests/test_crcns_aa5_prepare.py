@@ -235,3 +235,30 @@ def test_truncated_archive_is_skipped(tmp_path):
 def test_unknown_site_rejected(raw_site, tmp_path):
     with pytest.raises(ValueError, match="Unknown CRCNS-AA5 site"):
         P.prepare_aa5(raw_site, tmp_path, sites=["ZF9X_1t_000000_000000"], progress=False)
+
+
+def test_download_aa5_resolves_paths_from_file_list(raw_site, tmp_path, monkeypatch):
+    from deepSTRF.utils import data_download as dd
+    archive = tmp_path / "remote" / f"{SITE}.tar.gz"
+    archive.parent.mkdir()
+    with tarfile.open(archive, "w:gz") as tf:
+        tf.add(raw_site / "ZF4F" / SITE, arcname=SITE)
+    fetched = []
+    monkeypatch.setattr(dd, "crcns_file_list", lambda ds, **kw: {
+        f"some/remote/dir/{SITE}.tar.gz": archive.stat().st_size, "docs/readme.pdf": 10})
+
+    def fake_download(fp, dest, **kw):
+        fetched.append(fp)
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        Path(dest).write_bytes(archive.read_bytes())
+        return Path(dest)
+    monkeypatch.setattr(dd, "crcns_download", fake_download)
+
+    cache = tmp_path / "cache"
+    with pytest.warns(UserWarning, match="expected"):          # synthetic size != release size
+        done = P.download_aa5(cache, sites=[SITE], mic_alignment_check=False, progress=False)
+    assert done == [SITE] and fetched == [f"aa-5/some/remote/dir/{SITE}.tar.gz"]
+    assert not list((cache / "_archives").rglob("*.tar.gz"))     # archive deleted after slimming
+    # second call: nothing left to do, no network
+    monkeypatch.setattr(dd, "crcns_file_list", lambda *a, **k: pytest.fail("network used"))
+    assert P.download_aa5(cache, sites=[SITE], progress=False) == [SITE]

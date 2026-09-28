@@ -100,7 +100,7 @@ pandas 1.5 as well as recent pandas, so no special environment is needed.
 
 Alternatively, let the dataset do it: `CRCNSAA5Dataset(cache, raw_path=...)`
 slims any new site it finds under `raw_path`. `download=True` downloads the
-archives from the CRCNS NERSC mirror one at a time, slims each and deletes
+archives from the CRCNS download server one at a time, slims each and deletes
 it (`$CRCNS_USERNAME` / `$CRCNS_PASSWORD`). The default cache directory is
 `platformdirs.user_cache_dir('deepSTRF')/AA5`, and `$DEEPSTRF_DATA_DIR`
 overrides it.
