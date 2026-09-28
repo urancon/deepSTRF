@@ -28,11 +28,11 @@ rate) plus ``<dest>/stimuli/index.json``.
 The mic recording is **not** stored. Before discarding it, each playback is
 cross-correlated with its stimulus to measure where the sound actually was
 (``mic_offset_ms``) and how loud the off-stimulus sound was; the loader uses
-these to drop the ~0.4% of playbacks whose logged onset is wrong.
+these to drop the ~0.7% of playbacks whose logged onset is wrong.
 
-The pickles were written with pandas 1.x and reference
-``pandas.core.indexes.numeric``, removed in pandas 2; :class:`_AA5Unpickler`
-maps it back onto ``pd.Index`` when needed.
+The pickles were written with pandas 1.x; :class:`_AA5Unpickler` bridges the
+two pandas internals that changed since (see its docstring), so they load
+under pandas 1.5 as well as recent pandas.
 """
 from __future__ import annotations
 
@@ -48,9 +48,12 @@ import shutil
 import tarfile
 import warnings
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Iterable, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
+
+if TYPE_CHECKING:  # pragma: no cover
+    import pandas as pd
 
 CACHE_VERSION = 1
 WINDOW_S = (-0.5, 4.5)               # response window re. logged stimulus onset
@@ -410,8 +413,11 @@ def prepare_site(source: Union[str, Path], dest: Union[str, Path], *,
             for k, (ti, sp) in enumerate(zip(row.trialInd, row.spikeTimes)):
                 ti = int(ti)
                 sp = np.asarray(sp, np.float64).ravel()
-                rec_unit.append(u_idx); rec_trial.append(ti)
-                rec_start.append(n_spk); n_spk += len(sp); rec_stop.append(n_spk)
+                rec_unit.append(u_idx)
+                rec_trial.append(ti)
+                rec_start.append(n_spk)
+                n_spk += len(sp)
+                rec_stop.append(n_spk)
                 spikes.append(sp)
                 if ti not in playbacks:
                     a = dfabs.loc[ti] if ti in dfabs.index else None
