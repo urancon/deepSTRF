@@ -11,6 +11,7 @@ Public surface:
     - ``figshare_download(article_id, dest_dir, filename=)`` — public figshare articles
     - ``crcns_download(file_path, dest, username=, password=)`` — CRCNS (free account)
     - ``crcns_file_list(dataset)``                       — CRCNS dataset file paths + sizes
+    - ``crcns_resolve(dataset, filename)``               — current path of a CRCNS file, by name
 """
 
 from __future__ import annotations
@@ -194,6 +195,29 @@ def crcns_file_list(dataset: str, *, username: Optional[str] = None,
     if not out:
         raise RuntimeError(f"CRCNS: no files listed for dataset {dataset!r}.")
     return out
+
+
+_crcns_file_lists: dict = {}
+
+
+def crcns_resolve(dataset: str, filename: str, *, username: Optional[str] = None,
+                  password: Optional[str] = None) -> str:
+    """Return ``"<dataset>/<path>"`` for the file named ``filename`` in a CRCNS dataset.
+
+    Looks the file up by base name in the dataset's official file list, so
+    loaders keep working when CRCNS reorganises folders (e.g. AA4's archives
+    moved under ``data/`` in the 2026 AWS migration). The list is fetched once
+    per dataset and process.
+    """
+    if dataset not in _crcns_file_lists:
+        _crcns_file_lists[dataset] = crcns_file_list(dataset, username=username, password=password)
+    hits = [p for p in _crcns_file_lists[dataset] if p.rsplit("/", 1)[-1] == filename]
+    if len(hits) != 1:
+        raise RuntimeError(
+            f"CRCNS: {'no' if not hits else 'several'} file named {filename!r} in dataset "
+            f"{dataset!r}{'' if not hits else ': ' + ', '.join(hits)}."
+        )
+    return f"{dataset}/{hits[0]}"
 
 
 def crcns_download(

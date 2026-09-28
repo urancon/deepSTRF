@@ -194,7 +194,7 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
             ``return_waveform=True``.
         download : bool, default False
             If True and the data is missing under ``path``, fetch the
-            ~17 MB CRCNS-AA1 archive from the CRCNS download server (free CRCNS
+            ~7 MB CRCNS-AA1 archive from the CRCNS download server (free CRCNS
             account required; see ``crcns_download``) and unzip in place.
         username, password : str, optional
             CRCNS credentials. Default to ``$CRCNS_USERNAME`` /

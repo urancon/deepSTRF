@@ -216,6 +216,7 @@ def fake_crcns(monkeypatch):
         sessions.append(sess)
         monkeypatch.setattr(dd.requests, "Session", lambda: sess)
         monkeypatch.setattr(dd, "_crcns_sessions", {})
+        monkeypatch.setattr(dd, "_crcns_file_lists", {})
         return sess
     return install
 
@@ -280,6 +281,43 @@ def test_crcns_file_list(fake_crcns):
     from deepSTRF.utils import data_download as dd
     fake_crcns({"aa-5/ZF4F/a.tar.gz": b"abc", "aa-5/docs/x.pdf": b"12345", "aa-4/other": b"z"})
     assert dd.crcns_file_list("aa-5", username="u", password="p") == {"ZF4F/a.tar.gz": 3, "docs/x.pdf": 5}
+
+
+def test_crcns_resolve_finds_moved_files(fake_crcns):
+    from deepSTRF.utils import data_download as dd
+    sess = fake_crcns({"aa-4/data/BlaBro09xxF.tar.gz": b"x", "aa-4/docs/a.pdf": b"y",
+                       "aa-4/docs/dup.txt": b"1", "aa-4/data/dup.txt": b"2"})
+    assert dd.crcns_resolve("aa-4", "BlaBro09xxF.tar.gz", username="u", password="p") \
+        == "aa-4/data/BlaBro09xxF.tar.gz"
+    dd.crcns_resolve("aa-4", "a.pdf", username="u", password="p")
+    assert sum(c[1].endswith("filelist.txt") for c in sess.calls) == 1   # list fetched once
+    with pytest.raises(RuntimeError, match="no file named"):
+        dd.crcns_resolve("aa-4", "nope.tar.gz", username="u", password="p")
+    with pytest.raises(RuntimeError, match="several"):
+        dd.crcns_resolve("aa-4", "dup.txt", username="u", password="p")
+
+
+def test_download_aa4_follows_the_data_subfolder(fake_crcns, tmp_path):
+    """AA4 archives moved to aa-4/data/ in the 2026 AWS migration."""
+    import io
+    import tarfile
+    from deepSTRF.datasets.audio.crcns_aa4 import download_aa4
+
+    def tgz(folder):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            info = tarfile.TarInfo(f"{folder}/README.txt")
+            info.size = 2
+            tf.addfile(info, io.BytesIO(b"ok"))
+        return buf.getvalue()
+
+    sess = fake_crcns({"aa-4/data/LblBlu2028M.tar.gz": tgz("LblBlu2028M"),
+                       "aa-4/data/CRCNSCode.tar.gz": tgz("CRCNSCode")})
+    out = download_aa4(str(tmp_path), animals=("LblBlu2028M",), username="u", password="p")
+    assert (tmp_path / "LblBlu2028M" / "README.txt").read_text() == "ok"
+    assert (tmp_path / "CRCNSCode" / "README.txt").exists() and out == str(tmp_path)
+    fetched = [c[1] for c in sess.calls if c[0] == "GET" and c[1].endswith(".tar.gz")]
+    assert all("/aa-4/data/" in u for u in fetched) and len(fetched) == 2
 
 
 def test_crcns_download_requires_credentials(monkeypatch, tmp_path):

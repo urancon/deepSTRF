@@ -12,6 +12,7 @@ from deepSTRF.datasets.audio._crcns_aa_loaders import time_binning
 from deepSTRF.utils.audio_io import load_wav
 from deepSTRF.utils.data_download import (
     crcns_download,
+    crcns_resolve,
     default_cache_dir,
     untar,
 )
@@ -80,8 +81,9 @@ def download_aa4(dest: Optional[str] = None,
         archive_name = f"{animal}.tar.gz"
         archive_path = os.path.join(dest_path, archive_name)
         if not os.path.exists(archive_path):
-            crcns_download(f"aa-4/{archive_name}", archive_path,
-                           username=username, password=password)
+            crcns_download(crcns_resolve("aa-4", archive_name, username=username,
+                                         password=password),
+                           archive_path, username=username, password=password)
         untar(archive_path, dest_path)  # tarball already wraps in <animal>/
 
     # CRCNSCode tutorial — small, useful pointer to the original loaders
@@ -89,8 +91,9 @@ def download_aa4(dest: Optional[str] = None,
     if not os.path.isdir(code_dir):
         archive_path = os.path.join(dest_path, "CRCNSCode.tar.gz")
         if not os.path.exists(archive_path):
-            crcns_download("aa-4/CRCNSCode.tar.gz", archive_path,
-                           username=username, password=password)
+            crcns_download(crcns_resolve("aa-4", "CRCNSCode.tar.gz", username=username,
+                                         password=password),
+                           archive_path, username=username, password=password)
         untar(archive_path, dest_path)
 
     return dest_path
