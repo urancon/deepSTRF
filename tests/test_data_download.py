@@ -162,47 +162,124 @@ class _FakePostResp:
             yield self._body[i:i + chunk_size]
 
 
-def test_crcns_download_writes_file(monkeypatch, tmp_path):
-    """Happy path: server returns binary, helper writes it to dest."""
+class _FakeCRCNSSession:
+    """Stand-in for the logged-in ``requests.Session`` used for download.crcns.org.
+
+    ``files`` maps "<dataset>/<path>" -> bytes; ``logged_in`` controls what the
+    dataset landing page says after the login POST.
+    """
+
+    def __init__(self, files, logged_in=True, html_instead_of=()):
+        self.files, self.logged_in, self.html_instead_of = files, logged_in, set(html_instead_of)
+        self.headers, self.calls = {}, []
+
+    def post(self, url, data=None, **kw):
+        self.calls.append(("POST", url, dict(data or {})))
+        return _FakePostResp(b"<html>" + b"x" * 2000 + b"</html>")
+
+    def get(self, url, headers=None, **kw):
+        self.calls.append(("GET", url, dict(headers or {})))
+        from deepSTRF.utils.data_download import CRCNS_DOWNLOAD_BASE
+        path = url[len(CRCNS_DOWNLOAD_BASE) + 1:]
+        if "/" not in path:                                   # dataset landing page
+            txt = "Logged in as u (User Name). logout" if self.logged_in else "Login Required"
+            r = _FakePostResp(txt.encode())
+            r.text = txt
+            return r
+        if path.endswith("/filelist.txt"):
+            ds = path.split("/")[0]
+            txt = "# mode='default'\n" + "".join(
+                f" {k.split('/', 1)[1]} {len(v)} (1 kB)\n" for k, v in self.files.items() if k.startswith(ds + "/"))
+            r = _FakePostResp(txt.encode())
+            r.text = txt
+            return r
+        if path in self.html_instead_of:
+            return _FakePostResp(b"<html><form>login</form></html>", headers={"Content-Type": "text/html"})
+        if path not in self.files:
+            return _FakePostResp(b"not found", status_code=404)
+        body = self.files[path]
+        rng = (headers or {}).get("Range")
+        if rng:
+            start = int(rng.split("=")[1].rstrip("-"))
+            return _FakePostResp(body[start:], headers={"Content-Length": str(len(body) - start)},
+                                 status_code=206)
+        return _FakePostResp(body, headers={"Content-Length": str(len(body))})
+
+
+@pytest.fixture
+def fake_crcns(monkeypatch):
     from deepSTRF.utils import data_download as dd
+    sessions = []
 
-    captured = {}
+    def install(files, **kw):
+        sess = _FakeCRCNSSession(files, **kw)
+        sessions.append(sess)
+        monkeypatch.setattr(dd.requests, "Session", lambda: sess)
+        monkeypatch.setattr(dd, "_crcns_sessions", {})
+        return sess
+    return install
 
-    def fake_post(url, data, **kwargs):
-        captured["url"] = url
-        captured["data"] = data
-        return _FakePostResp(b"\x00\x01\x02\x03binary-payload",
-                             headers={"Content-Length": "20"})
 
-    monkeypatch.setattr(dd.requests, "post", fake_post)
-
+def test_crcns_download_logs_in_then_fetches_from_download_server(fake_crcns, tmp_path):
+    from deepSTRF.utils import data_download as dd
+    sess = fake_crcns({"aa-1/foo.bin": b"\x00\x01binary-payload"})
     dest = tmp_path / "out.bin"
     dd.crcns_download("aa-1/foo.bin", dest, username="u", password="p", progress=False)
-    assert dest.read_bytes().endswith(b"binary-payload")
-    assert captured["url"] == "https://portal.nersc.gov/project/crcns/download/aa-1/foo.bin"
-    assert captured["data"]["fn"] == "aa-1/foo.bin"
-    assert captured["data"]["username"] == "u"
-    assert captured["data"]["password"] == "p"
+    assert dest.read_bytes() == b"\x00\x01binary-payload"
+    method, url, form = sess.calls[0]
+    assert (method, url) == ("POST", dd.CRCNS_LOGIN_URL)
+    assert form["__ac_name"] == "u" and form["__ac_password"] == "p"
+    assert ("GET", f"{dd.CRCNS_DOWNLOAD_BASE}/aa-1/foo.bin", {}) in sess.calls
 
 
-def test_crcns_download_detects_auth_failure(monkeypatch, tmp_path):
-    """If the server returns the login HTML (200 OK), helper must raise."""
+def test_crcns_session_is_reused(fake_crcns, tmp_path):
     from deepSTRF.utils import data_download as dd
+    sess = fake_crcns({"aa-4/a.tgz": b"a", "aa-4/b.tgz": b"b"})
+    dd.crcns_download("aa-4/a.tgz", tmp_path / "a", username="u", password="p", progress=False)
+    dd.crcns_download("aa-4/b.tgz", tmp_path / "b", username="u", password="p", progress=False)
+    assert sum(c[0] == "POST" for c in sess.calls) == 1        # one login
 
-    login_html = (
-        b"<html><body><form action=''>"
-        b"<input name='username' /><input name='password' type='password' />"
-        b"</form></body></html>"
-    )
 
-    monkeypatch.setattr(dd.requests, "post",
-                        lambda url, data, **kw: _FakePostResp(login_html))
+def test_crcns_download_resumes_partial_file(fake_crcns, tmp_path):
+    from deepSTRF.utils import data_download as dd
+    sess = fake_crcns({"aa-5/big.tar.gz": b"0123456789"})
+    dest = tmp_path / "big.tar.gz"
+    (tmp_path / "big.tar.gz.part").write_bytes(b"0123")
+    dd.crcns_download("aa-5/big.tar.gz", dest, username="u", password="p", progress=False)
+    assert dest.read_bytes() == b"0123456789"
+    assert any(c[2].get("Range") == "bytes=4-" for c in sess.calls if c[0] == "GET")
 
-    with pytest.raises(RuntimeError, match="CRCNS auth failed"):
-        dd.crcns_download("aa-1/foo.bin", tmp_path / "out.bin",
-                          username="bad", password="creds", progress=False)
-    # no partial file should be left around
+
+def test_crcns_download_rejected_login(fake_crcns, tmp_path):
+    from deepSTRF.utils import data_download as dd
+    fake_crcns({"aa-1/foo.bin": b"x"}, logged_in=False)
+    with pytest.raises(RuntimeError, match="CRCNS login failed"):
+        dd.crcns_download("aa-1/foo.bin", tmp_path / "out.bin", username="bad", password="creds",
+                          progress=False)
     assert not (tmp_path / "out.bin").exists()
+
+
+def test_crcns_download_html_instead_of_file(fake_crcns, tmp_path):
+    from deepSTRF.utils import data_download as dd
+    fake_crcns({"aa-1/foo.bin": b"x"}, html_instead_of={"aa-1/foo.bin"})
+    with pytest.raises(RuntimeError, match="HTML page instead"):
+        dd.crcns_download("aa-1/foo.bin", tmp_path / "out.bin", username="u", password="p",
+                          progress=False)
+    assert not (tmp_path / "out.bin").exists()
+
+
+def test_crcns_download_missing_file(fake_crcns, tmp_path):
+    from deepSTRF.utils import data_download as dd
+    fake_crcns({"aa-1/foo.bin": b"x"})
+    with pytest.raises(RuntimeError, match="not found on download.crcns.org"):
+        dd.crcns_download("aa-1/nope.bin", tmp_path / "out.bin", username="u", password="p",
+                          progress=False)
+
+
+def test_crcns_file_list(fake_crcns):
+    from deepSTRF.utils import data_download as dd
+    fake_crcns({"aa-5/ZF4F/a.tar.gz": b"abc", "aa-5/docs/x.pdf": b"12345", "aa-4/other": b"z"})
+    assert dd.crcns_file_list("aa-5", username="u", password="p") == {"ZF4F/a.tar.gz": 3, "docs/x.pdf": 5}
 
 
 def test_crcns_download_requires_credentials(monkeypatch, tmp_path):

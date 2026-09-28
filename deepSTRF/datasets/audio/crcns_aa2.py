@@ -16,7 +16,7 @@ from deepSTRF.utils.data_download import (
 )
 
 
-# CRCNS-AA2 ships as 3 tar.gz archives on the NERSC mirror, all wrapping
+# CRCNS-AA2 ships as 3 tar.gz archives on the CRCNS download server, all wrapping
 # their content in ``crcns/aa2/`` (strip 2 components on extract). After
 # extraction the layout is the flat one CRCNSAA2Dataset expects:
 #   <dest>/all_cells/<cell>/<stim_type>/{spike*, stim*}
@@ -33,7 +33,7 @@ AA2_NERSC_FILES = (
 def download_aa2(dest: Optional[str] = None,
                  username: Optional[str] = None,
                  password: Optional[str] = None) -> str:
-    """Download the CRCNS-AA2 archives from the NERSC mirror into ``dest``.
+    """Download the CRCNS-AA2 archives from the CRCNS download server into ``dest``.
 
     Idempotent: skips an archive if already on disk, and skips extraction
     of an archive if its anchor sub-tree (``all_cells/``, ``all_stims/``,
@@ -296,7 +296,7 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
             ``return_waveform=True``.
         download : bool, default False
             If True and the data is missing under ``path``, fetch the
-            ~30 MB worth of CRCNS-AA2 archives from the NERSC mirror
+            ~30 MB worth of CRCNS-AA2 archives from the CRCNS download server
             (free CRCNS account required) and extract in place.
         username, password : str, optional
             CRCNS credentials. Default to ``$CRCNS_USERNAME`` /

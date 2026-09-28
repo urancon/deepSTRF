@@ -107,7 +107,7 @@ WEHR_NEURONS_SPLIT_NATURAL: Tuple[Tuple[int, int, int], ...] = (
 )
 
 
-# NERSC mirror paths (verified against the dataset's About page; matches the
+# CRCNS download paths (verified against the dataset's About page; matches the
 # convention used by crcns_aa{1,2,4}: ``<dataset>/<archive>``).
 _AC1_DOWNLOAD_SPECS = (
     ("crcns-ac1.zip",                 "ac-1/crcns-ac1.zip"),
@@ -122,7 +122,7 @@ def download_ac1(
     username: Optional[str] = None,
     password: Optional[str] = None,
 ) -> str:
-    """Fetch the three CRCNS-AC1 archives from the NERSC mirror.
+    """Fetch the three CRCNS-AC1 archives from the CRCNS download server.
 
     Requires a free CRCNS account (https://crcns.org/register). Credentials
     can be passed explicitly or sourced from ``$CRCNS_USERNAME`` /

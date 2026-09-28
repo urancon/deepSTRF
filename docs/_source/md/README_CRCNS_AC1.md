@@ -94,7 +94,7 @@ The loader is fully Python (no MATLAB runtime). Each instantiation:
 1. **Auto-extracts** the three CRCNS-AC1 zips if not already done
    (``crcns-ac1.zip``, ``crcns-ac1-asari-results-{1,2}.zip``). Pass
    ``download=True`` (and CRCNS credentials) to fetch them from the
-   NERSC mirror first.
+   CRCNS download server first.
 2. **Walks** ``Results/`` directories; one cell per session.
 3. **Detrends** each Vm repeat with a MedGauss subtraction (median
    window 100 ms, gaussian σ 10 ms) — same family as the Rançon 2025

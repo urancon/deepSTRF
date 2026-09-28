@@ -50,7 +50,7 @@ def download_aa4(dest: Optional[str] = None,
                  animals: Sequence[str] = AA4_ANIMAL_IDS,
                  username: Optional[str] = None,
                  password: Optional[str] = None) -> str:
-    """Download CRCNS-AA4 archives from the NERSC mirror into ``dest``.
+    """Download CRCNS-AA4 archives from the CRCNS download server into ``dest``.
 
     AA4 is split into one ``.tar.gz`` per animal (each is hundreds of MB);
     by default this fetches all 6, but ``animals`` can be narrowed to a
@@ -200,7 +200,7 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
             ``return_waveform=True``.
         download : bool, default False
             If True and an animal's data is missing under ``path``, fetch
-            its tarball (~hundreds of MB per animal) from the NERSC mirror
+            its tarball (~hundreds of MB per animal) from the CRCNS download server
             and untar in place. Only the animals listed in ``animals`` are
             downloaded — useful for quick iteration on a subset.
         username, password : str, optional

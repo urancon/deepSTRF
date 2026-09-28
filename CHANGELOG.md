@@ -18,6 +18,14 @@ While the version is `0.x`, the public API may still change between minor releas
   cage microphone places away from the logged onset, or that overlap the
   next playback, are dropped by default.
 
+### Fixed
+- **CRCNS auto-download** (`download=True` for CRCNS AA1, AA2, AA4, AC1, and
+  the new AA5): CRCNS moved its data to AWS in June 2026 and the old NERSC
+  portal no longer serves the files. `crcns_download` now logs in to
+  crcns.org and downloads from `download.crcns.org`, following the official
+  CRCNS client, and resumes interrupted downloads. New helper:
+  `crcns_file_list(dataset)`.
+
 ## [0.1.0] - 2026-06-03
 
 First public release, available on PyPI: `pip install deepSTRF`.

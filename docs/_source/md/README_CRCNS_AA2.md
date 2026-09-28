@@ -54,7 +54,7 @@ http://dx.doi.org/10.6080/10.6080/K0JW8BSC
 
 **Requirements**: a [CRCNS account](https://crcns.org/register).
 
-Easiest path — auto-download via the CRCNS NERSC mirror:
+Easiest path — auto-download via the CRCNS download server:
 
 ```python
 from deepSTRF.datasets.audio import CRCNSAA2Dataset

@@ -74,7 +74,7 @@ def _trace_mv(response_struct) -> Tuple[np.ndarray, float]:
 # Zip auto-extract (mirrors the Wingert / AA1 layout)
 # ---------------------------------------------------------------------------
 
-# Each entry: (zip name as it lives in `path/`, NERSC mirror sub-path,
+# Each entry: (zip name as it lives in `path/`, CRCNS download sub-path,
 # extract-to-subdir relative to `path/`, return-this-subdir relative to `path/`,
 # anchor file under the extract-to-subdir whose existence means already-unpacked).
 _AC1_ARCHIVES = (
