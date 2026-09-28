@@ -1,12 +1,22 @@
 ## Auditory datasets
 
-Currently, **11 response datasets** are available, each with a short name for
+Currently, **12 response datasets** are available, each with a short name for
 easier reference. They span five species and a range of recording modalities —
 extracellular single-units, multi-unit activity, and scalp EEG — but all share
 the same `NeuralDataset` API (NaN-sentinel missing trials, optional
 `download=True`, and the selection / concatenation utilities). Each dataset has
 its own page below with the original paper, licensing, response shape, and
 instructions on how to obtain the data (auto-download where possible).
+
+```{note}
+**CRCNS downloads moved (June 2026).** CRCNS.org now hosts its data on AWS and
+has retired the NERSC download portal. deepSTRF 0.1.0 still downloads from the
+old portal, so `download=True` fails for the CRCNS datasets (AA1, AA2, AA4,
+AC1). The fix, which downloads from `download.crcns.org`, is on `develop` and
+will ship in the next release. Data you have already downloaded is not
+affected. CRCNS datasets need a free [CRCNS account](https://crcns.org/register):
+set `CRCNS_USERNAME` / `CRCNS_PASSWORD`, or pass `username=` / `password=`.
+```
 
 ### Ferret (*Mustela putorius furo*)
 * [NS1](README_NS1.md) — primary auditory cortex (A1); 20 clips of natural sounds (speech, ferret & other animal vocalizations, environmental).
@@ -18,6 +28,7 @@ instructions on how to obtain the data (auto-download where possible).
 * [CRCNS AA1](README_CRCNS_AA1.md) — conspecific vocalizations + flat ripples.
 * [CRCNS AA2](README_CRCNS_AA2.md) — extracellular single-units (57 birds); conspecific vocalizations, flat & song ripples.
 * [CRCNS AA4](README_CRCNS_AA4.md) — extracellular recordings spanning the full zebra-finch vocal repertoire (songs + calls) plus ripple noise.
+* [CRCNS AA5](README_CRCNS_AA5.md) — awake, freely behaving birds; chronic recordings; the full vocal repertoire (110 calls, 10 call types), songs and filtered songs.
 * [Le 2025](README_Le_2025.md) — auditory cortex; occluded conspecific song (auditory-restoration paradigm).
 
 ### Rat (*Rattus norvegicus*)
@@ -44,6 +55,7 @@ README_Wingert2026.md
 README_CRCNS_AA1.md
 README_CRCNS_AA2.md
 README_CRCNS_AA4.md
+README_CRCNS_AA5.md
 README_Le_2025.md
 README_CRCNS_AC1.md
 README_Downer2025.md

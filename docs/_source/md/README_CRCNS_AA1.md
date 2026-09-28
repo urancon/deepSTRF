@@ -60,15 +60,15 @@ http://dx.doi.org/10.6080/K0F769GP
 **Requirements**: a [CRCNS account](https://crcns.org/register) (the data
 host requires login).
 
-Easiest path — auto-download via the CRCNS NERSC mirror:
+Easiest path — auto-download via the CRCNS download server:
 
 ```python
 from deepSTRF.datasets.audio import CRCNSAA1Dataset
 
 ds = CRCNSAA1Dataset(
     download=True, dt_ms=5,
-    crcns_username="your_username",
-    crcns_password="your_password",
+    username="your_username",
+    password="your_password",
 )
 ```
 

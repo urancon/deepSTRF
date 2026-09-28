@@ -142,9 +142,11 @@ Current top model on each dataset. Want to claim the podium? Open a PR with a re
 
 ## 📚 Datasets included
 
+> **CRCNS downloads moved (June 2026).** CRCNS.org now hosts its data on AWS and has retired the NERSC download portal. deepSTRF 0.1.0 still downloads from the old portal, so `download=True` fails for the CRCNS datasets (AA1, AA2, AA4, AC1). The fix, which downloads from `download.crcns.org`, is on `develop` (`pip install git+https://github.com/urancon/deepSTRF.git@develop`) and will ship in the next release. Data you have already downloaded is not affected. CRCNS datasets need a free [CRCNS account](https://crcns.org/register): set `CRCNS_USERNAME` / `CRCNS_PASSWORD`, or pass `username=` / `password=`.
+
 deepSTRF wraps publicly available recordings — please cite the original authors when you use them. See each dataset page on the [docs](https://deepstrf.readthedocs.io/) for details and download instructions.
 
-- **Auditory:** [NS1](docs/_source/md/README_NS1.md), [NAT4](docs/_source/md/README_NAT4.md), [CRCNS AA1](docs/_source/md/README_CRCNS_AA1.md), [CRCNS AA2](docs/_source/md/README_CRCNS_AA2.md), [CRCNS AA4](docs/_source/md/README_CRCNS_AA4.md), [CRCNS AC1 (Wehr + Asari)](docs/_source/md/README_CRCNS_AC1.md), [Espejo 2019](docs/_source/md/README_Espejo.md), [Alice EEG (Brodbeck 2023)](docs/_source/md/README_Alice_EEG.md), [Le 2025](docs/_source/md/README_Le_2025.md), [Wingert 2026](docs/_source/md/README_Wingert2026.md).
+- **Auditory:** [NS1](docs/_source/md/README_NS1.md), [NAT4](docs/_source/md/README_NAT4.md), [CRCNS AA1](docs/_source/md/README_CRCNS_AA1.md), [CRCNS AA2](docs/_source/md/README_CRCNS_AA2.md), [CRCNS AA4](docs/_source/md/README_CRCNS_AA4.md), [CRCNS AA5](docs/_source/md/README_CRCNS_AA5.md), [CRCNS AC1 (Wehr + Asari)](docs/_source/md/README_CRCNS_AC1.md), [Espejo 2019](docs/_source/md/README_Espejo.md), [Alice EEG (Brodbeck 2023)](docs/_source/md/README_Alice_EEG.md), [Le 2025](docs/_source/md/README_Le_2025.md), [Wingert 2026](docs/_source/md/README_Wingert2026.md).
 - **Visual:** under construction — see [Status](#-status--audio-first) below.
 
 ----

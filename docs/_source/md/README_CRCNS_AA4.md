@@ -60,15 +60,15 @@ A total of 170 different clips of conspecific vocalizations (songs and calls) an
 
 **Requirements**: a [CRCNS account](https://crcns.org/register).
 
-Easiest path — auto-download via the CRCNS NERSC mirror:
+Easiest path — auto-download via the CRCNS download server:
 
 ```python
 from deepSTRF.datasets.audio import CRCNSAA4Dataset, AA4_ANIMAL_IDS
 
 ds = CRCNSAA4Dataset(
     download=True, dt_ms=5,
-    crcns_username="your_username",
-    crcns_password="your_password",
+    username="your_username",
+    password="your_password",
 )
 ```
 

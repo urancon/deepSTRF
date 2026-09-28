@@ -68,6 +68,14 @@ deepSTRF.datasets.audio.crcns\_aa4 module
    :show-inheritance:
    :undoc-members:
 
+deepSTRF.datasets.audio.crcns\_aa5 module
+-----------------------------------------
+
+.. automodule:: deepSTRF.datasets.audio.crcns_aa5
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 deepSTRF.datasets.audio.espejo module
 -------------------------------------
 

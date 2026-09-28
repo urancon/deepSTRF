@@ -15,7 +15,7 @@ from deepSTRF.utils.data_download import crcns_download, default_cache_dir, unzi
 #  - make concatenable ?
 
 
-# CRCNS-AA1 ships as a single zip archive on the NERSC mirror.
+# CRCNS-AA1 ships as a single zip archive on the CRCNS download server.
 # After unzip -> 'all_stims/', 'Field_L_cells/', 'MLd_cells/' at the
 # directory root (flat — no wrapping top-level folder).
 AA1_NERSC_PATH = "aa-1/crcns-aa1.zip"
@@ -24,7 +24,7 @@ AA1_NERSC_PATH = "aa-1/crcns-aa1.zip"
 def download_aa1(dest: Optional[str] = None,
                  username: Optional[str] = None,
                  password: Optional[str] = None) -> str:
-    """Download the CRCNS-AA1 archive from the NERSC mirror into ``dest``.
+    """Download the CRCNS-AA1 archive from the CRCNS download server into ``dest``.
 
     Idempotent: skips the archive if already present, and skips unzipping
     if ``Field_L_cells/`` already exists in ``dest``. Returns the dataset
@@ -194,7 +194,7 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
             ``return_waveform=True``.
         download : bool, default False
             If True and the data is missing under ``path``, fetch the
-            ~17 MB CRCNS-AA1 archive from the NERSC mirror (free CRCNS
+            ~7 MB CRCNS-AA1 archive from the CRCNS download server (free CRCNS
             account required; see ``crcns_download``) and unzip in place.
         username, password : str, optional
             CRCNS credentials. Default to ``$CRCNS_USERNAME`` /

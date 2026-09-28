@@ -10,11 +10,14 @@ Public surface:
     - ``zenodo_download(record_id, filename, dest)``    — public Zenodo records
     - ``figshare_download(article_id, dest_dir, filename=)`` — public figshare articles
     - ``crcns_download(file_path, dest, username=, password=)`` — CRCNS (free account)
+    - ``crcns_file_list(dataset)``                       — CRCNS dataset file paths + sizes
+    - ``crcns_resolve(dataset, filename)``               — current path of a CRCNS file, by name
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tarfile
 import zipfile
@@ -120,6 +123,103 @@ def osf_download(file_guid: str, dest_path: Union[str, Path], **kwargs) -> Path:
     return stream_download(f"https://osf.io/download/{file_guid}/", dest_path, **kwargs)
 
 
+# CRCNS moved its data to AWS in June 2026 (https://crcns.org/news/data-now-
+# downloaded-through-aws). Downloads now go through download.crcns.org behind a
+# crcns.org login session, as in the official client
+# https://github.com/jeffteeters/crcns-downloader (MIT); the old NERSC portal
+# (portal.nersc.gov/project/crcns/download/) no longer serves the files.
+CRCNS_LOGIN_URL = "https://crcns.org/login_form"
+CRCNS_DOWNLOAD_BASE = "https://download.crcns.org"
+_CRCNS_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+_crcns_sessions: dict = {}
+
+
+def _crcns_credentials(username: Optional[str], password: Optional[str]):
+    username = username or os.environ.get("CRCNS_USERNAME")
+    password = password or os.environ.get("CRCNS_PASSWORD")
+    if not username or not password:
+        raise RuntimeError(
+            "CRCNS credentials missing. Pass username/password explicitly, or set "
+            "the CRCNS_USERNAME / CRCNS_PASSWORD env vars. Free account at "
+            "https://crcns.org/register."
+        )
+    return username, password
+
+
+def _crcns_session(dataset: str, username: Optional[str] = None,
+                   password: Optional[str] = None) -> "requests.Session":
+    """Logged-in ``requests.Session`` for download.crcns.org (cached per user).
+
+    Logs in once on crcns.org, then checks that the download server
+    recognises the session for ``dataset`` (its landing page then reads
+    "Logged in as <username> ...").
+    """
+    username, password = _crcns_credentials(username, password)
+    sess = _crcns_sessions.get(username)
+    if sess is None:
+        sess = requests.Session()
+        sess.headers["User-Agent"] = _CRCNS_UA
+        resp = sess.post(CRCNS_LOGIN_URL, timeout=(30, 120), data={
+            "form.submitted": 1, "js_enabled": 0, "pwd_empty": 0,
+            "__ac_name": username, "__ac_password": password, "submit": "Log in",
+        })
+        resp.raise_for_status()
+        page = sess.get(f"{CRCNS_DOWNLOAD_BASE}/{dataset}", timeout=(30, 120))
+        page.raise_for_status()
+        if "logged in as" not in page.text.lower():
+            raise RuntimeError(
+                "CRCNS login failed (download.crcns.org does not recognise the session). "
+                "Check $CRCNS_USERNAME / $CRCNS_PASSWORD."
+            )
+        _crcns_sessions[username] = sess
+    return sess
+
+
+def crcns_file_list(dataset: str, *, username: Optional[str] = None,
+                    password: Optional[str] = None) -> dict:
+    """Return ``{path: size_in_bytes}`` for every file of a CRCNS dataset.
+
+    Reads the dataset's ``filelist.txt`` on download.crcns.org (paths are
+    relative to the dataset, e.g. ``"crcns-aa1.zip"``). Needs a CRCNS login.
+    """
+    sess = _crcns_session(dataset, username, password)
+    resp = sess.get(f"{CRCNS_DOWNLOAD_BASE}/{dataset}/filelist.txt", timeout=(30, 120))
+    resp.raise_for_status()
+    out = {}
+    for line in resp.text.splitlines():
+        # data lines: " <path> <size> [(<human size>)]"; '#' lines are comments
+        m = re.match(r"^[ +]\s*(\S+)\s+(\d+)", line)
+        if m:
+            out[m.group(1)] = int(m.group(2))
+    if not out:
+        raise RuntimeError(f"CRCNS: no files listed for dataset {dataset!r}.")
+    return out
+
+
+_crcns_file_lists: dict = {}
+
+
+def crcns_resolve(dataset: str, filename: str, *, username: Optional[str] = None,
+                  password: Optional[str] = None) -> str:
+    """Return ``"<dataset>/<path>"`` for the file named ``filename`` in a CRCNS dataset.
+
+    Looks the file up by base name in the dataset's official file list, so
+    loaders keep working when CRCNS reorganises folders (e.g. AA4's archives
+    moved under ``data/`` in the 2026 AWS migration). The list is fetched once
+    per dataset and process.
+    """
+    if dataset not in _crcns_file_lists:
+        _crcns_file_lists[dataset] = crcns_file_list(dataset, username=username, password=password)
+    hits = [p for p in _crcns_file_lists[dataset] if p.rsplit("/", 1)[-1] == filename]
+    if len(hits) != 1:
+        raise RuntimeError(
+            f"CRCNS: {'no' if not hits else 'several'} file named {filename!r} in dataset "
+            f"{dataset!r}{'' if not hits else ': ' + ', '.join(hits)}."
+        )
+    return f"{dataset}/{hits[0]}"
+
+
 def crcns_download(
     file_path: str,
     dest_path: Union[str, Path],
@@ -129,20 +229,18 @@ def crcns_download(
     chunk_size: int = 1 << 20,
     progress: bool = True,
 ) -> Path:
-    """Download a single file from the CRCNS NERSC mirror with form auth.
+    """Download one file of a CRCNS dataset (free account needed).
 
-    The CRCNS download portal at ``https://portal.nersc.gov/project/crcns/
-    download/<file_path>`` serves an HTML login form to anonymous GETs. To
-    actually fetch the file, the form must be POSTed to the same URL with
-    ``username`` / ``password`` / ``fn`` / ``submit`` fields. There is no
-    persistent session cookie — auth is per-request, so the same pattern
-    works equally well whether you fetch one file or many.
+    Logs in to crcns.org (once per process and user), then streams
+    ``https://download.crcns.org/<file_path>``. Interrupted downloads resume
+    from the ``.part`` file via an HTTP ``Range`` request.
 
     Parameters
     ----------
     file_path : str
-        Path under ``/download/``, e.g. ``"aa-1/crcns-aa1.zip"`` or
-        ``"aa-4/BlaBro09xxF.tar.gz"``.
+        ``"<dataset>/<path in the dataset>"``, e.g. ``"aa-1/crcns-aa1.zip"``
+        or ``"aa-4/BlaBro09xxF.tar.gz"``. Use :func:`crcns_file_list` to see
+        a dataset's paths.
     dest_path : path-like
     username, password : str, optional
         Default to ``$CRCNS_USERNAME`` / ``$CRCNS_PASSWORD``. Account is
@@ -158,17 +256,14 @@ def crcns_download(
     Raises
     ------
     RuntimeError
-        If credentials are missing, or if the response body still looks like
-        the login form (auth failed silently — the portal returns 200 OK
-        with the login HTML rather than 401 on bad credentials).
+        If credentials are missing or rejected, if the server answers with an
+        HTML page instead of the file, or if the file does not exist.
 
     Notes
     -----
-    Status: experimental. The auth + URL conventions were reverse-engineered
-    from probing the public NERSC mirror; we do not have a contract from
-    CRCNS that they'll stay stable. If the portal layout changes, this
-    helper breaks. Verified 2026-04-25 against the AA1 archive
-    (``aa-1/crcns-aa1.zip``).
+    Follows the protocol of the official client
+    (https://github.com/jeffteeters/crcns-downloader). CRCNS gives no API
+    stability guarantee: if their site changes, this helper breaks.
 
     Example
     -------
@@ -177,62 +272,57 @@ def crcns_download(
     >>> os.environ["CRCNS_PASSWORD"] = "..."
     >>> crcns_download("aa-1/crcns-aa1.zip", "/tmp/aa1.zip")
     """
-    import os as _os
-
-    username = username or _os.environ.get("CRCNS_USERNAME")
-    password = password or _os.environ.get("CRCNS_PASSWORD")
-    if not username or not password:
-        raise RuntimeError(
-            "CRCNS credentials missing. Pass username/password explicitly, or set "
-            "the CRCNS_USERNAME / CRCNS_PASSWORD env vars. Free account at "
-            "https://crcns.org/register."
-        )
-
+    username, password = _crcns_credentials(username, password)
     dest = Path(dest_path).expanduser().resolve()
     if dest.exists():
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
 
-    url = f"https://portal.nersc.gov/project/crcns/download/{file_path.lstrip('/')}"
-    form = {
-        "fn": file_path.lstrip("/"),
-        "username": username,
-        "password": password,
-        "submit": "Login",
-    }
+    file_path = file_path.lstrip("/")
+    dataset = file_path.split("/", 1)[0]
+    sess = _crcns_session(dataset, username, password)
 
-    # (connect, read): see comment in stream_download — NERSC is regularly
-    # slow to start streaming a CRCNS archive (cold-storage fetch).
-    with requests.post(url, data=form, stream=True, timeout=(30, 600), allow_redirects=True) as resp:
-        resp.raise_for_status()
-
-        # NERSC returns 200 + the login form HTML on auth failure (no 401).
-        # Sniff the first chunk: the real file is binary; the form is small HTML.
-        first = next(resp.iter_content(chunk_size=chunk_size), b"")
-        if b"<form" in first[:4096] and b"password" in first[:4096]:
+    done = tmp.stat().st_size if tmp.exists() else 0
+    headers = {"Range": f"bytes={done}-"} if done else {}
+    # (connect, read): generous read timeout, as the server may pause while
+    # fetching a large archive from cold storage.
+    with sess.get(f"{CRCNS_DOWNLOAD_BASE}/{file_path}", headers=headers, stream=True,
+                  timeout=(30, 600), allow_redirects=True) as resp:
+        if resp.status_code == 404:
             raise RuntimeError(
-                f"CRCNS auth failed for {file_path!r} (server returned the login form). "
-                f"Check $CRCNS_USERNAME / $CRCNS_PASSWORD."
+                f"CRCNS: {file_path!r} not found on download.crcns.org. "
+                f"See crcns_file_list({dataset!r}) for the dataset's file paths."
+            )
+        resp.raise_for_status()
+        if done and resp.status_code != 206:          # server ignored the Range header
+            done = 0
+        # A login / error page comes back as 200 + HTML instead of the file.
+        chunks = resp.iter_content(chunk_size=chunk_size)     # ONE iterator for the whole body
+        first = next(chunks, b"")
+        head = first[:4096].lower()
+        if "text/html" in resp.headers.get("Content-Type", "") and (b"<html" in head or b"<form" in head):
+            raise RuntimeError(
+                f"CRCNS returned an HTML page instead of {file_path!r} (login rejected or "
+                f"file unavailable). Check $CRCNS_USERNAME / $CRCNS_PASSWORD."
             )
 
-        total = int(resp.headers.get("Content-Length") or 0)
+        total = int(resp.headers.get("Content-Length") or 0) + done
         bar = None
         if progress:
             try:
                 from tqdm.auto import tqdm
-                bar = tqdm(total=total or None, unit="B", unit_scale=True,
+                bar = tqdm(total=total or None, initial=done, unit="B", unit_scale=True,
                            desc=f"download {dest.name}")
             except ImportError:
                 bar = None
-
         try:
-            with open(tmp, "wb") as f:
+            with open(tmp, "ab" if done else "wb") as f:
                 if first:
                     f.write(first)
                     if bar is not None:
                         bar.update(len(first))
-                for chunk in resp.iter_content(chunk_size=chunk_size):
+                for chunk in chunks:
                     if not chunk:
                         continue
                     f.write(chunk)

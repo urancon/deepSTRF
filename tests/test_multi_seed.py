@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 import torch
 from torch.utils.data import DataLoader
 
@@ -337,50 +338,41 @@ def test_wandb_disabled_creates_no_directory(tmp_path, monkeypatch):
     assert not (tmp_path / "wandb").exists()
 
 
-def _decode_offline_run(run_dir):
-    """Return ``(history_rows, summary)`` for a wandb offline-run-* dir.
+class _RecordingRun:
+    """Stand-in for ``wandb.Run``: records what WandbSeedLogger sends."""
 
-    Uses ``scan_data`` (not ``scan_record``) so records larger than one
-    leveldb chunk are correctly reassembled from FIRST/MIDDLE/LAST.
-    """
-    from wandb.proto.v6 import wandb_internal_pb2 as pb
-    from wandb.sdk.internal import datastore
+    def __init__(self, **init_kwargs):
+        self.init_kwargs = init_kwargs
+        self.history, self.summary, self.finished = [], {}, False
 
-    wandb_file = next(run_dir.glob("run-*.wandb"))
-    ds = datastore.DataStore()
-    ds.open_for_scan(str(wandb_file))
-    history, summary = [], {}
-    while True:
-        data = ds.scan_data()
-        if data is None:
-            break
-        rec = pb.Record()
-        rec.ParseFromString(data)
-        kind = rec.WhichOneof("record_type")
-        if kind == "history":
-            row = {}
-            for item in rec.history.item:
-                name = item.nested_key[0] if item.nested_key else item.key
-                try:
-                    row[name] = json.loads(item.value_json)
-                except Exception:
-                    row[name] = item.value_json
-            history.append(row)
-        elif kind == "summary":
-            for item in rec.summary.update:
-                name = item.nested_key[0] if item.nested_key else item.key
-                try:
-                    summary[name] = json.loads(item.value_json)
-                except Exception:
-                    summary[name] = item.value_json
-    return history, summary
+    def log(self, row, step=None):
+        self.history.append(dict(row))
+
+    def finish(self):
+        self.finished = True
 
 
-def test_wandb_logs_per_neuron_percentiles_and_test_summary(tmp_path):
+def test_wandb_logs_per_neuron_percentiles_and_test_summary(monkeypatch):
     """The WandbSeedLogger should produce per-neuron percentile scalars
     (`val_cc_norm/p10`, `/p50`, `/p90`) in the per-epoch history AND
     push test metrics (`test_cc_norm` + percentiles) into the run
-    summary at end-of-seed."""
+    summary at end-of-seed.
+
+    Checks what our logger hands to wandb (``run.log`` rows, ``run.summary``)
+    through a recording fake ``wandb.init``, instead of decoding wandb's
+    offline ``.wandb`` file: that format is internal, and wandb >= 0.30 no
+    longer ships a Python reader for it. File-level offline output is
+    covered by ``test_wandb_offline_writes_run_files``.
+    """
+    wandb = pytest.importorskip("wandb")   # the logger imports it lazily
+
+    runs = []
+
+    def fake_init(**kwargs):
+        runs.append(_RecordingRun(**kwargs))
+        return runs[-1]
+
+    monkeypatch.setattr(wandb, "init", fake_init)
     fit_multi_seed(
         model_factory=_model_factory,
         loader_factory=_loader_factory,
@@ -388,13 +380,15 @@ def test_wandb_logs_per_neuron_percentiles_and_test_summary(tmp_path):
         fitter_kwargs={"max_epochs": 2, "patience": 2,
                         "track_train_metrics": True},
         logger_factory=make_wandb_logger_factory(
-            mode="offline", project="deepstrf-test",
-            group="content-check", dir=str(tmp_path),
+            mode="offline", project="deepstrf-test", group="content-check",
         ),
     )
-    runs = sorted((tmp_path / "wandb").glob("offline-run-*"))
     assert len(runs) == 1
-    history, summary = _decode_offline_run(runs[0])
+    run = runs[0]
+    assert run.init_kwargs["project"] == "deepstrf-test"
+    assert run.init_kwargs["group"] == "content-check"
+    assert run.finished
+    history, summary = run.history, run.summary
 
     assert len(history) >= 1
     h0 = history[0]
