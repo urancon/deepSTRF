@@ -67,8 +67,8 @@ from deepSTRF.datasets.audio import CRCNSAA4Dataset, AA4_ANIMAL_IDS
 
 ds = CRCNSAA4Dataset(
     download=True, dt_ms=5,
-    crcns_username="your_username",
-    crcns_password="your_password",
+    username="your_username",
+    password="your_password",
 )
 ```
 

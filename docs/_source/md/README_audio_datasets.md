@@ -8,6 +8,16 @@ the same `NeuralDataset` API (NaN-sentinel missing trials, optional
 its own page below with the original paper, licensing, response shape, and
 instructions on how to obtain the data (auto-download where possible).
 
+```{note}
+**CRCNS downloads moved (June 2026).** CRCNS.org now hosts its data on AWS and
+has retired the NERSC download portal. deepSTRF 0.1.0 still downloads from the
+old portal, so `download=True` fails for the CRCNS datasets (AA1, AA2, AA4,
+AC1). The fix, which downloads from `download.crcns.org`, is on `develop` and
+will ship in the next release. Data you have already downloaded is not
+affected. CRCNS datasets need a free [CRCNS account](https://crcns.org/register):
+set `CRCNS_USERNAME` / `CRCNS_PASSWORD`, or pass `username=` / `password=`.
+```
+
 ### Ferret (*Mustela putorius furo*)
 * [NS1](README_NS1.md) — primary auditory cortex (A1); 20 clips of natural sounds (speech, ferret & other animal vocalizations, environmental).
 * [NAT4](README_NAT4.md) — A1 & PEG (849 + 398 units); natural sounds.

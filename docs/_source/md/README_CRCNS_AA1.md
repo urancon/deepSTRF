@@ -67,8 +67,8 @@ from deepSTRF.datasets.audio import CRCNSAA1Dataset
 
 ds = CRCNSAA1Dataset(
     download=True, dt_ms=5,
-    crcns_username="your_username",
-    crcns_password="your_password",
+    username="your_username",
+    password="your_password",
 )
 ```
 
