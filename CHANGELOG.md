@@ -17,6 +17,9 @@ While the version is `0.x`, the public API may still change between minor releas
   works on any subset of its 50 recording sites. Playbacks whose sound the
   cage microphone places away from the logged onset, or that overlap the
   next playback, are dropped by default.
+- **AA5 unit selection**: `nrn_meta['reliability']` (split-half reliability
+  of the responses during the sounds) and `CRCNSAA5Dataset.select_good_units()`
+  (`spike_snr > 5` and `reliability > 0.1` by default: 249 of the 838 units).
 - **Leak-free train / val / test splits** for the datasets whose stimuli share
   audio, so that no test sound is heard in training under another name:
   - `Le2025Dataset.song_split(seed)`: whole songs (all their variants) per
