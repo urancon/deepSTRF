@@ -124,6 +124,29 @@ def test_metadata(cache):
     assert "is_auditory" not in n and "auditory_p" not in n
 
 
+def test_split_half_reliability():
+    from deepSTRF.datasets.audio.crcns_aa5 import split_half_reliability
+    g = torch.Generator().manual_seed(0)
+    signal = torch.rand(2, 200, generator=g)
+    same = [signal[i].expand(4, 200).clone() for i in range(2)]          # identical trials
+    assert split_half_reliability(same) == pytest.approx(1.0, abs=1e-6)
+    noise = [torch.rand(10, 400, generator=g) for _ in range(5)]        # independent trials
+    assert abs(split_half_reliability(noise)) < 0.15
+    half = [signal[0] + 0.5 * torch.rand(6, 200, generator=g)]          # in between
+    assert 0.3 < split_half_reliability(half) < 1.0
+    assert np.isnan(split_half_reliability([torch.rand(1, 50)]))        # no stim with 2 trials
+    assert np.isnan(split_half_reliability([]))
+
+
+def test_reliability_and_select_good_units(cache):
+    ds = CRCNSAA5Dataset(cache)
+    for n in ds.nrn_meta:
+        assert "reliability" in n and (np.isnan(n["reliability"]) or n["reliability"] <= 1.0)
+    assert ds.select_good_units(min_reliability=None) == [0, 1]           # spike_snr 6.5 > 5
+    assert ds.select_good_units(min_spike_snr=None, min_reliability=1.01) == []
+    assert ds.select_good_units(min_spike_snr=7.0, min_reliability=None) == []
+
+
 def test_stim_info_parsing():
     assert _stim_info("stim10_sfilt.wav")["stim_class"] == "song_sfilt"
     assert _stim_info("stim1_tfilt.wav")["song_id"] == 1
