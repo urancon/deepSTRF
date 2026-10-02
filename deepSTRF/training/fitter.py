@@ -39,6 +39,11 @@ def _default_val_metrics() -> Dict[str, Callable]:
     }
 
 
+def _default_decoding_val_metrics() -> Dict[str, Callable]:
+    """Decoding default: Pearson r per spectrogram band (targets in band-as-channel layout)."""
+    return {"cc": lambda pred, target: corrcoef(pred, target, reduction="none")}
+
+
 def _to_scalar(x: Any) -> float:
     """Reduce a per-neuron tensor to a scalar via ``nanmean``; pass scalars through."""
     if isinstance(x, torch.Tensor):
@@ -166,8 +171,9 @@ class Fitter:
         ``None`` (no EMA). Resumable (EMA state saved/restored via ``state_path``).
     monitor
         Key in the per-epoch dict to track for early stopping. Default
-        ``'val_cc_norm'``. Use ``'val_loss'``, ``'val_cc'``, or any custom
-        key you added via ``val_metrics``.
+        ``None`` → ``'val_cc_norm'`` (encoding) or ``'val_cc'`` (decoding).
+        Use ``'val_loss'``, ``'val_cc'``, or any custom key you added via
+        ``val_metrics``.
     mode
         ``'max'`` or ``'min'`` — direction of improvement on ``monitor``.
         Default ``'max'`` (paired with ``'val_cc_norm'``).
@@ -194,6 +200,18 @@ class Fitter:
         when ``N × R × T`` is in the millions (e.g. AA2's 494-cell
         population). Set to ``False`` to skip; ``train_loss`` is always
         reported.
+    direction
+        ``'encoding'`` (stimulus → responses) or ``'decoding'`` (responses →
+        stimulus). Default ``None`` reads ``model.direction`` (set to
+        ``'decoding'`` on :class:`~deepSTRF.models.audio.decoding.AudioDecodingModel`),
+        falling back to ``'encoding'``. In decoding mode the model is fed
+        ``batch['responses']`` and its ``(B, 1, F, T)`` output is compared to
+        ``batch['stims']``; frames past each item's length (all-NaN responses)
+        are masked out. Losses and ``val_metrics`` then receive prediction and
+        target in **band-as-channel** layout ``(B, F, 1, T)``, so every
+        per-neuron deepSTRF metric becomes a per-band one. Default decoding
+        ``val_metrics`` is ``{'cc'}`` (per-band Pearson r) and default
+        ``monitor`` is ``'val_cc'``.
     track_per_cell_best
         If ``True``, maintain a per-cell best-on-``monitor`` snapshot of
         the readout's per-N parameter and buffer slices throughout
@@ -228,13 +246,14 @@ class Fitter:
         lr_threshold: float = 1e-4,
         patience_after_lr_drop: Optional[int] = None,
         ema_decay: Optional[float] = None,
-        monitor: str = "val_cc_norm",
+        monitor: Optional[str] = None,
         mode: str = "max",
         ckpt_path: Optional[Union[str, Path]] = None,
         state_path: Optional[Union[str, Path]] = None,
         log_fn: Callable[[Mapping[str, Any]], None] = _format_epoch,
         track_train_metrics: bool = True,
         track_per_cell_best: bool = False,
+        direction: Optional[str] = None,
     ) -> None:
         if mode not in ("max", "min"):
             raise ValueError(f"mode must be 'max' or 'min', got {mode!r}")
@@ -243,14 +262,22 @@ class Fitter:
         if max_epochs < 1:
             raise ValueError(f"max_epochs must be >= 1, got {max_epochs}")
 
+        direction = direction or getattr(model, "direction", "encoding")
+        if direction not in ("encoding", "decoding"):
+            raise ValueError(f"direction must be 'encoding' or 'decoding', got {direction!r}")
+        self.direction = direction
+        decoding = direction == "decoding"
+        if monitor is None:
+            monitor = "val_cc" if decoding else "val_cc_norm"
+        if val_metrics is None:
+            val_metrics = _default_decoding_val_metrics() if decoding else _default_val_metrics()
+
         self.device = torch.device(device)
         self.model = model.to(self.device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.loss_fn = loss_fn
-        self.val_metrics = (
-            val_metrics if val_metrics is not None else _default_val_metrics()
-        )
+        self.val_metrics = val_metrics
         self.optimizer = (
             optimizer
             if optimizer is not None
@@ -283,6 +310,30 @@ class Fitter:
     ) -> torch.Tensor:
         """Default: delegate to ``self.loss_fn(pred, responses)`` (auto-PSTH inside)."""
         return self.loss_fn(pred, responses)
+
+    def unpack_batch(self, batch: Mapping[str, Any]):
+        """Return ``(model_input, target)`` on ``self.device`` for this direction.
+
+        Encoding: ``(stims, responses)``. Decoding: ``(responses, stims)``, the
+        target masked to NaN on padded frames and laid out ``(B, F, 1, T)``.
+        """
+        stims = batch['stims'].to(self.device)
+        responses = batch['responses'].to(self.device)
+        if self.direction == "encoding":
+            return stims, responses
+        from deepSTRF.models.audio.decoding import valid_time_mask
+        if stims.dim() != 4:
+            raise ValueError("decoding needs spectrogram targets (B, 1, F, T); "
+                             "waveform targets are not supported")
+        T = responses.shape[-1]
+        target = stims[..., :T].clone()
+        target[~valid_time_mask(responses)[:, None, None, :].expand_as(target)] = float("nan")
+        return responses, target.transpose(1, 2)
+
+    def predict(self, model_input: torch.Tensor) -> torch.Tensor:
+        """Model forward, laid out like the target (band-as-channel when decoding)."""
+        pred = self.model(model_input)
+        return pred.transpose(1, 2) if self.direction == "decoding" else pred
 
     def on_epoch_end(self, epoch: int, epoch_dict: Dict[str, Any]) -> None:
         """Default: log the epoch dict via ``self.log_fn``."""
@@ -519,11 +570,10 @@ class Fitter:
                 m.reset()
 
         for batch in self.train_loader:
-            stims = batch['stims'].to(self.device)
-            responses = batch['responses'].to(self.device)
+            model_input, responses = self.unpack_batch(batch)
 
             self.optimizer.zero_grad()
-            pred = self.model(stims)
+            pred = self.predict(model_input)
             loss = self.compute_loss(pred, responses)
             loss.backward()
             self.optimizer.step()
@@ -610,10 +660,9 @@ class Fitter:
 
         with torch.no_grad():
             for batch in loader:
-                stims = batch['stims'].to(self.device)
-                responses = batch['responses'].to(self.device)
+                model_input, responses = self.unpack_batch(batch)
 
-                pred = self.model(stims)
+                pred = self.predict(model_input)
                 if hasattr(self.model, "detach"):
                     self.model.detach()
 
