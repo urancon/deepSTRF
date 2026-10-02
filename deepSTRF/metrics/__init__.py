@@ -1,3 +1,4 @@
+from deepSTRF.metrics.decoding import mel_cepstral_distortion, spectrogram_corrcoef
 from deepSTRF.metrics.losses import mse_loss, poisson_loss
 from deepSTRF.metrics.streaming import StreamingCorrcoef
 from deepSTRF.metrics.performance import (
@@ -25,4 +26,7 @@ __all__ = [
     "snr",
     # batch-by-batch accumulation (Fitter, large sets)
     "StreamingCorrcoef",
+    # decoding (spectrogram reconstruction) metrics
+    "spectrogram_corrcoef",
+    "mel_cepstral_distortion",
 ]
