@@ -390,6 +390,23 @@ def test_two_site_block_diagonal(two_site_dataset):
 
 
 @skip_if_no_data
+def test_mixed_length_sessions_keep_every_neuron():
+    """CLT028c plays the shared STIM_00 test sequences at T=2200, LMD037a at T=2000.
+    The canonical length must be the shorter one: padding the LMD rasters with NaN
+    made every LMD neuron read as 'no data' on those sounds (regression)."""
+    from deepSTRF.datasets.audio import Wingert2026Dataset
+    ds = Wingert2026Dataset(path=WINGERT_LOCAL, site=["CLT028c", "LMD037a"])
+    for row in ds.responses:
+        for r in row:
+            if r.numel() > 1:
+                assert not torch.isnan(r).any()
+    s = next(i for i, m in enumerate(ds.stim_meta) if m["name"] == "STIM_00seq1.wav")
+    assert ds.stims[s].shape[-1] == 2000
+    lmd = [n for n, m in enumerate(ds.nrn_meta) if m["session"] == "LMD037a"]
+    assert lmd and bool(ds.nrn_masks[s, lmd].all())
+
+
+@skip_if_no_data
 def test_sentinels_share_one_reference(two_site_dataset):
     """Memory-regression guard: all (1,1) NaN sentinels are the SAME object."""
     ds = two_site_dataset
