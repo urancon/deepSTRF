@@ -603,6 +603,7 @@ def iterate_wehr_cells(wehr_root: str) -> Iterator[CellRecord]:
                 raw_repeats=raw_repeats,
                 sf_resp=sf_resp,
                 meta={
+                    "name": f"wehr/{cat}/{idx}",   # unique, = the dedup key
                     "experimenter": "wehr",
                     "category": cat,
                     "idx": idx,
@@ -903,6 +904,8 @@ def iterate_asari_cells(
                     raw_repeats=raw_repeats,
                     sf_resp=sf_resp_common,
                     meta={
+                        # unique, = the dedup key ('description' repeats across classes)
+                        "name": "asari/" + "+".join(resolved_files),
                         "experimenter": "asari",
                         "category": f"class{class_n}" if class_n is not None else "mixed",
                         "class_n": class_n,

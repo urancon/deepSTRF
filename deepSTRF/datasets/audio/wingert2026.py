@@ -411,26 +411,23 @@ class Wingert2026Dataset(AudioNeuralDataset):
         # identical within a session-T group; the modest cross-T (T=2000 vs
         # 2200) difference is a re-render/gain nuisance over identical sound
         # content (same segments/gaps/timing; see untracked/benchmark figures),
-        # so reusing one canonical spectrogram is sound.
+        # so reusing one canonical spectrogram is sound. The canonical length
+        # is the SHORTEST contributing presentation: the extra bins of longer
+        # ones are trailing silence, and keeping them would force NaN padding
+        # into the shorter sessions' rasters -- which the data paradigm reads
+        # as "no data", silently dropping those neurons for that sound.
         spec_by_name: Dict[str, torch.Tensor] = {}
         Tcanon_by_name: Dict[str, int] = {}
         sessions_by_name: Dict[str, List[str]] = {}
         resp_by_name: Dict[str, List[torch.Tensor]] = {}
 
         def _align_T(raster: torch.Tensor, T: int) -> torch.Tensor:
-            """Pad (NaN, trailing) / truncate a ``(R, T_s)`` raster to ``T``.
+            """Truncate a ``(R, T_s)`` raster to the canonical ``T <= T_s``.
 
             T differences across sessions of the same sound are trailing
-            silence; truncation drops only silence, padding marks the
-            unrecorded trailing bins NaN (masked downstream).
+            silence, so truncation drops only silence.
             """
-            Ts = raster.shape[-1]
-            if Ts == T:
-                return raster
-            if Ts > T:
-                return raster[..., :T].contiguous()
-            pad = torch.full((raster.shape[0], T - Ts), float("nan"))
-            return torch.cat([raster, pad], dim=-1)
+            return raster if raster.shape[-1] == T else raster[..., :T].contiguous()
 
         # Deterministic session order so the first-seen canonical spectrogram
         # (and persisted instances) are bit-stable across runs.
@@ -474,6 +471,17 @@ class Wingert2026Dataset(AudioNeuralDataset):
                 R = len(epoch_rows)
                 if R == 0 or not in_session:
                     continue
+
+                # A shorter presentation shrinks the canonical length (see the
+                # dedup note above): cut the sound and the rasters already stored.
+                if T_s < Tc:
+                    cut = T_s * self.hop if self.return_waveform else T_s
+                    spec_by_name[stim_name] = spec_by_name[stim_name][..., :cut].contiguous()
+                    resp_by_name[stim_name] = [
+                        r if r is NAN else r[..., :T_s].contiguous()
+                        for r in resp_by_name[stim_name]
+                    ]
+                    Tcanon_by_name[stim_name] = Tc = T_s
 
                 # Rasterize R repeats × T_s per cell.
                 #

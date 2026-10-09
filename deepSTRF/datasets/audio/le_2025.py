@@ -383,8 +383,12 @@ class Le2025Dataset(AudioNeuralDataset):
         self.stims: List[torch.Tensor] = []
         self.stim_meta: List[Dict[str, Any]] = []
         self._stim_idx_by_name: Dict[str, int] = {}
+        # Response length per stim, in neural bins. Taken from the spectrogram: in
+        # waveform mode self.stims holds (1, T_audio) samples, not bins.
+        T_per_stim: List[int] = []
         for rec in stim_records:
             sr_native, n_samples, duration_s, spec = self._load_stim(rec["wav_path"])
+            T_per_stim.append(spec.shape[-1])
             ci_on, ci_off = self._ci_bounds_seconds(rec, sr_native, duration_s)
             if self.return_waveform:
                 self.stims.append(self._load_stim_waveform(rec["wav_path"], spec.shape[-1]))
@@ -405,7 +409,6 @@ class Le2025Dataset(AudioNeuralDataset):
             self._stim_idx_by_name[rec["name"]] = len(self.stims) - 1
 
         S = len(self.stims)
-        T_per_stim = [s.shape[-1] for s in self.stims]
 
         # --- 3. Units: walk every pprox file across the response dirs -------
         per_unit_rows: List[List[torch.Tensor]] = []

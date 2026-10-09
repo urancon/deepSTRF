@@ -113,6 +113,33 @@ def test_neural_dataset_validate_succeeds_on_populated_fixture():
     assert fx.nrn_masks.dtype == torch.bool
 
 
+def test_neural_dataset_validate_rejects_nan_inside_real_response():
+    """A real response with NaN in it (e.g. NaN-padded to a longer stim) would be
+    read by nrn_masks as 'no data' and silently dropped -> validate() must refuse.
+    The (1, 1) NaN sentinel stays legal."""
+    from deepSTRF.datasets.neural_dataset import NeuralDataset
+
+    class _Fixture(NeuralDataset):
+        def __init__(self, pad_with_nan):
+            super().__init__("/tmp/nowhere", dt_ms=1.0)
+            self.N_neurons = 2
+            self.stim_meta = [("s0",), ("s1",)]
+            self.stims = [torch.zeros(1, 4, 10), torch.zeros(1, 4, 10)]
+            padded = torch.zeros(3, 10)
+            if pad_with_nan:
+                padded[:, 8:] = float("nan")
+            self.responses = [
+                [torch.zeros(3, 10), padded],
+                [torch.zeros(3, 10), torch.full((1, 1), float("nan"))],
+            ]
+            self.nrn_meta = [{"uid": "n0"}, {"uid": "n1"}]
+            self.validate()
+
+    _Fixture(pad_with_nan=False)  # sentinel only: must not raise
+    with pytest.raises(AssertionError, match="contain NaN"):
+        _Fixture(pad_with_nan=True)
+
+
 def test_audio_neural_dataset_validate_requires_F():
     """AudioNeuralDataset.validate() adds self.F > 0 check."""
     from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
