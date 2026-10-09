@@ -249,9 +249,11 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
     deepSTRF data paradigm — see ``docs/_source/md/data_paradigm.md``.
     Per-stim metadata:
 
-    - ``stim_meta`` dicts hold ``experimenter``, ``category``, ``idx``
-      (Wehr) or ``class_n`` / ``segments`` / ``segment_files`` (Asari),
-      ``description``, ``duration_s``.
+    - ``stim_meta`` dicts hold a unique ``name`` (``'wehr/<category>/<idx>'``
+      or ``'asari/<segment files joined by +>'``), ``experimenter``,
+      ``category``, ``idx`` (Wehr) or ``class_n`` / ``segments`` /
+      ``segment_files`` (Asari), ``description`` (NOT unique: the same
+      sequence description recurs across classes), ``duration_s``.
     - ``nrn_meta`` dicts hold ``experimenter``, ``session``,
       ``animal_id``, ``penetration``, ``date``, ``site``,
       ``recording_type``, ``signal_type`` (``'subthresh'`` /

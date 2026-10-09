@@ -323,3 +323,17 @@ def test_filter_api_round_trips():
     assert len(selected) > 0
     assert all(ds.nrn_meta[i]["experimenter"] == "wehr" for i in selected)
     assert len(selected) < n_total  # asari + wehr should outnumber wehr alone
+
+
+@pytest.mark.skipif(not HAS_DATA, reason="CRCNS-AC1 local archive missing")
+def test_stim_names_are_unique():
+    """Every stimulus carries a unique ``name`` (the dedup key). ``description``
+    alone repeats across distinct sounds (Asari: same sequence order in
+    different classes), so it cannot identify a stimulus."""
+    from deepSTRF.datasets.audio import CRCNSAC1Dataset
+
+    ds = CRCNSAC1Dataset(path=CRCNS_AC1_LOCAL, dt_ms=10.0)
+    names = [m["name"] for m in ds.stim_meta]
+    assert len(names) == len(set(names)) == len(ds.stim_meta)
+    descr = [m["description"] for m in ds.stim_meta]
+    assert len(set(descr)) < len(descr)   # why 'name' is needed
