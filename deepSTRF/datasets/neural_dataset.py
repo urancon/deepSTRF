@@ -1004,3 +1004,19 @@ class NeuralDataset(Dataset, ABC):
 
         # self.nrn_masks is a derived @property; its shape and dtype are
         # guaranteed by construction, so no separate check is needed.
+
+        # Data paradigm: a missing (stim, neuron) pair is the (1, 1) NaN sentinel,
+        # and a real response contains no NaN. nrn_masks reads any NaN inside a
+        # real response as "no data", so a loader that pads with NaN silently
+        # removes neurons from training and testing (Wingert2026 lost 1680 / 2128
+        # A1 neurons' test data this way). Refuse such a dataset.
+        bad = [(s, n) for s, row in enumerate(self.responses)
+               for n, r in enumerate(row)
+               if tuple(r.shape) != (1, 1) and bool(torch.isnan(r).any())]
+        assert not bad, (
+            f"{len(bad)} real (stim, neuron) responses contain NaN, e.g. (stim, neuron) "
+            f"= {bad[:3]}; across {len({n for _, n in bad})} neurons. A missing pair "
+            f"must be the (1, 1) NaN sentinel and a real response must contain no NaN "
+            f"(otherwise nrn_masks silently drops it). Truncate or zero-fill instead "
+            f"of NaN-padding. See docs/_source/md/data_paradigm.md."
+        )
