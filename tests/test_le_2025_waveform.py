@@ -59,3 +59,23 @@ def test_le_waveform_branch():
     # the wav aligns from t=0 (no silence flank): sound energy starts immediately
     w0 = ds.stims[0][0]
     assert float((w0[:ds.hop] ** 2).sum()) > 0.0
+
+
+@pytest.mark.skipif(not os.path.isdir(os.path.join(_LE2025_LOCAL, "synth8b-stimuli")),
+                    reason=f"Le2025 synth8b data not at {_LE2025_LOCAL!r}; set $LE2025_DATA.")
+def test_le_waveform_responses_binned_at_dt():
+    """Regression: in waveform mode the responses were binned to the number of AUDIO
+    samples (the per-stim length was read after the spectrograms were swapped for
+    waveforms), so validate() rejected every waveform dataset. synth8b is small enough
+    to run without the nat8b RAM gate."""
+    from deepSTRF.datasets.audio.le_2025 import Le2025Dataset
+
+    wav = Le2025Dataset(path=_LE2025_LOCAL, experiment="synth8b",
+                        return_waveform=True, compute_reliability=False)
+    spec = Le2025Dataset(path=_LE2025_LOCAL, experiment="synth8b",
+                         compute_reliability=False)
+    for s in range(len(wav.stims)):
+        assert wav.stims[s].shape[-1] == spec.stims[s].shape[-1] * wav.hop
+        for a, b in zip(wav.responses[s], spec.responses[s]):
+            if a.numel() > 1:
+                assert torch.equal(a, b)
