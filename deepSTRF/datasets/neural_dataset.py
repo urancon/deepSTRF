@@ -537,6 +537,35 @@ class NeuralDataset(Dataset, ABC):
                 f"stim_index must be in [0, {len(self.stim_meta)})"
         self.S_sel = list(stim_indices)
 
+    def stim_to_iter_indices(self, stim_indices):
+        """Map absolute stimulus indices to iteration indices.
+
+        ``__getitem__`` (and so ``torch.utils.data.Subset``) indexes the
+        *iterable* stimuli, which depend on the current stim and neuron
+        selections, while ``stim_meta``, ``select_stims`` and the split helpers
+        use absolute indices. Typical use::
+
+            split = ds.song_split(seed=0)              # absolute indices
+            train = Subset(ds, ds.stim_to_iter_indices(split['train']))
+
+        Stimuli that are not iterable under the current selection (not
+        selected, or without any valid response among the selected neurons)
+        have no iteration index and are dropped. Call this after any
+        selection change, since iteration indices shift with the selection.
+
+        Parameters
+        ----------
+        stim_indices : sequence of int
+            Indices into the stim space, each in ``[0, S)``.
+
+        Returns
+        -------
+        list of int
+            The iteration indices, in the order of ``stim_indices``.
+        """
+        pos = {s: i for i, s in enumerate(self._iter_idx)}
+        return [pos[int(s)] for s in stim_indices if int(s) in pos]
+
     def select_stims_by_attr(self, attribute_name: str, value):
         """Restrict iteration to stimuli matching ``stim_meta[attr] == value``.
 
