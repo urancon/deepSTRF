@@ -75,6 +75,21 @@ except ImportError:  # pragma: no cover - exercised only when extra missing
 EXPERIMENTS: Tuple[str, ...] = ("nat8a", "nat8b", "synth8b")
 VARIANTS: Tuple[str, ...] = ("C", "G", "N", "GB", "CB", "GM", "CM")
 
+# The 8 natural songs (named after the singer, as in nat8a) and the familiarity
+# group each singer was housed in for cohort 1 (metadata/song-birds.csv). The
+# same songs reappear in nat8b under the ``nat8mkN`` names.
+NATURAL_SONG_GROUPS: Dict[str, str] = {
+    "B189": "178B", "B30": "178B", "B72": "178B", "O129": "178B",
+    "R56": "180B", "R180": "180B", "B2": "180B", "R253": "180B",
+}
+_NAT8B_TO_SONG: Dict[str, str] = {
+    "nat8mk0": "B189", "nat8mk1": "R56", "nat8mk2": "R180", "nat8mk3": "B30",
+    "nat8mk4": "B72", "nat8mk5": "B2", "nat8mk6": "O129", "nat8mk7": "R253",
+}
+# The 8 scrambled-syntax pseudo-motifs of synth8b. Their syllables come from 16
+# other birds (Margoliash lab), so they share no audio with the natural songs.
+SYNTH_MOTIFS: Tuple[str, ...] = tuple(f"synth8mk{i}" for i in range(8))
+
 # experiment → tuple of response subdirectories (in cohort order)
 _EXP_RESPONSE_DIRS: Dict[str, Tuple[str, ...]] = {
     "nat8a":   ("nat8a-alpha-responses", "nat8a-beta-responses"),
@@ -273,6 +288,13 @@ class Le2025Dataset(AudioNeuralDataset):
     Stim-side metadata fields:
         - ``name``               : filename stem.
         - ``motif``              : e.g. ``"B189"`` (nat8a) or ``"nat8mk0"`` (nat8b).
+        - ``song_id``            : the song, named the same in every experiment
+                                   (``"R56"`` for both ``R56_*`` and
+                                   ``ep_nat8mk1_*``; the motif name for synth8b).
+                                   Split on this key, never on ``motif``.
+        - ``familiarity_group``  : ``"178B"`` | ``"180B"``, the group of singers
+                                   the song belongs to (cohort-1 familiarity
+                                   manipulation); ``None`` for synth8b.
         - ``critical_interval``  : ``int`` (1/2) for per-CI variants, ``None``
                                    for ``C`` and ``CM`` (CI-independent), or
                                    a string like ``"2a"`` for synth8b.
@@ -394,9 +416,12 @@ class Le2025Dataset(AudioNeuralDataset):
                 self.stims.append(self._load_stim_waveform(rec["wav_path"], spec.shape[-1]))
             else:
                 self.stims.append(spec)
+            song_id = _NAT8B_TO_SONG.get(rec["motif"], rec["motif"])
             self.stim_meta.append({
                 "name":              rec["name"],
                 "motif":             rec["motif"],
+                "song_id":           song_id,
+                "familiarity_group": NATURAL_SONG_GROUPS.get(song_id),
                 "critical_interval": rec["critical_interval"],
                 "variant":           rec["variant"],
                 "syntax":            "scrambled" if experiment == "synth8b" else "natural",
