@@ -98,8 +98,9 @@ ds = CRCNSAA4Dataset('/path/to/data', stimuli=('song', 'call'),
 
 Each `stim_meta` dict carries `name` (the stimulus md5 — the canonical
 identifier; the wav filename is per-animal and not unique across the
-corpus), `type` (e.g. `"song"`, `"call"`), `class` (broader category), and
-`duration_s`. Each `nrn_meta` dict carries `cell_id` (the basename
+corpus), `type` (e.g. `"song"`, `"call"`), `class` (broader category),
+`duration_s`, `md5s` (the md5s of every wav merged into this stimulus, see
+below) and `overlap_group` (stimuli that share any audio carry the same id). Each `nrn_meta` dict carries `cell_id` (the basename
 of the source h5 file), `animal_id` (one of `AA4_ANIMAL_IDS`), `sex`
 (`"M"` or `"F"` — last char of `animal_id`), `site` (recording site
 label, e.g. `"Site1"`), `electrode` (int 1-32 across both hemisphere
@@ -118,3 +119,58 @@ is available: select neurons by metadata (`select_pop_by_nrn_attr`),
 select stims by metadata (`select_stims_by_attr`), and the bidirectional
 rule auto-hides cells that have no responses to the current stim
 selection.
+
+## Duplicate stimuli and the train / val / test split
+
+The md5 of a wav file is not a reliable identity for a sound in AA4, for two
+reasons.
+
+- **The same sound saved several times.** The 20 songs and 10 ripple noises
+  played to every bird exist in up to three copies: one shared by BlaBro09xxF,
+  GreBlu9508M, WhiWhi4522M and YelBlu6903F, LblBlu2028M's copy (about 420
+  samples changed at the onset) and WhiBlu5396M's re-quantised copy. Three calls
+  exist in two copies. The copies differ about 50 dB below the signal but have
+  different md5s, and the original file names differ too.
+- **Call bouts that share calls.** A call stimulus is a 2.5-s bout of three
+  renditions from one caller and one call type, drawn from a pool of about ten
+  renditions; each bird heard different draws. Two bouts that contain the same
+  rendition share 0.2–0.6 s of identical audio. This also happens between bouts
+  played to the same bird.
+
+The loader handles both with a table computed once from the audio of the whole
+corpus:
+
+- **Merging (default).** Copies of one sound become one stimulus
+  (`merge_duplicates=True`), so the neurons of all birds share it: 594 wav files
+  give 539 stimuli (463 calls, 66 songs, 10 ripple noises). Each bird heard only
+  one copy, so no unit gets two trial sets for one stimulus. `name` is the md5 of
+  the copy heard by most birds, and `md5s` lists the merged ones. Pass
+  `merge_duplicates=False` to keep one stimulus per md5 (the previous
+  behaviour).
+- **Overlap groups.** `overlap_group` links every stimulus that shares any audio
+  with another (a 300-ms log-mel patch matching at r > 0.99). The 539 stimuli
+  form 369 groups, of at most 18 stimuli; no group mixes stimulus types or
+  callers.
+
+A split that ignores the groups leaks: with a random stratified 70/10/20 split
+of the md5s, 78 of 172 test stimuli shared audio with a training stimulus.
+`group_split` draws whole groups instead, 70/10/20 within each stimulus type:
+
+```python
+from torch.utils.data import DataLoader, Subset
+from deepSTRF.datasets.audio import CRCNSAA4Dataset
+from deepSTRF.utils import neural_collate
+
+ds = CRCNSAA4Dataset(download=True, dt_ms=5)
+split = ds.group_split(seed=0)        # {'train': [...], 'val': [...], 'test': [...]}
+train = Subset(ds, ds.stim_to_iter_indices(split["train"]))
+val = Subset(ds, ds.stim_to_iter_indices(split["val"]))
+test = Subset(ds, ds.stim_to_iter_indices(split["test"]))
+loader = DataLoader(train, batch_size=8, shuffle=True, collate_fn=neural_collate)
+```
+
+The draw is over the whole corpus, so a given seed puts a sound in the same set
+whichever birds or stimulus types are loaded. With seed 0 and all birds, the
+split is 377 / 54 / 108 stimuli, and each bird gets 68–73 % / 8–11 % / 17–23 % of
+its own stimuli.
+
