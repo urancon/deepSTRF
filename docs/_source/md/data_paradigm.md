@@ -424,6 +424,19 @@ ds.nrn_masks[42]            # which neurons have data for stim 42
 The selection filter applies only at the iteration interface (`__len__`,
 `__getitem__`).
 
+Split helpers (e.g. `Le2025Dataset.song_split`) return *absolute* stim
+indices, while `torch.utils.data.Subset` indexes the *iterable* stims.
+`stim_to_iter_indices` maps one to the other under the current selection,
+dropping stims that are not iterable:
+
+```python
+split = ds.song_split(seed=0)                          # absolute indices
+train = Subset(ds, ds.stim_to_iter_indices(split['train']))
+```
+
+Call it after the last selection change: iteration indices shift with the
+selection.
+
 ## 9. Gotchas
 
 - **Non-causal models on zero-padded stims.** A bidirectional RNN, a
