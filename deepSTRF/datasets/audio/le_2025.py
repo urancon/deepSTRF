@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import csv
 import json
+import random
 import re
 import warnings
 from collections import defaultdict
@@ -77,7 +78,8 @@ VARIANTS: Tuple[str, ...] = ("C", "G", "N", "GB", "CB", "GM", "CM")
 
 # The 8 natural songs (named after the singer, as in nat8a) and the familiarity
 # group each singer was housed in for cohort 1 (metadata/song-birds.csv). The
-# same songs reappear in nat8b under the ``nat8mkN`` names.
+# same songs reappear in nat8b under the ``nat8mkN`` names. Hard-coded so that
+# ``song_split`` draws over the full song set whatever the instance contains.
 NATURAL_SONG_GROUPS: Dict[str, str] = {
     "B189": "178B", "B30": "178B", "B72": "178B", "O129": "178B",
     "R56": "180B", "R180": "180B", "B2": "180B", "R253": "180B",
@@ -291,7 +293,8 @@ class Le2025Dataset(AudioNeuralDataset):
         - ``song_id``            : the song, named the same in every experiment
                                    (``"R56"`` for both ``R56_*`` and
                                    ``ep_nat8mk1_*``; the motif name for synth8b).
-                                   Split on this key, never on ``motif``.
+                                   Split on this key, never on ``motif``
+                                   (:meth:`song_split` does).
         - ``familiarity_group``  : ``"178B"`` | ``"180B"``, the group of singers
                                    the song belongs to (cohort-1 familiarity
                                    manipulation); ``None`` for synth8b.
@@ -894,6 +897,64 @@ class Le2025Dataset(AudioNeuralDataset):
     # -----------------------------------------------------------------------
     # Convenience selectors for the restoration paradigm
     # -----------------------------------------------------------------------
+
+    def song_split(self, seed: Optional[int] = None) -> Dict[str, List[int]]:
+        """Split the stimuli into train / val / test by song (6 / 1 / 1).
+
+        Every variant of a song goes to the same set, so no test song is heard
+        in training through another variant (the variants of one song share
+        most of their audio). Songs are identified across experiments
+        (``song_id``): nat8a ``R56`` and nat8b ``nat8mk1`` are the same song and
+        always land in the same set, so a concatenation of nat8a, nat8b and
+        synth8b is split consistently.
+
+        Rules:
+
+        - natural songs: 6 train / 1 val / 1 test; the val and test songs come
+          from different familiarity groups (``"178B"``, ``"180B"``), and
+          which group gives the test song is part of the draw;
+        - synth8b pseudo-motifs: 6 train / 1 val / 1 test;
+        - the isolated noise burst (variant ``N``) always goes to train. It
+          contains no song, and in nat8b and synth8b it is the same frozen
+          noise token for every song.
+
+        Each experiment contains every song, so every unit has train, val and
+        test stimuli. The draw is over the full lists of 8 natural songs and 8
+        pseudo-motifs, not over the stimuli of this instance, so a given
+        ``seed`` picks the same songs whichever experiments are loaded.
+
+        With one test song per stimulus set, scores restricted to one
+        experiment depend on which song is drawn (about +/- 0.05 cc_norm);
+        report pooled scores, or average over several seeds.
+
+        Parameters
+        ----------
+        seed : int, optional
+            Seed of the draw. ``None`` draws a new random split at each call.
+
+        Returns
+        -------
+        dict
+            ``{'train': [...], 'val': [...], 'test': [...]}``: absolute stimulus
+            indices (into ``stim_meta``), whatever the current selection. Use
+            :meth:`stim_to_iter_indices` to build a ``torch.utils.data.Subset``.
+        """
+        rng = random.Random(seed)
+        song_set: Dict[str, str] = {s: "train" for s in (*NATURAL_SONG_GROUPS, *SYNTH_MOTIFS)}
+        groups = sorted(set(NATURAL_SONG_GROUPS.values()))
+        rng.shuffle(groups)
+        for group, key in zip(groups, ("test", "val")):
+            songs = sorted(s for s, g in NATURAL_SONG_GROUPS.items() if g == group)
+            song_set[rng.choice(songs)] = key
+        synth = list(SYNTH_MOTIFS)
+        rng.shuffle(synth)
+        song_set[synth[0]], song_set[synth[1]] = "test", "val"
+
+        split: Dict[str, List[int]] = {"train": [], "val": [], "test": []}
+        for i, m in enumerate(self.stim_meta):
+            key = "train" if m["variant"] == "N" else song_set[m["song_id"]]
+            split[key].append(i)
+        return split
 
     def select_variant(self, variant: str) -> List[int]:
         """Restrict iteration to one variant code, e.g. ``'GB'``."""
