@@ -132,10 +132,10 @@ reasons.
   exist in two copies. The copies differ about 50 dB below the signal but have
   different md5s, and the original file names differ too.
 - **Call bouts that share calls.** A call stimulus is a 2.5-s bout of three
-  renditions from one caller and one call type, drawn from a pool of about ten
-  renditions; each bird heard different draws. Two bouts that contain the same
-  rendition share 0.2–0.6 s of identical audio. This also happens between bouts
-  played to the same bird.
+  renditions from one caller and one call type, separated by silence and drawn
+  from a pool of about ten renditions; each bird heard different draws. Two
+  bouts that contain the same rendition share its audio sample for sample. This
+  also happens between bouts played to the same bird.
 
 The loader handles both with a table computed once from the audio of the whole
 corpus:
@@ -147,13 +147,19 @@ corpus:
   the copy heard by most birds, and `md5s` lists the merged ones. Pass
   `merge_duplicates=False` to keep one stimulus per md5 (the previous
   behaviour).
-- **Overlap groups.** `overlap_group` links every stimulus that shares any audio
-  with another (a 300-ms log-mel patch matching at r > 0.99). The 539 stimuli
-  form 369 groups, of at most 18 stimuli; no group mixes stimulus types or
-  callers.
+- **Overlap groups.** `overlap_group` links every stimulus that shares any
+  identical audio with another: each stimulus is cut into calls at its silences,
+  and every call is searched for in every other stimulus by waveform correlation
+  (with a log-mel check for WhiBlu5396M's re-quantised quiet calls). The 539
+  stimuli form 224 groups: every song and ripple noise is its own group, and the
+  calls form 110 single bouts and 33 families of 2–18 bouts of one caller and
+  call type. No group mixes stimulus types or callers. Different recordings of a
+  caller's stereotyped call are not grouped: they are different sounds, even if
+  their spectrograms are close.
 
 A split that ignores the groups leaks: with a random stratified 70/10/20 split
-of the md5s, 78 of 172 test stimuli shared audio with a training stimulus.
+of the md5s, 119 of the 172 test stimuli shared audio with a training
+stimulus.
 `group_split` draws whole groups instead, 70/10/20 within each stimulus type:
 
 ```python
@@ -171,6 +177,6 @@ loader = DataLoader(train, batch_size=8, shuffle=True, collate_fn=neural_collate
 
 The draw is over the whole corpus, so a given seed puts a sound in the same set
 whichever birds or stimulus types are loaded. With seed 0 and all birds, the
-split is 377 / 54 / 108 stimuli, and each bird gets 68–73 % / 8–11 % / 17–23 % of
+split is 383 / 51 / 105 stimuli, and each bird gets 68–72 % / 7–11 % / 19–22 % of
 its own stimuli.
 

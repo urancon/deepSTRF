@@ -53,12 +53,15 @@ _AA4_SORTTYPE_FIXES = {"singl": "single"}
 # re-quantised), and 3 calls in two. And call stimuli are 2.5-s bouts of three renditions drawn
 # from a pool per caller and call type, so different bouts can contain the same rendition.
 # Entry per md5: [canonical md5, overlap group id, stim type].
-#   - canonical: the copy that duplicates of the same sound are merged into (same length,
-#     waveform r > 0.85, log-mel r > 0.999 on the louder half of the bins; the copy heard by
-#     most birds);
-#   - overlap group: stimuli sharing any audio (a 300-ms log-mel patch at r > 0.99), including
-#     the duplicates. 594 md5s -> 539 sounds -> 369 groups; no group mixes stimulus types or
-#     callers.
+#   - canonical: the copy that duplicates of the same sound are merged into (same length and
+#     log-mel r > 0.999 on the louder half of the bins; the copy heard by most birds);
+#   - overlap group: stimuli sharing any identical audio, the duplicates included. Renditions
+#     are separated by digital silence and a reused rendition is bit-identical, so each
+#     stimulus is cut into events at its silences and every event is slid along every other
+#     stimulus: linked at waveform r > 0.9, or, for WhiBlu5396M's re-quantised quiet calls,
+#     at log-mel r > 0.999 at the best waveform lag. Different recordings of one caller's
+#     stereotyped call stay below waveform r 0.4. 594 md5s -> 539 sounds -> 224 groups (at
+#     most 18 stimuli); no group mixes stimulus types or callers.
 _STIM_GROUPS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                  '_crcns_aa4_stim_groups.json')
 _STIM_GROUPS: Optional[Dict[str, Tuple[str, str, str]]] = None

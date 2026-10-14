@@ -39,7 +39,7 @@ def test_table_is_consistent():
     assert len(t) == 594
     canon = {c for c, _, _ in t.values()}
     assert len(canon) == 539
-    assert len({g for _, g, _ in t.values()}) == 369
+    assert len({g for _, g, _ in t.values()}) == 224
     for md5, (c, g, typ) in t.items():
         assert t[c][0] == c                       # a canonical copy is its own canonical
         assert t[c][1] == g and t[c][2] == typ    # duplicates share group and type
@@ -74,7 +74,7 @@ def test_split_fractions_per_type():
 
 def test_seed0_draw_is_stable():
     split = _dataset().group_split(seed=0)
-    assert {k: len(v) for k, v in split.items()} == {"train": 377, "val": 54, "test": 108}
+    assert {k: len(v) for k, v in split.items()} == {"train": 383, "val": 51, "test": 105}
 
 
 def test_split_is_deterministic_and_subset_invariant():
