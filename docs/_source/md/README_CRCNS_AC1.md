@@ -70,7 +70,7 @@ both.
 
 |        | Recording        | sf       | Subjects   | Stimuli                           | N (loader) |
 |--------|------------------|----------|------------|-----------------------------------|------------|
-| Wehr   | whole-cell A1    | 4 kHz    | anaesth. rat | 15-s natural-sound fragments  | 25         |
+| Wehr   | whole-cell A1    | 4 kHz    | anaesth. rat | 15-s fragments (2002 cells), 18–31-s streams (2003 cells) | 25 |
 | Asari A1 | whole-cell A1  | 10 kHz   | anaesth. rat | spliced *sequences* of segments | 39         |
 | Asari MGB | cell-attached MGB | 10 kHz | anaesth. rat | same as Asari A1 (subset)     | 14         |
 
@@ -115,6 +115,47 @@ For the **cell-attached MGB** cohort, the subthreshold step is replaced by
 spike extraction: drift-detrend → high-pass (subtract a **10 ms** median, the
 Asari 2009 value) → threshold at 2.5 σ → 21 ms Hann smooth. On a sample MGB
 cell this yields ~12 Hz evoked rate, matching the paper's 11.4 ± 16.9 Hz.
+
+## Wehr: shared audio and `group_split`
+
+The Wehr stimuli are 18 *fragment* files (15 s each, one source each; the
+Hendrix file is 32 s) and 33 *streams* of 18–31 s. The streams are grouped
+by the frequency range of their sounds (``category1`` 0–1.6 kHz,
+``category2`` 0–6.4 kHz, ``category3`` 0–22 kHz). The labels are spectral
+classes, not filters. A stream is a series of pieces from different sources,
+cut on a 0.5-s grid with short fades at the joins.
+
+Some files share audio:
+
+- The first ~10 s of 13 fragment files reappear inside 14 streams; for
+  example, the tungara frog fragment opens ``category2/18``.
+- Fragments 12 and 13 are themselves built from fragment 8 and a screaming
+  piha recording.
+- Streams share no audio with each other.
+
+The 10 cells recorded in 2002 heard only fragments, and the 15 cells
+recorded in 2003 heard only streams. A model fitted to all cells therefore
+sees the same audio in training and test whenever a fragment and a stream
+that copies it fall in different sets. ``WEHR_SHARED_AUDIO`` lists the 9
+groups of files that share audio, and ``stim_meta['overlap_group']`` gives
+each Wehr stimulus its group (37 groups over the 51 files).
+
+``CRCNSAC1Dataset.group_split(seed, fractions=(0.7, 0.1, 0.2))`` returns
+train / val / test stimulus indices with every group in one set. The
+stimuli stay whole, so their long context, and the adaptation it drives,
+is kept. Groups holding a fragment file are drawn together (the streams
+that copy them follow them); the other streams are drawn per category. At
+``seed=0`` the split is 33 / 4 / 14 files, every category has test files,
+24 of the 25 cells heard at least one test file, and 17 heard at least one
+val file (3 of the 10 fragment cells: each of them heard only 3–11
+fragments). The split is defined for the Wehr stimuli only for now.
+
+```python
+from torch.utils.data import Subset
+ds = CRCNSAC1Dataset(experimenter="wehr", sites="A1", dt_ms=5.0)
+split = ds.group_split(seed=0)
+train = Subset(ds, ds.stim_to_iter_indices(split["train"]))
+```
 
 ## Reproducibility constants
 
