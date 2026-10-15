@@ -12,6 +12,13 @@ http://dx.doi.org/10.6080/10.6080/K0JW8BSC
 - ["Sound representation methods for spectro-temporal receptive field estimation"](https://doi.org/10.1007/s10827-006-7059-4) (2006) by Patrick Gill, Junli Zhang, Sarah M. N. Woolley, Thane Fremouw and Frédéric E. Theunissen
 - ["Role of the Zebra Finch Auditory Thalamus in Generating Complex Representations for Natural Sounds"](https://doi.org/10.1152/jn.00128.2010) (2010) by Noopur Amin, Patrick Gill, Frederic E Theunissen
 
+```{note}
+**AA2 contains all of [CRCNS AA1](README_CRCNS_AA1.md).** The 100 AA1 cells
+(50 MLd and 50 Field L) are AA2 cells, with byte-identical spike files, and
+the 30 AA1 stimuli are AA2 stimuli. Use one dataset or the other, never both
+together. See the warning on the AA1 page for details.
+```
+
 ## Dataset Details
 
 **Population fitting:** ✅

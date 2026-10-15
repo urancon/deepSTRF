@@ -250,6 +250,10 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
       ``cell_seq`` and ``rig`` (see :class:`~deepSTRF.datasets.audio.crcns_aa1.CRCNSAA1Dataset`
       for the cell-name format; ``rig`` is often ``None`` in AA2).
 
+    AA2 contains all of CRCNS-AA1 (the 100 AA1 cells, their 30 stimuli and
+    byte-identical spike files), so never concatenate it with
+    :class:`~deepSTRF.datasets.audio.crcns_aa1.CRCNSAA1Dataset`.
+
     References
     ----------
     Gill et al. (2006). "Sound representation methods for spectro-temporal
