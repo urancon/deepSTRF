@@ -79,6 +79,15 @@ While the version is `0.x`, the public API may still change between minor releas
 - **`ResponseSmoothingTransform`** crashed on use (it read an attribute that
   `__init__` never set). It now delegates to `hanning_smooth` and accepts any
   shape.
+- **Noise-corrected metrics on silent responses.** Hsu `CCmax` (used by
+  `normalized_corrcoef(method='hsu')`, `compute_CCmax` and
+  `compute_neuron_quality`) became NaN for a whole cell as soon as one
+  stimulus got a constant (e.g. silent) response, because NaN split-half
+  correlations entered the average. Such stimuli are now dropped, and a
+  split with one silent half counts as `rho = 0`. Schoppe `cc_norm` no longer
+  explodes on nearly silent cells whose signal power is a rounding-level
+  positive number: new `sp_rel_threshold` argument (default `1e-6`, relative
+  to the mean single-trial variance) returns NaN below it.
 - **CRCNS auto-download** (`download=True` for CRCNS AA1, AA2, AA4, AC1, and
   the new AA5): CRCNS moved its data to AWS in June 2026 and the old NERSC
   portal no longer serves the files. `crcns_download` now logs in to

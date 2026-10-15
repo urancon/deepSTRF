@@ -56,6 +56,31 @@ def _pearson_1d(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     return num / den
 
 
+def _split_half_rho(sub: torch.Tensor, max_iters: int) -> Optional[torch.Tensor]:
+    """Mean split-half correlation of one ``(R_v, T_v)`` block (``R_v`` even, >= 2).
+
+    Returns None when the block is constant (e.g. a stimulus to which the cell
+    never fired): no split carries information, so the caller drops the block
+    from its average. A split whose half-average is constant while the block is
+    not (one half fired, the other never did) counts as ``rho = 0``: it is
+    evidence of unreliability, so leaving it out would overestimate CCmax.
+    """
+    if bool((sub == sub.reshape(-1)[0]).all()):
+        return None
+    R_v = sub.shape[0]
+    half_sets = list(itertools.combinations(range(R_v), R_v // 2))
+    n_iters = min(len(half_sets) // 2, max_iters)
+    if n_iters == 0:
+        return None
+    cc_halfs = []
+    for i in range(n_iters):
+        first = sub[list(half_sets[i])].mean(dim=0)
+        second = sub[list(half_sets[-1 - i])].mean(dim=0)
+        r = _pearson_1d(first, second)
+        cc_halfs.append(torch.nan_to_num(r, nan=0.0))
+    return torch.stack(cc_halfs).mean()
+
+
 # -----------------------------------------------------------------------------
 # Public: prediction-vs-PSTH metrics
 # -----------------------------------------------------------------------------
@@ -433,18 +458,12 @@ def _per_stim_ccmax(
         if R_v % 2 == 1:
             R_v -= 1
             sub = sub[:R_v]
-        half_sets = list(itertools.combinations(range(R_v), R_v // 2))
-        n_iters = min(len(half_sets) // 2, max_iters)
-        cc_halfs = []
-        for i in range(n_iters):
-            first = sub[list(half_sets[i])].mean(dim=0)
-            second = sub[list(half_sets[-1 - i])].mean(dim=0)
-            cc_halfs.append(_pearson_1d(first, second))
-        if not cc_halfs:
+        rho_half = _split_half_rho(sub, max_iters)
+        if rho_half is None:
+            # constant block (e.g. silent stimulus): CCmax undefined, drop from the average
             cc_out.append(nan)
             tv_out.append(zero)
             continue
-        rho_half = torch.stack(cc_halfs).mean()
         if rho_half.item() <= 0:
             # too noisy to estimate ceiling; drop this stim from the weighted avg
             cc_out.append(nan)
@@ -496,6 +515,7 @@ def normalized_corrcoef(
     mask: Optional[torch.Tensor] = None,
     reduction: str = "mean",
     ccmax_iters: int = 126,
+    sp_rel_threshold: float = 1e-6,
 ) -> torch.Tensor:
     """Noise-corrected correlation coefficient per neuron.
 
@@ -522,7 +542,17 @@ def normalized_corrcoef(
         Reduction over the neuron axis.
     ccmax_iters : int, default 126
         Cap on random half-splits per ``(stim, neuron)`` for the ``'hsu'``
-        CCmax estimate.
+        CCmax estimate. A stimulus to which the neuron gave a constant
+        response (e.g. never fired) is left out of CCmax; a half-split whose
+        half-average is constant while the other half is not counts as
+        ``rho = 0``.
+    sp_rel_threshold : float, default 1e-6
+        ``'schoppe'`` only. The signal power is a difference of two nearly
+        equal terms, so for a (nearly) silent neuron rounding can leave a
+        tiny positive SP and the division by ``sqrt(SP)`` explodes. A neuron
+        whose SP is at most ``sp_rel_threshold * (SP + NP)`` (``SP + NP`` =
+        the mean single-trial variance) is treated as having no signal and
+        gets NaN. Set to 0 for the plain ``SP > 0`` test.
 
     Returns
     -------
@@ -567,7 +597,7 @@ def normalized_corrcoef(
         return corrcoef(pred, psth, mask=mask, reduction=reduction)
 
     if method == "schoppe":
-        sp, _ = _sahani_linden_per_neuron(responses, valid_resp)     # (N,)
+        sp, np_ = _sahani_linden_per_neuron(responses, valid_resp)   # (N,)
         N = pred.shape[1]
         nan = pred.new_full((), float("nan"))
         out = []
@@ -583,7 +613,8 @@ def normalized_corrcoef(
             cov_pg = ((p_n - p_n.mean()) * (g_n - g_n.mean())).sum() / max(T_eff - 1, 1)
             var_p = p_n.var(unbiased=True)
             sp_n = sp[n]
-            if not torch.isfinite(sp_n) or sp_n.item() <= 0 or var_p.item() < _EPS:
+            no_signal = sp_n.item() <= sp_rel_threshold * (sp_n + np_[n]).item()
+            if not torch.isfinite(sp_n) or sp_n.item() <= 0 or no_signal or var_p.item() < _EPS:
                 out.append(nan)
                 continue
             out.append(cov_pg / torch.sqrt(var_p * sp_n))
@@ -704,17 +735,10 @@ def compute_CCmax(
         if R_v % 2 == 1:
             R_v -= 1
             sub = sub[:R_v]
-        half_sets = list(itertools.combinations(range(R_v), R_v // 2))
-        n_iters = min(len(half_sets) // 2, max_iters)
-        cc_halfs = []
-        for i in range(n_iters):
-            first = sub[list(half_sets[i])].mean(dim=0)
-            second = sub[list(half_sets[-1 - i])].mean(dim=0)
-            cc_halfs.append(_pearson_1d(first, second))
-        if not cc_halfs:
+        rho_half = _split_half_rho(sub, max_iters)
+        if rho_half is None:                        # constant block: CCmax undefined
             out.append(nan)
             continue
-        rho_half = torch.stack(cc_halfs).mean()
         if rho_half.item() <= 0:
             out.append(nan)
             continue
