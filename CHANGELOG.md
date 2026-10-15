@@ -75,6 +75,13 @@ While the version is `0.x`, the public API may still change between minor releas
   checkpoint now scores a mean test `cc` of 0.687 instead of the published
   0.659, on the same weights.
 
+### Changed
+- **CRCNS-AA2 drops 11 artifact cells by default** (`drop_artifact_cells=True`,
+  list in `crcns_aa2.ARTIFACT_CELLS`). Their spike files contain bursts of
+  electrical pickup from the playback signal (up to 80 threshold crossings in
+  5 ms within one trial, at the stimulus's loudest transients). See the AA2
+  page; `drop_artifact_cells=False` restores the archive as released.
+
 ### Fixed
 - **`ResponseSmoothingTransform`** crashed on use (it read an attribute that
   `__init__` never set). It now delegates to `hanning_smooth` and accepts any

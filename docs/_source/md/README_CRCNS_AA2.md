@@ -50,6 +50,25 @@ http://dx.doi.org/10.6080/10.6080/K0JW8BSC
   - Pad/cut to the right (present/future time steps) so that trials have the same duration
 
 
+## Excluded cells
+
+By default (`drop_artifact_cells=True`) the loader drops 11 of the 494 cells,
+listed in `deepSTRF.datasets.audio.crcns_aa2.ARTIFACT_CELLS`: `blabla1904_2_A`,
+`blabla1904_3_A`, `blabla1904_3_B`, `blabla1904_4_A`, `blabla1904_5_A`,
+`blabla1904_5_B`, `blublu0916_3_A`, `blublu4142_5_B`, `pupu1203_1_A`,
+`pupu1203_4_A`, `yy2728_7_B`. None of them is in AA1.
+
+Their spike files contain bursts that are not spikes. In single trials, up to
+80 spike times fall inside one 5-ms bin, 62.5 µs apart: one per sample of the
+16 kHz acquisition clock, i.e. the recorded signal stays above threshold for the
+whole bin. The bursts sit at the loudest transients of the stimulus (for
+example 575 and 1785 ms into songrip `44F666E0`, in cells recorded on both rigs
+of bird `blabla1904`), so they are electrical pickup of the playback signal.
+They were found by an inter-spike-interval audit of all 494 cells (criterion:
+at least one trial with 10 or more spike times in a 5-ms bin; across all cells,
+the median share of inter-spike intervals below 1 ms is 1.1 %). Pass
+`drop_artifact_cells=False` to load the archive as released.
+
 ## Setup
 
 **Requirements**: a [CRCNS account](https://crcns.org/register).

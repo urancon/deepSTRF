@@ -30,6 +30,20 @@ AA2_NERSC_FILES = (
 )
 
 
+# Cells excluded by default (``drop_artifact_cells=True``). In each of them, at least one
+# trial has >= 10 spike times inside a single 5-ms bin (>= 2 kHz), up to 80 = one per
+# sample of the 16 kHz acquisition clock, i.e. the signal stays above threshold for the
+# whole bin. The bursts sit at the stimulus's loudest transients (e.g. 575 and 1785 ms of
+# songrip 44F666E0, in cells recorded on both rigs of bird blabla1904): electrical pickup
+# of the playback signal, not spikes. Found by an inter-spike-interval audit of all 494
+# cells (median share of ISIs < 1 ms: 1.1 %). None of these cells is in CRCNS-AA1.
+ARTIFACT_CELLS = (
+    "blabla1904_2_A", "blabla1904_3_A", "blabla1904_3_B", "blabla1904_4_A",
+    "blabla1904_5_A", "blabla1904_5_B", "blublu0916_3_A", "blublu4142_5_B",
+    "pupu1203_1_A", "pupu1203_4_A", "yy2728_7_B",
+)
+
+
 def download_aa2(dest: Optional[str] = None,
                  username: Optional[str] = None,
                  password: Optional[str] = None) -> str:
@@ -253,7 +267,8 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
                  return_waveform: bool = False, audio_fs: int = 32000,
                  download: bool = False,
                  username: Optional[str] = None,
-                 password: Optional[str] = None):
+                 password: Optional[str] = None,
+                 drop_artifact_cells: bool = True):
         """
         Initializes the AA2 Dataset.
 
@@ -299,6 +314,11 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
             the AA2 wavs (no resampling); other values resample and must keep
             ``audio_fs * dt_ms / 1000`` an integer. Ignored unless
             ``return_waveform=True``.
+        drop_artifact_cells : bool, default True
+            Exclude the 11 cells listed in ``ARTIFACT_CELLS``, whose spike
+            files contain bursts of electrical pickup from the playback
+            signal (up to 80 threshold crossings in 5 ms within one trial).
+            Set to False to load the archive as released.
         download : bool, default False
             If True and the data is missing under ``path``, fetch the
             ~30 MB worth of CRCNS-AA2 archives from the CRCNS download server
@@ -392,12 +412,13 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
                 cells += AREA_CELLs[area]
                 cell_areas += ([area] * len(AREA_CELLs[area]))
 
-        # filter cells by animal
+        # filter cells by animal (and drop the artifact cells, see ARTIFACT_CELLS)
         if animals == 'all':
             self.animals = ANIMAL_IDs
         else:
             self.animals = animals
-        keep = [cell.split('_')[0] in self.animals for cell in cells]
+        keep = [cell.split('_')[0] in self.animals
+                and not (drop_artifact_cells and cell in ARTIFACT_CELLS) for cell in cells]
         cells = [c for c, k in zip(cells, keep) if k]
         cell_areas = [a for a, k in zip(cell_areas, keep) if k]
         cell_animals = [cell.split('_')[0] for cell in cells]
