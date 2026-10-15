@@ -19,14 +19,23 @@ def test_preserves_spike_count(dt_ms):
 
 def test_kernel_at_5ms():
     y = hanning_smooth(_impulse(), window_ms=21.0, dt_ms=5.0)
-    # np.hanning(5) = [0, .5, 1, .5, 0] -> normalised [0, .25, .5, .25, 0]
+    # MATLAB hanning(5) = [.25, .75, 1, .75, .25] (no zero end points), sum 3
+    k = torch.tensor([0.25, 0.75, 1.0, 0.75, 0.25], dtype=y.dtype) / 3
+    assert torch.allclose(y[0, 8:13], k)
+    assert y[0, :8].abs().sum() == 0 and y[0, 13:].abs().sum() == 0
+
+
+def test_kernel_at_10ms_smooths():
+    y = hanning_smooth(_impulse(), window_ms=21.0, dt_ms=10.0)
     assert torch.allclose(y[0, 9:12], torch.tensor([0.25, 0.5, 0.25], dtype=y.dtype))
-    assert y[0, :9].abs().sum() == 0 and y[0, 12:].abs().sum() == 0
 
 
-def test_no_op_at_10ms():
-    x = torch.rand(3, 50, dtype=torch.float64)
-    assert torch.allclose(hanning_smooth(x, window_ms=21.0, dt_ms=10.0), x)
+def test_matches_matlab_hanning():
+    import numpy as np
+    for K in (3, 5, 21):
+        n = np.arange(1, K + 1)
+        matlab = 0.5 * (1 - np.cos(2 * np.pi * n / (K + 1)))
+        assert np.allclose(np.hanning(K + 2)[1:-1], matlab)
 
 
 def test_constant_interior_unchanged():

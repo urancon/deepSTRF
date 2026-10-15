@@ -28,11 +28,13 @@ def hanning_smooth(response: torch.Tensor, window_ms: float, dt_ms: float) -> to
     Notes
     -----
     Padded with zeros on both sides (``F.pad(..., mode='constant')``), so
-    edge bins get attenuated. The kernel is ``np.hanning(K)`` divided by its
-    sum, so smoothing preserves the mean response (spike counts per bin stay
-    spike counts per bin). ``np.hanning`` has zero end points, so the
-    effective width is ``K - 2`` bins: at ``dt_ms=10`` a 21 ms window gives
-    ``K = 3`` and the kernel ``[0, 1, 0]``, i.e. no smoothing.
+    edge bins get attenuated. The kernel has ``K`` non-zero taps spanning
+    ``K * dt_ms`` (about ``window_ms``): it is MATLAB's ``hanning(K)``, i.e.
+    ``np.hanning(K + 2)`` without its two zero end points, as in the original
+    Theunissen-lab MATLAB code. It is divided by its sum, so smoothing
+    preserves the mean response (spike counts per bin stay spike counts per
+    bin). For the default 21 ms window: 21 taps at ``dt_ms=1``, 5 taps
+    (25 ms) at ``dt_ms=5``, 3 taps ``[.25, .5, .25]`` (30 ms) at ``dt_ms=10``.
 
     NaN-unsafe: NaN values propagate to neighbouring time bins under the
     window. Callers (e.g. ``NeuralDataset.smooth_responses``) must filter
@@ -44,7 +46,7 @@ def hanning_smooth(response: torch.Tensor, window_ms: float, dt_ms: float) -> to
         K = 1
     if K % 2 == 0:
         K += 1
-    w = np.hanning(K)
+    w = np.hanning(K + 2)[1:-1]          # MATLAB hanning(K): no zero end points
     kernel = torch.tensor(w / w.sum(), dtype=response.dtype, device=response.device).view(1, 1, K)
     pad = (K - 1) // 2
 
