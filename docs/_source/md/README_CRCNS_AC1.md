@@ -83,9 +83,9 @@ Wehr stimuli are documented by their fragment name (``humpback whale``,
 ``Stimuli/{fragments,category{1,2,3}}/<idx>.mat``. Asari stimuli are
 *sequences* of 5 segments spliced together (e.g.
 ``'Sequence 1: 2  1  3  1  4'`` indexes into the recording's own
-``param.stimulus[i].file`` lookup table — typically class<N>/<base>.mat
-plus suffixed amplitude / frequency variants). The loader resolves the
-exact segment files and records them in ``stim_meta['segment_files']``.
+``param.stimulus[i].file`` lookup table — ``class<N>/<n>.mat`` plus short
+``<n>s`` and long ``<n>l`` cuts of the same recording). The loader resolves
+the exact segment files and records them in ``stim_meta['segment_files']``.
 
 ## Processing pipeline
 
@@ -148,13 +148,57 @@ that copy them follow them); the other streams are drawn per category. At
 ``seed=0`` the split is 33 / 4 / 14 files, every category has test files,
 24 of the 25 cells heard at least one test file, and 17 heard at least one
 val file (3 of the 10 fragment cells: each of them heard only 3–11
-fragments). The split is defined for the Wehr stimuli only for now.
+fragments).
 
 ```python
 from torch.utils.data import Subset
 ds = CRCNSAC1Dataset(experimenter="wehr", sites="A1", dt_ms=5.0)
 split = ds.group_split(seed=0)
 train = Subset(ds, ds.stim_to_iter_indices(split["train"]))
+```
+
+## Asari: fragment-level stimuli and `group_split`
+
+Asari & Zador (2009) built each stimulus set from N natural-sound fragments
+and played sequences of them with no gap (5-ms ramps at the joins), so that
+each fragment is heard after many different preceding fragments: the
+design measures context dependence. A fragment therefore recurs in several
+sequences of its set (about 3–4 times in the 7-fragment set heard by most
+A1 cells). Any split of the *sequences* puts the same fragments in training
+and test, so no leak-free split exists at the default
+``asari_level='sequence'``, and ``group_split`` raises there.
+
+``asari_level='segment'`` makes one stimulus per fragment file:
+
+- every sequence is cut at its fragment boundaries (the cumulative file
+  lengths, exactly as the loader splices it), and the trials of all the
+  occurrences of a fragment are pooled as its repeats (A1: median 28
+  trials per fragment and cell, MGB: 100);
+- the context before a fragment is not part of the stimulus, so its effect
+  on the response counts as trial-to-trial variability: a model cannot
+  learn it, and the noise ceiling (``cc_norm``) treats it as noise;
+- occurrences the recording stops inside are dropped (a few sequences end
+  early).
+
+``stim_meta`` gives each fragment its ``source``: the CD track it was cut
+from (``'<CD>/<track>'``, parsed from the file's description), shared by the
+base file and its short and long cuts. ``occurrences`` lists where it was
+heard: ``(sequence, position, previous fragment, onset)``.
+
+``group_split(seed)`` keeps every source track in one set, at A1 and MGB
+alike (they share tracks). Tracks are drawn set by set, over the sets of
+tracks the cells heard, largest first, so the 7-track set heard by most A1
+cells gets val and test tracks. At ``seed=0``:
+
+| Site | fragments train / val / test | cells with test data | cells with val data |
+|------|------------------------------|----------------------|---------------------|
+| A1   | 30 / 5 / 10                  | 38 / 39              | 35 / 39             |
+| MGB  | 16 / 3 / 7                   | 14 / 14              | 8 / 14              |
+
+```python
+ds = CRCNSAC1Dataset(experimenter="asari", sites="A1", dt_ms=5.0,
+                     asari_level="segment")
+split = ds.group_split(seed=0)
 ```
 
 ## Reproducibility constants
