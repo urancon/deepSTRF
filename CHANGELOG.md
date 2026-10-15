@@ -63,7 +63,10 @@ While the version is `0.x`, the public API may still change between minor releas
   responses by the kernel sum: x2 at `dt_ms=5`, x10 at `dt_ms=1` (21 ms
   window). Correlation-based metrics (cc, cc_norm) are unchanged; MSE /
   Poisson losses and absolute response values change. At `dt_ms=10` the
-  21 ms window is `[0, 1, 0]`, i.e. no smoothing, as before.
+  21 ms window is `[0, 1, 0]`, i.e. no smoothing, as before. The published
+  checkpoint `urancon/deepSTRF-statenet-gru-ns1` was trained on the old
+  scale (NS1 loads at `dt_ms=5` with `smooth=True`): its predictions are now
+  2x the targets; its cc and cc_norm are unchanged.
 
 ### Fixed
 - **`ResponseSmoothingTransform`** crashed on use (it read an attribute that
