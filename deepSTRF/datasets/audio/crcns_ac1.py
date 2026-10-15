@@ -38,6 +38,7 @@ using ``$CRCNS_USERNAME`` / ``$CRCNS_PASSWORD``.
 from __future__ import annotations
 
 import os
+import random
 import warnings
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
@@ -105,6 +106,42 @@ WEHR_NEURONS_SPLIT_NATURAL: Tuple[Tuple[int, int, int], ...] = (
     (44, 6, 13),   # 23
     (4, 1, 1),     # 24
 )
+
+
+# Wehr stimulus files (``'<category>/<idx>'``) that share audio. The first ~10 s of
+# 13 of the 18 fragment files reappear inside 14 streams, and fragments 12 / 13 are
+# themselves built from fragment 8 and a screaming piha recording; streams share no
+# audio with each other. Found by matching the log-spectrograms of all 51 files frame
+# by frame and confirmed on the waveforms (r >= 0.99 over the shared stretch). The
+# 2002 cells heard only fragments and the 2003 cells only streams, so the overlap
+# links two cohorts through any model they share. Every other file is its own group.
+WEHR_SHARED_AUDIO: Tuple[Tuple[str, ...], ...] = (
+    ("fragments/8", "fragments/12", "fragments/13",
+     "category2/5", "category2/10", "category2/15"),
+    ("fragments/7", "fragments/9", "category2/18"),
+    ("fragments/1", "category1/10"),
+    ("fragments/2", "category2/2"),
+    ("fragments/3", "category1/11"),
+    ("fragments/4", "category1/1"),
+    ("fragments/5", "category2/7"),
+    ("fragments/6", "category2/17"),
+    ("fragments/14", "category2/3"),
+)
+
+# All Wehr natural-sound stimulus files: (category, number of files).
+_WEHR_CORPUS: Tuple[Tuple[str, int], ...] = (
+    ("fragments", 18), ("category1", 11), ("category2", 18), ("category3", 4),
+)
+
+
+def wehr_overlap_group(category: str, idx: int) -> str:
+    """The ``overlap_group`` of a Wehr stimulus file: the name (``'wehr/<category>/<idx>'``)
+    of the first file of its :data:`WEHR_SHARED_AUDIO` group, or its own name."""
+    key = f"{category}/{idx}"
+    for group in WEHR_SHARED_AUDIO:
+        if key in group:
+            return "wehr/" + group[0]
+    return "wehr/" + key
 
 
 # CRCNS download paths (verified against the dataset's About page; matches the
@@ -252,7 +289,8 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
     - ``stim_meta`` dicts hold a unique ``name`` (``'wehr/<category>/<idx>'``
       or ``'asari/<segment files joined by +>'``), ``experimenter``,
       ``category``, ``idx`` (Wehr) or ``class_n`` / ``segments`` /
-      ``segment_files`` (Asari), ``description`` (NOT unique: the same
+      ``segment_files`` (Asari), ``overlap_group`` (Wehr: files that share
+      audio have the same value, see :meth:`group_split`), ``description`` (NOT unique: the same
       sequence description recurs across classes), ``duration_s``.
     - ``nrn_meta`` dicts hold ``experimenter``, ``session``,
       ``animal_id``, ``penetration``, ``date``, ``site``,
@@ -510,7 +548,10 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
                 )
                 stim_tensor = torch.from_numpy(S_db[:, :T_canon]).unsqueeze(0).float()
             self.stims.append(stim_tensor)
-            self.stim_meta.append(spec["meta"])
+            meta = spec["meta"]
+            if meta["experimenter"] == "wehr":
+                meta["overlap_group"] = wehr_overlap_group(meta["category"], meta["idx"])
+            self.stim_meta.append(meta)
 
         for (s_idx, n_idx, tens) in buffer:
             T_canon = stim_T_out[s_idx]
@@ -519,6 +560,68 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
             self.responses[s_idx][n_idx] = tens[:, :T_canon]
 
         self.validate()
+
+    def group_split(self, seed: Optional[int] = None,
+                    fractions: Sequence[float] = (0.7, 0.1, 0.2)) -> Dict[str, List[int]]:
+        """Split the Wehr stimuli into train / val / test, keeping shared audio together.
+
+        Files that share audio (same ``overlap_group``, see
+        :data:`WEHR_SHARED_AUDIO`) always land in the same set. The stimuli
+        stay whole streams and fragments, so their long context (adaptation)
+        is kept. Groups are drawn per stratum: groups holding a fragment file
+        form the ``'fragments'`` stratum (the streams that copy them go with
+        them), the other streams are drawn per category. In each stratum the
+        groups go, in a shuffled order, to the set furthest below its target
+        share of that stratum's files. The draw is over all 51 Wehr files,
+        not over the stimuli of this instance: a given ``seed`` puts a file
+        in the same set whichever cells are loaded.
+
+        Parameters
+        ----------
+        seed : int, optional
+            Seed of the draw. ``None`` draws a new random split at each call.
+        fractions : sequence of 3 floats, default (0.7, 0.1, 0.2)
+            Target train / val / test shares, in files.
+
+        Returns
+        -------
+        dict
+            ``{'train': [...], 'val': [...], 'test': [...]}``: absolute stimulus
+            indices (into ``stim_meta``), whatever the current selection. Use
+            :meth:`stim_to_iter_indices` to build a ``torch.utils.data.Subset``.
+
+        Raises
+        ------
+        NotImplementedError
+            If Asari stimuli are loaded (their split is not defined yet).
+        """
+        if len(fractions) != 3 or abs(sum(fractions) - 1.0) > 1e-6:
+            raise ValueError(f"fractions must be 3 shares summing to 1, got {fractions}")
+        if any(m["experimenter"] != "wehr" for m in self.stim_meta):
+            raise NotImplementedError(
+                "group_split is defined for the Wehr stimuli only; load experimenter='wehr'.")
+        keys = ("train", "val", "test")
+        groups: Dict[str, List[str]] = {}
+        for cat, n in _WEHR_CORPUS:
+            for idx in range(1, n + 1):
+                groups.setdefault(wehr_overlap_group(cat, idx), []).append(f"wehr/{cat}/{idx}")
+        stratum = {g: "fragments" if any("/fragments/" in f for f in fs) else fs[0].split("/")[1]
+                   for g, fs in groups.items()}
+        rng = random.Random(seed)
+        assign: Dict[str, str] = {}
+        for st in sorted(set(stratum.values())):
+            gs = sorted(g for g in groups if stratum[g] == st)
+            rng.shuffle(gs)
+            total = sum(len(groups[g]) for g in gs)
+            count = dict.fromkeys(keys, 0)
+            for g in gs:
+                k = max(keys, key=lambda k: fractions[keys.index(k)] * total - count[k])
+                assign[g] = k
+                count[k] += len(groups[g])
+        split: Dict[str, List[int]] = {k: [] for k in keys}
+        for i, m in enumerate(self.stim_meta):
+            split[assign[m["overlap_group"]]].append(i)
+        return split
 
     def _waveform_for_stim(
         self, waveform: np.ndarray, sf_stim: float, T_canon: int,
