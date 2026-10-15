@@ -233,7 +233,7 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
     unidentified area, ``None``). Three stimulus classes — conspecific songs
     (72 stims), flat ripples (20) and song ripples (25) — each presented
     10-20 times, with low trial-to-trial variability. Almost all cells saw
-    conspecific and songrip stimuli; about half saw flatrip. Population
+    conspecific and flatrip stimuli; about half saw songrip. Population
     fitting-compatible. Data are available at
     https://crcns.org/data-sets/aa/aa-2/about (free CRCNS account).
 

@@ -42,7 +42,7 @@ Consequences:
 **Population fitting:** ✅
 
 **Description of Stimuli:**
-- 10 clips of conspecific vocalizations and 20 clips of flat ripples, up to 5 s duration.
+- 20 clips of conspecific vocalizations and 10 clips of flat ripples (ml-noise), up to 5 s duration.
 - Sample rate @ 32 kHz and 16 bit precision
 - Up to 10 response trials for a given sound
 

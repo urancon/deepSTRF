@@ -105,9 +105,9 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
     """PyTorch dataset for the CRCNS-AA1 recordings.
 
     Extracellular, spike-sorted single units of anesthetized male zebra
-    finches: 50 cells in Field L and 50 in MLd, recorded in response to 10
-    clips of conspecific vocalizations and 20 clips of flat ripples (up to
-    5 s each, ~10 trials on average). Data are available at
+    finches: 50 cells in Field L and 50 in MLd, recorded in response to 20
+    clips of conspecific vocalizations and 10 clips of flat ripples
+    (ml-noise; up to 5 s each, ~10 trials on average). Data are available at
     https://crcns.org/data-sets/aa/aa-1/about (free CRCNS account); see the
     AA1 README in the deepSTRF docs for the full notes.
 
