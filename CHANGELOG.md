@@ -88,6 +88,12 @@ While the version is `0.x`, the public API may still change between minor releas
   explodes on nearly silent cells whose signal power is a rounding-level
   positive number: new `sp_rel_threshold` argument (default `1e-6`, relative
   to the mean single-trial variance) returns NaN below it.
+- **CRCNS-AA2 cell filters.** With `animals=[...]`, the area labels were
+  not filtered along with the cells, so `nrn_meta['area']` was attached to
+  the wrong cells (18 of 19 wrong for three birds). The stimulus-class filter
+  removed cells while iterating over them and skipped the next one, so it
+  kept cells that never heard the requested class (119 of 355 with
+  `stimuli=('songrip',)`).
 - **CRCNS auto-download** (`download=True` for CRCNS AA1, AA2, AA4, AC1, and
   the new AA5): CRCNS moved its data to AWS in June 2026 and the old NERSC
   portal no longer serves the files. `crcns_download` now logs in to

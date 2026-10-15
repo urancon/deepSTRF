@@ -397,7 +397,9 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
             self.animals = ANIMAL_IDs
         else:
             self.animals = animals
-        cells = [cell for cell in cells if cell.split('_')[0] in self.animals]
+        keep = [cell.split('_')[0] in self.animals for cell in cells]
+        cells = [c for c, k in zip(cells, keep) if k]
+        cell_areas = [a for a, k in zip(cell_areas, keep) if k]
         cell_animals = [cell.split('_')[0] for cell in cells]
 
         # filter stimuli by stimulus type
@@ -408,17 +410,12 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
             stim_types += [stim_type] * len(STIM_IDs[stim_type])
 
         # filter cells by stimulus type:
-        # remove cells if they don't have any stimulus of the required type
-        for cell in cells:
-            i = 0
-            for stim_type in stimuli:
-                if stim_type not in os.listdir(os.path.join(path, 'all_cells', cell)):
-                    i += 1
-            if i >= len(stimuli):
-                cell_idx = cells.index(cell)
-                cells.remove(cell)
-                cell_animals.remove(cell.split('_')[0])
-                cell_areas.remove(cell_areas[cell_idx])
+        # keep a cell only if it has at least one of the requested stimulus classes
+        keep = [any(t in os.listdir(os.path.join(path, 'all_cells', cell)) for t in stimuli)
+                for cell in cells]
+        cells = [c for c, k in zip(cells, keep) if k]
+        cell_animals = [a for a, k in zip(cell_animals, keep) if k]
+        cell_areas = [a for a, k in zip(cell_areas, keep) if k]
 
         self.N_neurons = len(cells)
 
