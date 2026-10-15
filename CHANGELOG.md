@@ -55,7 +55,20 @@ While the version is `0.x`, the public API may still change between minor releas
   539 sounds over the six birds. `merge_duplicates=False` keeps one stimulus
   per file.
 
+### Changed
+- **Response smoothing is now sum-normalised** (`hanning_smooth`,
+  `NeuralDataset.smooth_responses`, and every loader's `smooth=True`): the
+  Hanning kernel is divided by its sum, so smoothed responses keep their
+  units (spike counts per bin). The old kernel was not normalised and scaled
+  responses by the kernel sum: x2 at `dt_ms=5`, x10 at `dt_ms=1` (21 ms
+  window). Correlation-based metrics (cc, cc_norm) are unchanged; MSE /
+  Poisson losses and absolute response values change. At `dt_ms=10` the
+  21 ms window is `[0, 1, 0]`, i.e. no smoothing, as before.
+
 ### Fixed
+- **`ResponseSmoothingTransform`** crashed on use (it read an attribute that
+  `__init__` never set). It now delegates to `hanning_smooth` and accepts any
+  shape.
 - **CRCNS auto-download** (`download=True` for CRCNS AA1, AA2, AA4, AC1, and
   the new AA5): CRCNS moved its data to AWS in June 2026 and the old NERSC
   portal no longer serves the files. `crcns_download` now logs in to
