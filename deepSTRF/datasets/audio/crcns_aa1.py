@@ -142,7 +142,7 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
 
     def __init__(self, path: Optional[str] = None, areas=('Field_L', 'MLd'),
                  stimuli=('conspecific', 'flatrip'), animals='all', dt_ms=1,
-                 smooth=True, n_mels=32, compression='cubic',
+                 smooth=False, n_mels=32, compression='cubic',
                  window_ms: float = 10.0,
                  return_waveform: bool = False, audio_fs: int = 32000,
                  download: bool = False,
@@ -163,6 +163,11 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
             Stimulus types: 'conspecific' or 'flatrip'.
         dt_ms : float
             Time step size in ms.
+        smooth : bool, default False
+            If True, smooth PSTHs in place with a 21 ms Hanning window
+            (Hsu, Borst & Theunissen 2004). Off by default: the window is centred,
+            so a smoothed bin holds spikes from up to ~10 ms later (the target is
+            no longer strictly causal).
         n_mels : int
             Number of mel frequency bands.
         compression : str

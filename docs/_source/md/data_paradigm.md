@@ -268,6 +268,11 @@ handling, eval-only metrics): see
    stim is `(1, T_audio)` with `T_audio = T_resp_s · hop` and integer
    `hop = audio_fs · dt_ms / 1000` (§3.4, conventions C1–C4). Enforced by
    `AudioNeuralDataset.validate()`.
+9. **Loaders do not smooth responses by default.** A `smooth` option may
+   exist (21-ms Hanning window, Hsu, Borst & Theunissen 2004), but it
+   defaults to `False`: the window is centred, so a smoothed bin holds
+   spikes from up to ~10 ms later, and the target is no longer strictly
+   causal. Binning at `dt_ms` is the only default temporal averaging.
 
 ## 8. Iteration honours the current selection (bidirectional)
 

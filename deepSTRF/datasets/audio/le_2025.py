@@ -269,8 +269,9 @@ class Le2025Dataset(AudioNeuralDataset):
         Gammatone analysis-window width, in ms. Default 2.5, matching the
         paper. Hop is ``dt_ms``.
     smooth
-        If True (default), apply a 21 ms Hanning smoother to all PSTHs
-        (Hsu / Borst / Theunissen 2004).
+        If True, apply a 21 ms Hanning smoother to all PSTHs
+        (Hsu / Borst / Theunissen 2004). Off by default: the window is centred,
+        so a smoothed bin holds spikes from up to ~10 ms later.
     keep_areas
         Optional iterable of area strings to filter on (per the per-unit
         ``area`` metadata field; values vary by cohort).
@@ -326,7 +327,7 @@ class Le2025Dataset(AudioNeuralDataset):
         fmin: float = _PAPER_FMIN_HZ,
         fmax: float = _PAPER_FMAX_HZ,
         window_ms: float = _PAPER_WINDOW_MS,
-        smooth: bool = True,
+        smooth: bool = False,
         keep_areas: Optional[Sequence[str]] = None,
         compute_reliability: bool = True,
         download: bool = False,

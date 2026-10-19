@@ -804,7 +804,7 @@ class Downer2025Dataset(AudioNeuralDataset):
         n_mels: int = 80,
         compression: Literal["cubic", "log1p", "none"] = "log1p",
         spec_zscore: bool = True,
-        smooth: bool = True,
+        smooth: bool = False,
         subset: Literal["all", "estimation", "test"] = "all",
         animals: Union[str, Sequence[str]] = "all",
         areas: Optional[Sequence[str]] = None,
@@ -843,8 +843,9 @@ class Downer2025Dataset(AudioNeuralDataset):
             time axis (= Ahmed 2025's ``normalize()`` helper). Boosts
             contrast in higher-frequency bands that would otherwise
             be flattened by the log compression.
-        smooth : bool, default True
-            Hsu 2004 21 ms PSTH smoothing.
+        smooth : bool, default False
+            Hsu 2004 21 ms PSTH smoothing. Off by default: the window is centred, so a smoothed bin holds spikes
+            from up to ~10 ms later (the target is no longer strictly causal).
         subset : {'all', 'estimation', 'test'}
             ``'estimation'`` keeps the single-rep stims, ``'test'`` keeps
             the canonical high-rep subset (10 TIMIT IDs or 11 mVocs IDs).

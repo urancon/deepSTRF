@@ -127,8 +127,8 @@ release at ~0.8 GB of responses (~3.7 GB at 1 ms).
   at the end of bin `t`.
 - **Waveforms**: `return_waveform=True` returns `(1, T * hop)` audio at
   `audio_fs`, grid-locked to the response bins.
-- **Smoothing**: each trial is smoothed with the usual 21 ms Hanning window
-  (`smooth=True`).
+- **Smoothing**: off by default, as for every deepSTRF loader. `smooth=True`
+  smooths each trial with the usual 21 ms Hanning window.
 
 ## Trial quality: what the loader drops, and why
 

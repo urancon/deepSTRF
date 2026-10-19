@@ -201,7 +201,7 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
 
     def __init__(self, path: Optional[str] = None, animals='all',
                  stimuli=('song', 'call', 'mlnoise'),
-                 dt_ms=1.0, smooth=True, n_mels=32, compression='cubic',
+                 dt_ms=1.0, smooth=False, n_mels=32, compression='cubic',
                  window_ms: float = 10.0,
                  return_waveform: bool = False, audio_fs: int = 24000,
                  merge_duplicates: bool = True,
@@ -223,9 +223,10 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
             Stimulus types to keep; subset of {'song', 'call', 'mlnoise'}.
         dt_ms : float
             Time-bin width in ms.
-        smooth : bool
+        smooth : bool, default False
             If True, smooth PSTHs in place with a 21 ms Hanning window
-            (Hsu, Borst & Theunissen 2004).
+            (Hsu, Borst & Theunissen 2004). Off by default: the window is centred, so a smoothed bin holds spikes
+            from up to ~10 ms later (the target is no longer strictly causal).
         n_mels : int
             Number of mel frequency bands of the stimulus spectrogram.
         compression : {'cubic', 'log1p', 'none'}
