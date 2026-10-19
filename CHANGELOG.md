@@ -74,6 +74,11 @@ While the version is `0.x`, the public API may still change between minor releas
   normalisation, the width changes correlations: the NS1 pretrained
   checkpoint now scores a mean test `cc` of 0.687 instead of the published
   0.659, on the same weights.
+- **CRCNS-AA2 drops 11 artifact cells by default** (`drop_artifact_cells=True`,
+  list in `crcns_aa2.ARTIFACT_CELLS`). Their spike files contain bursts of
+  electrical pickup from the playback signal (up to 80 threshold crossings in
+  5 ms within one trial, at the stimulus's loudest transients). See the AA2
+  page; `drop_artifact_cells=False` restores the archive as released.
 
 ### Fixed
 - **`ResponseSmoothingTransform`** crashed on use (it read an attribute that
@@ -88,6 +93,12 @@ While the version is `0.x`, the public API may still change between minor releas
   explodes on nearly silent cells whose signal power is a rounding-level
   positive number: new `sp_rel_threshold` argument (default `1e-6`, relative
   to the mean single-trial variance) returns NaN below it.
+- **CRCNS-AA2 cell filters.** With `animals=[...]`, the area labels were
+  not filtered along with the cells, so `nrn_meta['area']` was attached to
+  the wrong cells (18 of 19 wrong for three birds). The stimulus-class filter
+  removed cells while iterating over them and skipped the next one, so it
+  kept cells that never heard the requested class (119 of 355 with
+  `stimuli=('songrip',)`).
 - **CRCNS auto-download** (`download=True` for CRCNS AA1, AA2, AA4, AC1, and
   the new AA5): CRCNS moved its data to AWS in June 2026 and the old NERSC
   portal no longer serves the files. `crcns_download` now logs in to
