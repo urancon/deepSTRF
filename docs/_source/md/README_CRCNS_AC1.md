@@ -191,12 +191,15 @@ heard: ``(sequence, position, previous fragment, onset)``.
 ``group_split(seed)`` keeps every source track in one set, at A1 and MGB
 alike (they share tracks). Tracks are drawn set by set, over the sets of
 tracks the cells heard, largest first, so the 7-track set heard by most A1
-cells gets val and test tracks. At ``seed=0``:
+cells gets val and test tracks. Seven Asari tracks also play inside Wehr
+files (both subsets used the same Cornell CDs); each takes the set of its
+Wehr group, so a model fitted to both cohorts never has that audio in
+training and test. At ``seed=0``:
 
 | Site | fragments train / val / test | cells with test data | cells with val data |
 |------|------------------------------|----------------------|---------------------|
-| A1   | 30 / 5 / 10                  | 38 / 39              | 35 / 39             |
-| MGB  | 16 / 3 / 7                   | 14 / 14              | 8 / 14              |
+| A1   | 33 / 5 / 7                   | 38 / 39              | 35 / 39             |
+| MGB  | 18 / 2 / 6                   | 14 / 14              | 8 / 14              |
 
 ```python
 ds = CRCNSAC1Dataset(experimenter="asari", sites="A1", dt_ms=5.0,
