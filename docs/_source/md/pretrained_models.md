@@ -111,6 +111,13 @@ and a one-liner about the training recipe.
 | `cc_norm` (Schoppe, median)     | +0.796 |
 | MSE loss                        |  0.016 |
 
+These numbers were recorded on responses smoothed with the Hanning kernel
+deepSTRF used before its correction (15 ms wide at `dt_ms=5` instead of the
+nominal 21 ms, and not sum-normalised). With the current kernel the same
+checkpoint scores `cc` about 0.03 higher, and its predictions are about 2x
+the (now sum-normalised) targets, which affects MSE but not `cc` or
+`cc_norm`.
+
 For orientation: published mean `cc_norm` for StateNet on NS1 is in the
 0.7–0.8 range with leave-one-out training.
 

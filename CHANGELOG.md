@@ -70,7 +70,10 @@ While the version is `0.x`, the public API may still change between minor releas
   all) at `dt_ms=10`. It is now MATLAB's `hanning(K)` (`np.hanning(K + 2)`
   without the zero end points), as in the original Theunissen-lab code:
   K non-zero taps, i.e. 21 taps at 1 ms, 25 ms at 5 ms, `[.25, .5, .25]` at
-  10 ms. Loaders at `dt_ms=10` with `smooth=True` now smooth.
+  10 ms. Loaders at `dt_ms=10` with `smooth=True` now smooth. Unlike the
+  normalisation, the width changes correlations: the NS1 pretrained
+  checkpoint now scores a mean test `cc` of 0.687 instead of the published
+  0.659, on the same weights.
 
 ### Fixed
 - **`ResponseSmoothingTransform`** crashed on use (it read an attribute that
