@@ -41,8 +41,8 @@ While the version is `0.x`, the public API may still change between minor releas
   AA4, AA5, Le 2025 and Downer 2025 now default to `smooth=False`. The
   21-ms Hanning window is centred, so a smoothed bin holds spikes from up to
   ~10 ms later and the target is no longer strictly causal. Pass
-  `smooth=True` for the previous behaviour (the NS1 pretrained checkpoint
-  was trained that way).
+  `smooth=True` to smooth (the NS1 pretrained checkpoint was trained with
+  smoothing; see the two kernel fixes below).
 - **CRCNS-AC1 MGB (cell-attached) responses are spike counts per bin**, one
   spike per threshold crossing with a 1-ms refractory period, unsmoothed.
   They were a Hann-smoothed above-threshold trace in arbitrary units;
@@ -54,8 +54,31 @@ While the version is `0.x`, the public API may still change between minor releas
   call saved under several md5 names) into one stimulus: 594 files become
   539 sounds over the six birds. `merge_duplicates=False` keeps one stimulus
   per file.
+- **Response smoothing is now sum-normalised** (`hanning_smooth`,
+  `NeuralDataset.smooth_responses`, and every loader's `smooth=True`): the
+  Hanning kernel is divided by its sum, so smoothed responses keep their
+  units (spike counts per bin). The old kernel was not normalised and scaled
+  responses by the kernel sum: x2 at `dt_ms=5`, x10 at `dt_ms=1` (21 ms
+  window). Correlation-based metrics (cc, cc_norm) are unchanged; MSE /
+  Poisson losses and absolute response values change. The published
+  checkpoint `urancon/deepSTRF-statenet-gru-ns1` was trained on the old
+  scale (NS1 loads at `dt_ms=5` with `smooth=True`): its predictions are now
+  2x the targets; its cc and cc_norm are unchanged.
+- **The smoothing window now has the width its name says.** The kernel was
+  `np.hanning(K)`, whose two end points are zero, so a "21 ms" window had
+  K - 2 non-zero taps: 15 ms at `dt_ms=5`, and `[0, 1, 0]` (no smoothing at
+  all) at `dt_ms=10`. It is now MATLAB's `hanning(K)` (`np.hanning(K + 2)`
+  without the zero end points), as in the original Theunissen-lab code:
+  K non-zero taps, i.e. 21 taps at 1 ms, 25 ms at 5 ms, `[.25, .5, .25]` at
+  10 ms. Loaders at `dt_ms=10` with `smooth=True` now smooth. Unlike the
+  normalisation, the width changes correlations: the NS1 pretrained
+  checkpoint now scores a mean test `cc` of 0.687 instead of the published
+  0.659, on the same weights.
 
 ### Fixed
+- **`ResponseSmoothingTransform`** crashed on use (it read an attribute that
+  `__init__` never set). It now delegates to `hanning_smooth` and accepts any
+  shape.
 - **CRCNS auto-download** (`download=True` for CRCNS AA1, AA2, AA4, AC1, and
   the new AA5): CRCNS moved its data to AWS in June 2026 and the old NERSC
   portal no longer serves the files. `crcns_download` now logs in to

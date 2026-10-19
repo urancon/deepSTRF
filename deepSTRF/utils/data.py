@@ -28,9 +28,13 @@ def hanning_smooth(response: torch.Tensor, window_ms: float, dt_ms: float) -> to
     Notes
     -----
     Padded with zeros on both sides (``F.pad(..., mode='constant')``), so
-    edge bins get attenuated. The kernel is the raw ``np.hanning(K)``, i.e.
-    NOT sum-normalized — matches the legacy behaviour used by the Hsu /
-    Borst / Theunissen (2004) PSTH smoothing step in the CRCNS-AA datasets.
+    edge bins get attenuated. The kernel has ``K`` non-zero taps spanning
+    ``K * dt_ms`` (about ``window_ms``): it is MATLAB's ``hanning(K)``, i.e.
+    ``np.hanning(K + 2)`` without its two zero end points, as in the original
+    Theunissen-lab MATLAB code. It is divided by its sum, so smoothing
+    preserves the mean response (spike counts per bin stay spike counts per
+    bin). For the default 21 ms window: 21 taps at ``dt_ms=1``, 5 taps
+    (25 ms) at ``dt_ms=5``, 3 taps ``[.25, .5, .25]`` (30 ms) at ``dt_ms=10``.
 
     NaN-unsafe: NaN values propagate to neighbouring time bins under the
     window. Callers (e.g. ``NeuralDataset.smooth_responses``) must filter
@@ -42,7 +46,8 @@ def hanning_smooth(response: torch.Tensor, window_ms: float, dt_ms: float) -> to
         K = 1
     if K % 2 == 0:
         K += 1
-    kernel = torch.tensor(np.hanning(K), dtype=response.dtype, device=response.device).view(1, 1, K)
+    w = np.hanning(K + 2)[1:-1]          # MATLAB hanning(K): no zero end points
+    kernel = torch.tensor(w / w.sum(), dtype=response.dtype, device=response.device).view(1, 1, K)
     pad = (K - 1) // 2
 
     orig_shape = response.shape
@@ -75,21 +80,11 @@ class ResponseSmoothingTransform(torch.nn.Module):
         super().__init__()
         self.dt_ms = dt_ms
         self.window_size_ms = window_size_ms
-        Kt_hanning = (self.window_size_ms // self.dt_ms) if ((self.window_size_ms // self.dt_ms % 2) == 1) else (self.window_size_ms // self.dt_ms) + 1  # odd kernel size
-        self.hanning_window = torch.tensor(np.hanning(Kt_hanning)).unsqueeze(0).unsqueeze(0)
-        self.padding_size = (Kt_hanning - 1) // 2
 
-    def forward(self, responses, dt=1):
-        # responses shape should be (B, N, R, T)  # TODO: add batch size (B)
-        N, R, T = responses.shape  # TODO: add batch size (B)
-        padded_responses = F.pad(responses, (self.pad_size, self.pad_size), mode='constant')
-
-        # Apply the Hanning window using convolution
-        padded_responses = padded_responses.flatten(0, 1).unsqueeze(1)  # (N, R, T) --> (N*R, 1, T)
-        smoothed_responses = F.conv1d(padded_responses, self.hanning_window)
-        smoothed_responses = smoothed_responses.unflatten(0, (N, R))[:, :, 0, :]  # (N*R, 1, T) --> (N, R, T)
-
-        return smoothed_responses
+    def forward(self, responses):
+        """Smooth ``responses`` of any shape along the last (time) axis; see
+        :func:`hanning_smooth` (same kernel, sum-normalized)."""
+        return hanning_smooth(responses, window_ms=self.window_size_ms, dt_ms=self.dt_ms)
 
     def __repr__(self):
         return f"ResponseSmoothingTransform(dt_ms={self.dt_ms}, window_size_ms={self.window_size_ms})"
