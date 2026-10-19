@@ -25,7 +25,7 @@ set `CRCNS_USERNAME` / `CRCNS_PASSWORD`, or pass `username=` / `password=`.
 * [Wingert 2026](README_Wingert2026.md) — A1 + PEG (plus smaller AC & HC fields) single-units across 4 ferrets.
 
 ### Zebra finch (*Taeniopygia guttata*)
-* [CRCNS AA1](README_CRCNS_AA1.md) — conspecific vocalizations + flat ripples.
+* [CRCNS AA1](README_CRCNS_AA1.md) — conspecific vocalizations + flat ripples. A subset of AA2 (same cells, stimuli and spike files): don't combine the two.
 * [CRCNS AA2](README_CRCNS_AA2.md) — extracellular single-units (57 birds); conspecific vocalizations, flat & song ripples.
 * [CRCNS AA4](README_CRCNS_AA4.md) — extracellular recordings spanning the full zebra-finch vocal repertoire (songs + calls) plus ripple noise.
 * [CRCNS AA5](README_CRCNS_AA5.md) — awake, freely behaving birds; chronic recordings; the full vocal repertoire (110 calls, 10 call types), songs and filtered songs.

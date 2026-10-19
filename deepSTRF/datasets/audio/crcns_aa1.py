@@ -105,9 +105,9 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
     """PyTorch dataset for the CRCNS-AA1 recordings.
 
     Extracellular, spike-sorted single units of anesthetized male zebra
-    finches: 50 cells in Field L and 50 in MLd, recorded in response to 10
-    clips of conspecific vocalizations and 20 clips of flat ripples (up to
-    5 s each, ~10 trials on average). Data are available at
+    finches: 50 cells in Field L and 50 in MLd, recorded in response to 20
+    clips of conspecific vocalizations and 10 clips of flat ripples
+    (ml-noise; up to 5 s each, ~10 trials on average). Data are available at
     https://crcns.org/data-sets/aa/aa-1/about (free CRCNS account); see the
     AA1 README in the deepSTRF docs for the full notes.
 
@@ -124,6 +124,14 @@ class CRCNSAA1Dataset(AudioNeuralDataset):
       parsed from the cell folder name (the n-th cell recorded); ``rig`` is
       the single-letter rig label when present, else ``None`` (cells "4_A"
       and "4_B" were recorded simultaneously, possibly in different areas).
+
+    AA1 is a subset of CRCNS-AA2: all 100 AA1 cells are AA2 cells, the 30
+    AA1 wav files are byte-identical to AA2 wavs, and every AA1 spike file is
+    byte-identical to the corresponding AA2 file. Never concatenate AA1 with
+    :class:`~deepSTRF.datasets.audio.crcns_aa2.CRCNSAA2Dataset`: each AA1 cell
+    would appear twice, and test responses could leak into training. To get
+    the AA1 cells with AA2's finer Field L sub-area labels, load AA2 and
+    select them by ``cell_id``.
 
     Two cells lack ``conspecific`` responses: ``pipu1018_2_A`` (MLd) and
     ``pipu1018_2_B`` (Field_L).

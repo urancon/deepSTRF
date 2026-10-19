@@ -14,12 +14,35 @@ http://dx.doi.org/10.6080/K0F769GP
 - ["Modulation spectra of natural sounds and ethological theories of auditory processing"](https://doi.org/10.1121/1.1624067) by Singh N. and Theunissen F.E.
 
 
+```{warning}
+**AA1 is a subset of AA2.** Every AA1 cell, stimulus and response is also in
+[CRCNS AA2](README_CRCNS_AA2.md): the 100 AA1 cells are AA2 cells with the same
+names, the 30 AA1 wav files are byte-identical to AA2 wavs, and all 5920 AA1
+spike and stimulus-pointer files are byte-identical to the corresponding AA2
+files. Neither CRCNS page nor either README says so explicitly. The AA2 README
+says AA2 holds "every neuron with a compatible stimulus presentation protocol in
+regions MLd, L, and CM which the Theunissen lab has collected as of September
+1st, 2007", and AA1 was released in 2008 from the same experimenters and
+protocol.
+
+Consequences:
+
+- **Never concatenate AA1 with AA2** (or train one model on both): every AA1
+  cell would appear twice, and, unless both use the same split, an AA1 copy of
+  an AA2 test response can land in the training set.
+- To reproduce AA1 results with AA2's richer labels, load AA2 and select the
+  AA1 cells by `cell_id`. AA2 gives AA1's 50 "Field L" cells their sub-area
+  (L1: 5, L2a: 16, L2b: 7, L3: 14, L: 8); the 50 MLd cells are `mld` in AA2.
+- AA2 has no extra stimuli for these 100 cells: each one has exactly the
+  same files in both datasets.
+```
+
 ## Dataset Details
 
 **Population fitting:** ✅
 
 **Description of Stimuli:**
-- 10 clips of conspecific vocalizations and 20 clips of flat ripples, up to 5 s duration.
+- 20 clips of conspecific vocalizations and 10 clips of flat ripples (ml-noise), up to 5 s duration.
 - Sample rate @ 32 kHz and 16 bit precision
 - Up to 10 response trials for a given sound
 

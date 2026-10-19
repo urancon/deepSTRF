@@ -233,7 +233,7 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
     unidentified area, ``None``). Three stimulus classes — conspecific songs
     (72 stims), flat ripples (20) and song ripples (25) — each presented
     10-20 times, with low trial-to-trial variability. Almost all cells saw
-    conspecific and songrip stimuli; about half saw flatrip. Population
+    conspecific and flatrip stimuli; about half saw songrip. Population
     fitting-compatible. Data are available at
     https://crcns.org/data-sets/aa/aa-2/about (free CRCNS account).
 
@@ -249,6 +249,10 @@ class CRCNSAA2Dataset(AudioNeuralDataset):
     - ``nrn_meta`` dicts hold ``cell_id``, ``animal_id``, ``area``,
       ``cell_seq`` and ``rig`` (see :class:`~deepSTRF.datasets.audio.crcns_aa1.CRCNSAA1Dataset`
       for the cell-name format; ``rig`` is often ``None`` in AA2).
+
+    AA2 contains all of CRCNS-AA1 (the 100 AA1 cells, their 30 stimuli and
+    byte-identical spike files), so never concatenate it with
+    :class:`~deepSTRF.datasets.audio.crcns_aa1.CRCNSAA1Dataset`.
 
     References
     ----------
