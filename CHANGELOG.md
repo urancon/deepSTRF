@@ -41,8 +41,8 @@ While the version is `0.x`, the public API may still change between minor releas
   AA4, AA5, Le 2025 and Downer 2025 now default to `smooth=False`. The
   21-ms Hanning window is centred, so a smoothed bin holds spikes from up to
   ~10 ms later and the target is no longer strictly causal. Pass
-  `smooth=True` for the previous behaviour (the NS1 pretrained checkpoint
-  was trained that way).
+  `smooth=True` to smooth (the NS1 pretrained checkpoint was trained with
+  smoothing; see the two kernel fixes below).
 - **CRCNS-AC1 MGB (cell-attached) responses are spike counts per bin**, one
   spike per threshold crossing with a 1-ms refractory period, unsmoothed.
   They were a Hann-smoothed above-threshold trace in arbitrary units;
@@ -54,8 +54,6 @@ While the version is `0.x`, the public API may still change between minor releas
   call saved under several md5 names) into one stimulus: 594 files become
   539 sounds over the six birds. `merge_duplicates=False` keeps one stimulus
   per file.
-
-### Changed
 - **Response smoothing is now sum-normalised** (`hanning_smooth`,
   `NeuralDataset.smooth_responses`, and every loader's `smooth=True`): the
   Hanning kernel is divided by its sum, so smoothed responses keep their
