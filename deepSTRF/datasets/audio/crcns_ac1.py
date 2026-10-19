@@ -132,6 +132,12 @@ WEHR_SHARED_AUDIO: Tuple[Tuple[str, ...], ...] = (
     ("fragments/14", "category2/3"),
 )
 
+# Asari sessions left out by default. 20071009-ha1-003 (MGB, cell-attached): its
+# spikes are ~13 mV, far above the 2.5-sigma threshold (~1 mV), so each spike's
+# rebound and small bumps also cross it; half its inter-spike intervals stay under
+# 2 ms even with the 1-ms refractory period. Pass exclude_sessions=() to keep it.
+ASARI_EXCLUDED_SESSIONS: Tuple[str, ...] = ("20071009-ha1-003",)
+
 # All Wehr natural-sound stimulus files: (category, number of files).
 _WEHR_CORPUS: Tuple[Tuple[str, int], ...] = (
     ("fragments", 18), ("category1", 11), ("category2", 18), ("category3", 4),
@@ -247,7 +253,8 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
           potentials were blocked (Wehr) or not analysed (Asari A1, per
           the paper); the synaptic input *is* the signal. Pair with MSE.
         - **cell-attached** (Asari MGB) → ``'spikes'``: spike count per
-          bin (non-negative; see ``smooth``). There is no intracellular Vm
+          bin (non-negative; one spike per threshold crossing, with a 1-ms
+          refractory period; see ``smooth``). There is no intracellular Vm
           in cell-attached mode. Pair with Poisson.
 
         Each cell carries its resolved type in ``nrn_meta['signal_type']``;
@@ -312,6 +319,10 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         21-ms Hann window before binning (the loader's former default). Off
         by default: the window is centred, so a smoothed bin holds spikes
         from up to ~10 ms later (the target is no longer strictly causal).
+    exclude_sessions : iterable of str, default ``ASARI_EXCLUDED_SESSIONS``
+        Recording sessions to leave out. The default drops one MGB cell
+        whose spike detection fails (see ``ASARI_EXCLUDED_SESSIONS``); pass
+        ``()`` to load every session.
     audio_fs : int, default 96000
         Common sample rate the waveforms are resampled to in waveform
         mode (ignored in spectrogram mode, where ``self.audio_fs`` is
@@ -374,12 +385,14 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         return_waveform: bool = False,
         asari_level: str = "sequence",
         smooth: bool = False,
+        exclude_sessions: Iterable[str] = ASARI_EXCLUDED_SESSIONS,
         audio_fs: int = 96000,
         download: bool = False,
         username: Optional[str] = None,
         password: Optional[str] = None,
     ):
         experimenters = _coerce(experimenter) or ("wehr", "asari")
+        excluded = frozenset(exclude_sessions)
         sites_t = _coerce(sites) or ("A1", "MGB")
         for e in experimenters:
             assert e in ("wehr", "asari"), (
@@ -462,6 +475,8 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
             if cell.meta["experimenter"] not in experimenters:
                 return
             if cell.meta["site"] not in sites_t:
+                return
+            if cell.meta["session"] in excluded:
                 return
             n_idx = len(nrn_meta)
             cell_added = False

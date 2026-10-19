@@ -336,6 +336,7 @@ def detect_spikes_psth(
     spk_clip_med_ms: float = 10.0,
     threshold_sigma: float = 2.5,
     smooth_ms: Optional[float] = None,
+    refractory_ms: float = 1.0,
 ) -> np.ndarray:
     """Extract a spike-rate PSTH from a cell-attached voltage trace.
 
@@ -344,7 +345,10 @@ def detect_spikes_psth(
     recipe follows Asari 2009: drift-detrend (MedGauss subtract) →
     high-pass by subtracting a ``spk_clip_med_ms`` median (isolates the
     fast spikes from slower fluctuations) → threshold at
-    ``threshold_sigma × σ``. Each upward threshold crossing is one spike.
+    ``threshold_sigma × σ``. Each upward threshold crossing is one spike,
+    except crossings within ``refractory_ms`` of the previous spike (the
+    absolute refractory period: the trace can recross the threshold on one
+    spike's rebound or on noise riding on it).
     Output is a per-sample spike train (1 at a spike sample, 0 elsewhere),
     so summing it over a time bin gives the bin's spike count.
     ``smooth_ms`` (default None: no smoothing) spreads each spike over a
@@ -369,7 +373,13 @@ def detect_spikes_psth(
     thr = threshold_sigma * float(np.std(y_hp))
     above = y_hp > thr
     rate = np.zeros(y_hp.size, dtype=np.float64)
-    rate[1:][above[1:] & ~above[:-1]] = 1.0         # one spike per upward crossing
+    crossings = np.flatnonzero(above[1:] & ~above[:-1]) + 1
+    dead = int(round(refractory_ms * sf / 1000.0))
+    last = -dead - 1
+    for c in crossings:                              # one spike per crossing, refractory
+        if c - last > dead:
+            rate[c] = 1.0
+            last = c
     if smooth_ms:
         win_n = max(3, int(round(smooth_ms * sf / 1000.0)))
         hann = scsig.windows.hann(win_n)
