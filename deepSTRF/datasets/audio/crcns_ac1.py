@@ -246,8 +246,8 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
           MedGauss-detrended membrane potential in mV (signed). Action
           potentials were blocked (Wehr) or not analysed (Asari A1, per
           the paper); the synaptic input *is* the signal. Pair with MSE.
-        - **cell-attached** (Asari MGB) → ``'spikes'``: a Hann-smoothed
-          spike-rate PSTH (non-negative). There is no intracellular Vm
+        - **cell-attached** (Asari MGB) → ``'spikes'``: spike count per
+          bin (non-negative; see ``smooth``). There is no intracellular Vm
           in cell-attached mode. Pair with Poisson.
 
         Each cell carries its resolved type in ``nrn_meta['signal_type']``;
@@ -307,6 +307,11 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         before a fragment is then not part of the stimulus, and its effect on
         the response counts as trial-to-trial variability. Occurrences the
         recording stops inside are dropped. Wehr stimuli are unaffected.
+    smooth : bool, default False
+        Cell-attached (MGB) spikes only: if True, spread each spike over a
+        21-ms Hann window before binning (the loader's former default). Off
+        by default: the window is centred, so a smoothed bin holds spikes
+        from up to ~10 ms later (the target is no longer strictly causal).
     audio_fs : int, default 96000
         Common sample rate the waveforms are resampled to in waveform
         mode (ignored in spectrogram mode, where ``self.audio_fs`` is
@@ -368,6 +373,7 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         gating: Optional[RepeatGating] = None,
         return_waveform: bool = False,
         asari_level: str = "sequence",
+        smooth: bool = False,
         audio_fs: int = 96000,
         download: bool = False,
         username: Optional[str] = None,
@@ -505,10 +511,14 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
                         detrend_med_ms=self.detrend_med_ms,
                         detrend_gauss_ms=self.detrend_gauss_ms,
                     )
+                    # spike train x samples per bin: the bin average
+                    # (bin_response) is then the spike count per bin
+                    block = max(1, int(round(dt_ms * stim.sf_resp / 1000.0)))
                     cleaned = [
-                        detect_spikes_psth(r, stim.sf_resp,
-                                           detrend_med_ms=self.detrend_med_ms,
-                                           detrend_gauss_ms=self.detrend_gauss_ms)
+                        block * detect_spikes_psth(
+                            r, stim.sf_resp, detrend_med_ms=self.detrend_med_ms,
+                            detrend_gauss_ms=self.detrend_gauss_ms,
+                            smooth_ms=21.0 if smooth else None)
                         for r in cleaned_v
                     ]
                 for r in reasons:

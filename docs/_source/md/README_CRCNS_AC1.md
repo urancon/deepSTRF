@@ -55,7 +55,7 @@ the recording mode dictates what signal physically exists:
 | recording mode | subset | `nrn_meta['signal_type']` | sign | pair with |
 |----------------|--------|---------------------------|------|-----------|
 | whole-cell | Wehr, Asari A1 | `'subthresh'` (MedGauss-detrended Vm) | signed | `mse_loss` |
-| cell-attached | Asari MGB | `'spikes'` (Hann-smoothed rate) | ≥ 0 | `poisson_loss` |
+| cell-attached | Asari MGB | `'spikes'` (count per bin) | ≥ 0 | `poisson_loss` |
 
 Cell-attached recordings have no intracellular Vm; whole-cell recordings have
 no spikes (blocked in Wehr, not analysed in Asari A1 per the paper). The
@@ -113,8 +113,11 @@ The loader is fully Python (no MATLAB runtime). Each instantiation:
 
 For the **cell-attached MGB** cohort, the subthreshold step is replaced by
 spike extraction: drift-detrend → high-pass (subtract a **10 ms** median, the
-Asari 2009 value) → threshold at 2.5 σ → 21 ms Hann smooth. On a sample MGB
-cell this yields ~12 Hz evoked rate, matching the paper's 11.4 ± 16.9 Hz.
+Asari 2009 value) → threshold at 2.5 σ → one spike per upward crossing,
+counted per bin (no smoothing by default; ``smooth=True``
+spreads each spike over a centred 21-ms Hann window). Over the 14 MGB cells
+the mean rate during the sequences is 16.0 ± 11.3 Hz (mean ± SD over cells),
+in line with the paper's evoked 11.4 ± 16.9 Hz (16 cells).
 
 ## Wehr: shared audio and `group_split`
 
