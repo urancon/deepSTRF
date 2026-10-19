@@ -19,7 +19,8 @@ While the version is `0.x`, the public API may still change between minor releas
   next playback, are dropped by default.
 - **AA5 unit selection**: `nrn_meta['reliability']` (split-half reliability
   of the responses during the sounds) and `CRCNSAA5Dataset.select_good_units()`
-  (`spike_snr > 5` and `reliability > 0.1` by default: 249 of the 838 units).
+  (`spike_snr > 5` and `reliability > 0.1` by default: 290 of the 838 units).
+  `reliability` is computed on 21-ms smoothed responses whatever `smooth` is.
 - **Leak-free train / val / test splits** for the datasets whose stimuli share
   audio, so that no test sound is heard in training under another name:
   - `Le2025Dataset.song_split(seed)`: whole songs (all their variants) per

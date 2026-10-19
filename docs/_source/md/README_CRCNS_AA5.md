@@ -57,11 +57,11 @@ chronic 16-channel arrays recorded from their auditory pallium for ~4 weeks.
 
 | **Bird** | **Sex** | **#sites** | **#units with data** | **spike_snr > 5** | **good units** |
 |:--------:|:-------:|:----------:|:--------------------:|:-----------------:|:--------------:|
-| **ZF4F** |    F    |     14     |         224          |        156        |      111       |
-| **ZF5M** |    M    |     17     |         307          |        181        |       69       |
-| **ZF6M** |    M    |      9     |         161          |         64        |       30       |
-| **ZF7F** |    F    |     10     |         146          |         70        |       39       |
-| **Total**|         |     50     |       **838**        |      **471**      |    **249**     |
+| **ZF4F** |    F    |     14     |         224          |        156        |      121       |
+| **ZF5M** |    M    |     17     |         307          |        181        |       84       |
+| **ZF6M** |    M    |      9     |         161          |         64        |       38       |
+| **ZF7F** |    F    |     10     |         146          |         70        |       47       |
+| **Total**|         |     50     |       **838**        |      **471**      |    **290**     |
 
 A "site" is one recording location (microdrive depth + date), and all its
 units were recorded simultaneously. The release has 50 sites in total
@@ -192,7 +192,7 @@ Each `nrn_meta` dict carries:
 | `spike_snr` | the authors' spike-waveform SNR; the paper uses > 5 for candidate single units |
 | `rate_threshold`, `kde_bw` | the authors' motion-artifact exclusion parameters |
 | `auditory_z` | mean / SD, over all the unit's trials, of the firing-rate change 0–500 ms after vs. 500–0 ms before onset: the effect size behind the paper's "auditory" test, recomputed here (negative = inhibited by sound) |
-| `reliability` | split-half reliability of the responses during the sounds (each stimulus from sound onset to 100 ms after its offset, all loaded stimuli): correlation between the PSTHs of the odd and of the even trials, Spearman–Brown corrected. Depends on `dt_ms` and `smooth` |
+| `reliability` | split-half reliability of the responses during the sounds (each stimulus from sound onset to 100 ms after its offset, all loaded stimuli): correlation between the PSTHs of the odd and of the even trials, Spearman–Brown corrected. Always computed on responses smoothed with the 21-ms Hanning window, whatever `smooth` is; depends on `dt_ms` |
 | `n_trials` | number of trials loaded for the unit |
 | `spike_shape`, `spike_std` | mean spike waveform and its SD (40 samples) |
 
@@ -204,13 +204,15 @@ in ZF5M. `reliability` measures how much of a unit's response repeats from
 trial to trial, which bounds what any model can predict. On the full release,
 it predicts a StateNet's held-out correlation per unit much better than the
 alternatives (Spearman 0.80, vs 0.69 for `auditory_z`, 0.00 for `spike_snr`;
-reliability computed on training stimuli only for that check).
+reliability computed on training stimuli only for that check; this check
+and the correlations below were measured with an earlier version of the
+smoothing kernel, which selected 249 units instead of 290).
 
 The recommended selection is one call:
 
 ```python
-ds.select_good_units()                      # spike_snr > 5 and reliability > 0.1 -> 249 units
-ds.select_good_units(min_reliability=0.2)   # stricter: 149 units
+ds.select_good_units()                      # spike_snr > 5 and reliability > 0.1 -> 290 units
+ds.select_good_units(min_reliability=0.2)   # stricter: 178 units
 ```
 
 The units it drops are essentially unpredictable (median held-out correlation
