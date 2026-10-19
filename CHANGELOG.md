@@ -17,6 +17,43 @@ While the version is `0.x`, the public API may still change between minor releas
   works on any subset of its 50 recording sites. Playbacks whose sound the
   cage microphone places away from the logged onset, or that overlap the
   next playback, are dropped by default.
+- **Leak-free train / val / test splits** for the datasets whose stimuli share
+  audio, so that no test sound is heard in training under another name:
+  - `Le2025Dataset.song_split(seed)`: whole songs (all their variants) per
+    set, identified across nat8a / nat8b / synth8b (new `stim_meta` keys
+    `song_id`, `familiarity_group`).
+  - `CRCNSAA4Dataset.group_split(seed, holdout=...)`: keeps shared audio, and
+    by default one bird's call type, in one set (`holdout='caller_type'`;
+    also `'caller'`, `'call_type'`, `'audio'`). New `stim_meta` keys
+    `overlap_group`, `caller`, `call_type`, `identity`, `md5s`.
+  - `CRCNSAC1Dataset.group_split(seed)`: Wehr files sharing audio
+    (`WEHR_SHARED_AUDIO`, `stim_meta['overlap_group']`) and Asari source
+    recordings in one set, consistently across the two subsets.
+  - `CRCNSAC1Dataset(asari_level='segment')`: one stimulus per Asari
+    fragment, pooling the trials of all its occurrences (`stim_meta` keys
+    `segment_file`, `source`, `source_name`, `occurrences`). The default
+    `'sequence'` level is unchanged; no leak-free split exists there.
+  - `NeuralDataset.stim_to_iter_indices(stim_indices)`: maps the absolute
+    stimulus indices these splits return to `Subset` indices.
+
+### Changed
+- **Responses are no longer smoothed by default.** NS1, CRCNS-AA1, AA2,
+  AA4, AA5, Le 2025 and Downer 2025 now default to `smooth=False`. The
+  21-ms Hanning window is centred, so a smoothed bin holds spikes from up to
+  ~10 ms later and the target is no longer strictly causal. Pass
+  `smooth=True` for the previous behaviour (the NS1 pretrained checkpoint
+  was trained that way).
+- **CRCNS-AC1 MGB (cell-attached) responses are spike counts per bin**, one
+  spike per threshold crossing with a 1-ms refractory period, unsmoothed.
+  They were a Hann-smoothed above-threshold trace in arbitrary units;
+  `smooth=True` restores a (unit-area) Hann smoothing. One MGB session whose
+  spike detection fails (`20071009-ha1-003`) is now left out by default
+  (`ASARI_EXCLUDED_SESSIONS`, `exclude_sessions=`): 13 MGB cells instead
+  of 14.
+- **CRCNS-AA4 merges duplicate stimulus files** (the same song, ripple or
+  call saved under several md5 names) into one stimulus: 594 files become
+  539 sounds over the six birds. `merge_duplicates=False` keeps one stimulus
+  per file.
 
 ### Fixed
 - **CRCNS auto-download** (`download=True` for CRCNS AA1, AA2, AA4, AC1, and

@@ -72,11 +72,12 @@ both.
 |--------|------------------|----------|------------|-----------------------------------|------------|
 | Wehr   | whole-cell A1    | 4 kHz    | anaesth. rat | 15-s fragments (2002 cells), 18–31-s streams (2003 cells) | 25 |
 | Asari A1 | whole-cell A1  | 10 kHz   | anaesth. rat | spliced *sequences* of segments | 39         |
-| Asari MGB | cell-attached MGB | 10 kHz | anaesth. rat | same as Asari A1 (subset)     | 14         |
+| Asari MGB | cell-attached MGB | 10 kHz | anaesth. rat | same as Asari A1 (subset)     | 13         |
 
-(The "N (loader)" numbers reproduce the Asari 2009 paper counts —
-39 A1 + 14 MGB cells tested with natural-sound ensembles, plus the 25
-Wehr sessions used by Rançon 2024/2025.)
+(The "N (loader)" numbers follow the Asari 2009 paper counts — 39 A1 +
+14 MGB cells tested with natural-sound ensembles, plus the 25 Wehr sessions
+used by Rançon 2024/2025 — except that one MGB cell is left out by default:
+see the spike extraction below.)
 
 Wehr stimuli are documented by their fragment name (``humpback whale``,
 ``jaguar mating call``, etc.) and live under
@@ -114,10 +115,19 @@ The loader is fully Python (no MATLAB runtime). Each instantiation:
 For the **cell-attached MGB** cohort, the subthreshold step is replaced by
 spike extraction: drift-detrend → high-pass (subtract a **10 ms** median, the
 Asari 2009 value) → threshold at 2.5 σ → one spike per upward crossing,
-counted per bin (no smoothing by default; ``smooth=True``
-spreads each spike over a centred 21-ms Hann window). Over the 14 MGB cells
-the mean rate during the sequences is 16.0 ± 11.3 Hz (mean ± SD over cells),
-in line with the paper's evoked 11.4 ± 16.9 Hz (16 cells).
+ignoring crossings within 1 ms of the previous spike (the absolute refractory
+period: a spike's rebound or noise riding on it can recross the threshold) →
+counted per bin (no smoothing by default; ``smooth=True`` spreads each spike
+over a centred 21-ms Hann window).
+
+The authors set the threshold by eye, sweep by sweep; the loader uses one
+automatic rule, which fails on one cell. In session ``20071009-ha1-003`` the
+spikes are ~13 mV, far above the threshold (~1 mV), so each spike's rebound
+also crosses it and half of its inter-spike intervals stay under 2 ms. It is
+left out by default (``ASARI_EXCLUDED_SESSIONS``; pass
+``exclude_sessions=()`` to keep it), so the loader has 13 MGB cells. Over
+them the mean rate during the sequences is 15.2 ± 11.5 Hz (mean ± SD over
+cells), in line with the paper's evoked 11.4 ± 16.9 Hz (16 cells).
 
 ## Wehr: shared audio and `group_split`
 
@@ -199,7 +209,7 @@ training and test. At ``seed=0``:
 | Site | fragments train / val / test | cells with test data | cells with val data |
 |------|------------------------------|----------------------|---------------------|
 | A1   | 33 / 5 / 7                   | 38 / 39              | 35 / 39             |
-| MGB  | 18 / 2 / 6                   | 14 / 14              | 8 / 14              |
+| MGB  | 18 / 2 / 6                   | 13 / 13              | 7 / 13              |
 
 ```python
 ds = CRCNSAC1Dataset(experimenter="asari", sites="A1", dt_ms=5.0,
