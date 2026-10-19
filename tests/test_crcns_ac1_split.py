@@ -187,7 +187,9 @@ def test_asari_segments_are_slices_of_the_sequences():
     root = os.environ.get("CRCNS_AC1_DATA")
     if not root or not os.path.isdir(os.path.join(root, "crcns-ac1")):
         pytest.skip("CRCNS-AC1 data missing (set CRCNS_AC1_DATA)")
-    kw = dict(path=root, experimenter="asari", sites="MGB", dt_ms=1.0)
+    # smooth=True: raw spike counts at 1 ms are sparse, and a sub-ms cut offset moves a
+    # spike to the next bin; the smoothed trace makes the trial-by-trial match meaningful
+    kw = dict(path=root, experimenter="asari", sites="MGB", dt_ms=1.0, smooth=True)
     seq = CRCNSAC1Dataset(**kw)
     seg = CRCNSAC1Dataset(asari_level="segment", **kw)
     assert [m["session"] for m in seq.nrn_meta] == [m["session"] for m in seg.nrn_meta]
