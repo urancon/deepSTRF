@@ -192,9 +192,12 @@ class CRCNSAA5Dataset(AudioNeuralDataset):
     much of the response repeats from trial to trial, i.e. how much any model
     can predict: on the full release it predicts a StateNet's held-out
     correlation per unit far better (Spearman 0.80) than ``spike_snr``
-    (0.00) or ``auditory_z`` (0.69). :meth:`select_good_units` applies the
-    recommended selection, ``spike_snr > 5`` and ``reliability > 0.1``. Note
-    that ``reliability`` depends on ``dt_ms`` and ``smooth``.
+    (0.00) or ``auditory_z`` (0.69), as measured with an earlier smoothing
+    kernel. :meth:`select_good_units` applies the
+    recommended selection, ``spike_snr > 5`` and ``reliability > 0.1``.
+    ``reliability`` is always computed on responses smoothed with the 21-ms
+    Hanning window, whatever ``smooth`` is, so the selection does not change
+    with how the targets are loaded; it still depends on ``dt_ms``.
     """
 
     def __init__(self,
@@ -406,7 +409,11 @@ class CRCNSAA5Dataset(AudioNeuralDataset):
         self.trial_ids = [[columns[n][s][1] if s in columns[n] else []
                            for n in range(self.N_neurons)] for s in range(len(self.stims))]
 
-        # split-half reliability over the sound windows (see class docstring)
+        # split-half reliability over the sound windows (see class docstring),
+        # always on 21-ms smoothed responses so that it does not depend on `smooth`
+        def smoothed(r):
+            return r if smooth else hanning_smooth(r, window_ms=21.0, dt_ms=dt_ms)
+
         windows = []
         for meta in self.stim_meta:
             a = self.onset_bin + int(round(meta["sound_onset_s"] * 1000.0 / dt_ms))
@@ -414,7 +421,7 @@ class CRCNSAA5Dataset(AudioNeuralDataset):
             windows.append((max(a, 0), min(b, self.T)))
         for n in range(self.N_neurons):
             self.nrn_meta[n]["reliability"] = split_half_reliability(
-                [self.responses[s][n][:, a:b] for s, (a, b) in enumerate(windows)
+                [smoothed(self.responses[s][n])[:, a:b] for s, (a, b) in enumerate(windows)
                  if s in columns[n]])
         self.validate()
 
@@ -469,9 +476,10 @@ class CRCNSAA5Dataset(AudioNeuralDataset):
 
         Keeps units with ``spike_snr > min_spike_snr`` (the authors' single-unit
         threshold) and ``reliability > min_reliability``. Pass ``None`` to drop
-        a criterion. On the full release (dt_ms=5, defaults) this keeps 249 of
+        a criterion. On the full release (dt_ms=5, defaults) this keeps 290 of
         the 471 units with ``spike_snr > 5``; the dropped ones are essentially
-        unpredictable (median held-out cc 0.04 vs 0.24 for the kept ones).
+        unpredictable (median held-out cc 0.04 vs 0.24 for the kept ones, measured
+        on an earlier, near-identical selection of 249 units).
         """
         def good(n):
             if min_spike_snr is not None and not ((n["spike_snr"] or 0) > min_spike_snr):

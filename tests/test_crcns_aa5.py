@@ -197,3 +197,12 @@ def test_real_cache_smoke():
     for row in ds.responses:
         for r in row:
             assert tuple(r.shape) == (1, 1) or (r.shape[1] == ds.T and not torch.isnan(r).any())
+
+
+@pytest.mark.skipif(not AA5_DATA, reason="set $AA5_DATA to a prepare_aa5 cache to run")
+def test_real_reliability_does_not_depend_on_smooth():
+    # needs real responses: the synthetic site is too sparse for any reliability
+    rel = [np.array([n["reliability"] for n in CRCNSAA5Dataset(AA5_DATA, smooth=sm).nrn_meta])
+           for sm in (False, True)]
+    assert np.isfinite(rel[0]).sum() > 100
+    np.testing.assert_allclose(rel[0], rel[1], rtol=1e-6, equal_nan=True)
