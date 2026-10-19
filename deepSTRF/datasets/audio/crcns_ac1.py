@@ -37,7 +37,10 @@ using ``$CRCNS_USERNAME`` / ``$CRCNS_PASSWORD``.
 """
 from __future__ import annotations
 
+import json
 import os
+import random
+import re
 import warnings
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
@@ -50,6 +53,8 @@ from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
 from deepSTRF.datasets.audio._logspectrogram import logspectrogram, n_bands_for
 from deepSTRF.datasets.audio._crcns_ac1_native import (
     CellRecord,
+    _load_asari_stim_by_relpath,
+    apply_ramp,
     RepeatGating,
     bin_response,
     detect_spikes_psth,
@@ -105,6 +110,72 @@ WEHR_NEURONS_SPLIT_NATURAL: Tuple[Tuple[int, int, int], ...] = (
     (44, 6, 13),   # 23
     (4, 1, 1),     # 24
 )
+
+
+# Wehr stimulus files (``'<category>/<idx>'``) that share audio. The first ~10 s of
+# 13 of the 18 fragment files reappear inside 14 streams, and fragments 12 / 13 are
+# themselves built from fragment 8 and a screaming piha recording; streams share no
+# audio with each other. Found by matching the log-spectrograms of all 51 files frame
+# by frame and confirmed on the waveforms (r >= 0.99 over the shared stretch). The
+# 2002 cells heard only fragments and the 2003 cells only streams, so the overlap
+# links two cohorts through any model they share. Every other file is its own group.
+WEHR_SHARED_AUDIO: Tuple[Tuple[str, ...], ...] = (
+    ("fragments/8", "fragments/12", "fragments/13",
+     "category2/5", "category2/10", "category2/15"),
+    ("fragments/7", "fragments/9", "category2/18"),
+    ("fragments/1", "category1/10"),
+    ("fragments/2", "category2/2"),
+    ("fragments/3", "category1/11"),
+    ("fragments/4", "category1/1"),
+    ("fragments/5", "category2/7"),
+    ("fragments/6", "category2/17"),
+    ("fragments/14", "category2/3"),
+)
+
+# Asari sessions left out by default. 20071009-ha1-003 (MGB, cell-attached): its
+# spikes are ~13 mV, far above the 2.5-sigma threshold (~1 mV), so each spike's
+# rebound and small bumps also cross it; half its inter-spike intervals stay under
+# 2 ms even with the 1-ms refractory period. Pass exclude_sessions=() to keep it.
+ASARI_EXCLUDED_SESSIONS: Tuple[str, ...] = ("20071009-ha1-003",)
+
+# All Wehr natural-sound stimulus files: (category, number of files).
+_WEHR_CORPUS: Tuple[Tuple[str, int], ...] = (
+    ("fragments", 18), ("category1", 11), ("category2", 18), ("category3", 4),
+)
+
+
+_ASARI_TABLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "_crcns_ac1_asari_fragments.json")
+_ASARI_TABLE: Optional[Dict] = None
+
+
+def _asari_table() -> Dict:
+    global _ASARI_TABLE
+    if _ASARI_TABLE is None:
+        with open(_ASARI_TABLE_PATH) as f:
+            _ASARI_TABLE = json.load(f)
+    return _ASARI_TABLE
+
+
+def asari_fragment_sources() -> Dict[str, Tuple[str, str]]:
+    """Asari segment file (``'class6/3l.mat'``) -> (source id, source name).
+
+    The source is the CD track the fragment was cut from (``'<CD>/<track>'``),
+    parsed from the file's description. The base file and its short (``s``) and
+    long (``l``) cuts share a source. Lists the 49 files used by the
+    natural-sound sequences.
+    """
+    return {f: tuple(v) for f, v in _asari_table()["sources"].items()}
+
+
+def wehr_overlap_group(category: str, idx: int) -> str:
+    """The ``overlap_group`` of a Wehr stimulus file: the name (``'wehr/<category>/<idx>'``)
+    of the first file of its :data:`WEHR_SHARED_AUDIO` group, or its own name."""
+    key = f"{category}/{idx}"
+    for group in WEHR_SHARED_AUDIO:
+        if key in group:
+            return "wehr/" + group[0]
+    return "wehr/" + key
 
 
 # CRCNS download paths (verified against the dataset's About page; matches the
@@ -181,8 +252,9 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
           MedGauss-detrended membrane potential in mV (signed). Action
           potentials were blocked (Wehr) or not analysed (Asari A1, per
           the paper); the synaptic input *is* the signal. Pair with MSE.
-        - **cell-attached** (Asari MGB) → ``'spikes'``: a Hann-smoothed
-          spike-rate PSTH (non-negative). There is no intracellular Vm
+        - **cell-attached** (Asari MGB) → ``'spikes'``: spike count per
+          bin (non-negative; one spike per threshold crossing, with a 1-ms
+          refractory period; see ``smooth``). There is no intracellular Vm
           in cell-attached mode. Pair with Poisson.
 
         Each cell carries its resolved type in ``nrn_meta['signal_type']``;
@@ -231,6 +303,26 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         holds dataset-wide. offset 0 — the waveform starts at stimulus
         onset, matching the response trace. Responses are identical to
         spectrogram mode.
+    asari_level : {'sequence', 'segment'}, default 'sequence'
+        Stimulus unit for the Asari cells. ``'sequence'``: one stimulus per
+        presented sequence of fragments (the recording as played, with its
+        long context); no leak-free train / test split exists at this level,
+        since every fragment recurs in several sequences. ``'segment'``: one
+        stimulus per fragment file; each sequence is cut at the fragment
+        boundaries (cumulative file lengths) and the trials of all
+        occurrences of a fragment are pooled as its repeats. The context
+        before a fragment is then not part of the stimulus, and its effect on
+        the response counts as trial-to-trial variability. Occurrences the
+        recording stops inside are dropped. Wehr stimuli are unaffected.
+    smooth : bool, default False
+        Cell-attached (MGB) spikes only: if True, spread each spike over a
+        21-ms Hann window before binning (the loader's former default). Off
+        by default: the window is centred, so a smoothed bin holds spikes
+        from up to ~10 ms later (the target is no longer strictly causal).
+    exclude_sessions : iterable of str, default ``ASARI_EXCLUDED_SESSIONS``
+        Recording sessions to leave out. The default drops one MGB cell
+        whose spike detection fails (see ``ASARI_EXCLUDED_SESSIONS``); pass
+        ``()`` to load every session.
     audio_fs : int, default 96000
         Common sample rate the waveforms are resampled to in waveform
         mode (ignored in spectrogram mode, where ``self.audio_fs`` is
@@ -249,11 +341,20 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
     deepSTRF data paradigm — see ``docs/_source/md/data_paradigm.md``.
     Per-stim metadata:
 
-    - ``stim_meta`` dicts hold a unique ``name`` (``'wehr/<category>/<idx>'``
-      or ``'asari/<segment files joined by +>'``), ``experimenter``,
-      ``category``, ``idx`` (Wehr) or ``class_n`` / ``segments`` /
-      ``segment_files`` (Asari), ``description`` (NOT unique: the same
-      sequence description recurs across classes), ``duration_s``.
+    - ``stim_meta`` dicts hold a unique ``name`` (``'wehr/<category>/<idx>'``,
+      ``'asari/<segment files joined by +>'`` for a sequence, or
+      ``'asari/<segment file>'`` at ``asari_level='segment'``),
+      ``experimenter``, ``category``, ``idx`` (Wehr) or ``class_n`` /
+      ``segments`` / ``segment_files`` (Asari sequence; ``class_n`` is the
+      class of the first file, sequences mix classes), ``description``
+      (NOT unique for sequences: the same description recurs across
+      classes), ``duration_s``. Wehr stimuli add ``overlap_group`` (files
+      that share audio have the same value, see :meth:`group_split`).
+      Asari segments add ``segment_file``, ``source`` (the CD track it was
+      cut from, ``'<CD>/<track>'``) and ``source_name``, ``overlap_group``
+      (``'asari/<source>'``) and ``occurrences``: the
+      ``(sequence name, position, previous segment file or None, onset in
+      s)`` of every occurrence pooled into it.
     - ``nrn_meta`` dicts hold ``experimenter``, ``session``,
       ``animal_id``, ``penetration``, ``date``, ``site``,
       ``recording_type``, ``signal_type`` (``'subthresh'`` /
@@ -282,12 +383,16 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         detrend_gauss_ms: float = 10.0,
         gating: Optional[RepeatGating] = None,
         return_waveform: bool = False,
+        asari_level: str = "sequence",
+        smooth: bool = False,
+        exclude_sessions: Iterable[str] = ASARI_EXCLUDED_SESSIONS,
         audio_fs: int = 96000,
         download: bool = False,
         username: Optional[str] = None,
         password: Optional[str] = None,
     ):
         experimenters = _coerce(experimenter) or ("wehr", "asari")
+        excluded = frozenset(exclude_sessions)
         sites_t = _coerce(sites) or ("A1", "MGB")
         for e in experimenters:
             assert e in ("wehr", "asari"), (
@@ -297,6 +402,8 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
             assert s in ("A1", "MGB"), (
                 f"sites must be 'A1' and/or 'MGB' (got {s!r})"
             )
+        if asari_level not in ("sequence", "segment"):
+            raise ValueError(f"asari_level must be 'sequence' or 'segment', got {asari_level!r}")
         assert dt_ms > 0, f"dt_ms must be positive (got {dt_ms})"
         assert fmax > fmin > 0, f"need 0 < fmin < fmax (got {fmin}, {fmax})"
         assert bins_per_octave >= 1, f"bins_per_octave >= 1 (got {bins_per_octave})"
@@ -327,6 +434,7 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         self.detrend_gauss_ms = float(detrend_gauss_ms)
         self.gating = gating or RepeatGating()
         self.return_waveform = bool(return_waveform)
+        self.asari_level = asari_level
         # audio_fs is the in-loader sample rate only in waveform mode; in
         # spectrogram mode the stims keep heterogeneous native rates, so we
         # report None (the base class's "this is a spectrogram dataset" signal).
@@ -340,6 +448,15 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
 
         # --- extract zips lazily; locate the three subtrees ---
         wehr_dir, asari1_dir, asari2_dir = ensure_extracted(path)
+        asari_stims = os.path.join(os.path.dirname(wehr_dir), "asari", "Stimuli")
+        segment_level = asari_level == "segment"
+        segment_cache: Dict[str, Tuple[np.ndarray, float]] = {}
+
+        def _segment(f):
+            """(waveform, sf) of an Asari segment file, loaded once."""
+            if f not in segment_cache:
+                segment_cache[f] = _load_asari_stim_by_relpath(asari_stims, f)
+            return segment_cache[f]
 
         # --- pass 1: walk cells, dedup stims, buffer cleaned binned responses ---
         # ``unique_stims[key]`` -> int s_idx; ``stim_specs[s_idx]`` holds the
@@ -359,6 +476,8 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
                 return
             if cell.meta["site"] not in sites_t:
                 return
+            if cell.meta["session"] in excluded:
+                return
             n_idx = len(nrn_meta)
             cell_added = False
             # Signal type is dictated by the recording mode: cell-attached
@@ -368,6 +487,29 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
                 "spikes" if "attached" in cell.meta.get("recording_type", "").lower()
                 else "subthresh"
             )
+            seg_trials: Dict[str, List[np.ndarray]] = {}
+            seg_occ: Dict[str, set] = {}
+
+            def register(key, waveform, sf_stim, duration_ms, meta, binned):
+                """Add one (stim, cell) response block; returns the stim index."""
+                nonlocal cell_added
+                T_resp = min(b.size for b in binned)
+                if T_resp <= 0:
+                    return None
+                binned = np.stack([b[:T_resp] for b in binned])  # (R, T_resp)
+                if key not in unique_stims:
+                    unique_stims[key] = len(stim_specs)
+                    stim_specs.append({
+                        "waveform": waveform,
+                        "sf_stim": sf_stim,
+                        "duration_ms": duration_ms,
+                        "meta": dict(meta),
+                    })
+                s_idx = unique_stims[key]
+                buffer.append((s_idx, n_idx, torch.from_numpy(binned).float()))
+                cell_added = True
+                return s_idx
+
             for stim in cell.stims:
                 # ---- clean + bin response ----
                 if cell_signal == "subthresh":
@@ -384,10 +526,14 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
                         detrend_med_ms=self.detrend_med_ms,
                         detrend_gauss_ms=self.detrend_gauss_ms,
                     )
+                    # spike train x samples per bin: the bin average
+                    # (bin_response) is then the spike count per bin
+                    block = max(1, int(round(dt_ms * stim.sf_resp / 1000.0)))
                     cleaned = [
-                        detect_spikes_psth(r, stim.sf_resp,
-                                           detrend_med_ms=self.detrend_med_ms,
-                                           detrend_gauss_ms=self.detrend_gauss_ms)
+                        block * detect_spikes_psth(
+                            r, stim.sf_resp, detrend_med_ms=self.detrend_med_ms,
+                            detrend_gauss_ms=self.detrend_gauss_ms,
+                            smooth_ms=21.0 if smooth else None)
                         for r in cleaned_v
                     ]
                 for r in reasons:
@@ -395,29 +541,48 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
                 if not cleaned:
                     continue
 
+                if segment_level and stim.meta["experimenter"] == "asari":
+                    # Cut every repeat at the fragment boundaries (cumulative file
+                    # lengths, exactly as the sequence was spliced); an occurrence
+                    # the recording stops inside is dropped. The recorded duration
+                    # is rounded (up to 0.5 ms shorter than the audio), so 1 ms of
+                    # shortfall is accepted. Trials of all the occurrences of a
+                    # fragment are pooled below.
+                    n_min = min(r.size for r in cleaned) + int(round(stim.sf_resp / 1000.0))
+                    onset, prev = 0.0, None
+                    for pos, f in enumerate(stim.meta["segment_files"]):
+                        dur = _segment(f)[0].size / _segment(f)[1]
+                        a = int(round(onset * stim.sf_resp))
+                        b = int(round((onset + dur) * stim.sf_resp))
+                        if b <= n_min:
+                            seg_trials.setdefault(f, []).extend(
+                                bin_response(r[a:b], stim.sf_resp, dt_ms) for r in cleaned)
+                            seg_occ.setdefault(f, set()).add(
+                                (stim.meta["name"], pos, prev, round(onset, 4)))
+                        onset, prev = onset + dur, f
+                    continue
+
                 # Bin each repeat to dt_ms grid, length-align across repeats.
                 binned = [bin_response(r, stim.sf_resp, dt_ms) for r in cleaned]
-                T_resp = min(b.size for b in binned)
-                if T_resp <= 0:
-                    continue
-                binned = np.stack([b[:T_resp] for b in binned])  # (R, T_resp)
+                register(stim.key, stim.waveform, stim.sf_stim, stim.duration_ms,
+                         stim.meta, binned)
 
-                # ---- register stim (dedup) ----
-                key = stim.key
-                if key not in unique_stims:
-                    s_idx = len(stim_specs)
-                    unique_stims[key] = s_idx
-                    stim_specs.append({
-                        "waveform": stim.waveform,
-                        "sf_stim": stim.sf_stim,
-                        "duration_ms": stim.duration_ms,
-                        "meta": dict(stim.meta),
-                    })
-                else:
-                    s_idx = unique_stims[key]
-
-                buffer.append((s_idx, n_idx, torch.from_numpy(binned).float()))
-                cell_added = True
+            for f, trials in seg_trials.items():
+                wav, sf = _segment(f)
+                src, src_name = asari_fragment_sources()[f]
+                class_n = int(re.match(r"class(\d+)/", f).group(1))
+                s_idx = register(
+                    ("asari", "segment", f), apply_ramp(wav, sf, 5.0), sf,
+                    wav.size / sf * 1000.0,
+                    {"name": f"asari/{f}", "experimenter": "asari",
+                     "category": f"class{class_n}", "class_n": class_n,
+                     "segment_file": f, "source": src, "source_name": src_name,
+                     "overlap_group": f"asari/{src}", "description": src_name,
+                     "duration_s": wav.size / sf, "occurrences": []},
+                    trials)
+                if s_idx is not None:
+                    occ = stim_specs[s_idx]["meta"]["occurrences"]
+                    occ.extend(o for o in sorted(seg_occ[f], key=str) if o not in occ)
 
             if cell_added:
                 meta = dict(cell.meta)
@@ -510,7 +675,10 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
                 )
                 stim_tensor = torch.from_numpy(S_db[:, :T_canon]).unsqueeze(0).float()
             self.stims.append(stim_tensor)
-            self.stim_meta.append(spec["meta"])
+            meta = spec["meta"]
+            if meta["experimenter"] == "wehr":
+                meta["overlap_group"] = wehr_overlap_group(meta["category"], meta["idx"])
+            self.stim_meta.append(meta)
 
         for (s_idx, n_idx, tens) in buffer:
             T_canon = stim_T_out[s_idx]
@@ -519,6 +687,104 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
             self.responses[s_idx][n_idx] = tens[:, :T_canon]
 
         self.validate()
+
+    def group_split(self, seed: Optional[int] = None,
+                    fractions: Sequence[float] = (0.7, 0.1, 0.2)) -> Dict[str, List[int]]:
+        """Split the stimuli into train / val / test, keeping shared audio together.
+
+        **Wehr.** Files that share audio (same ``overlap_group``, see
+        :data:`WEHR_SHARED_AUDIO`) always land in the same set. The stimuli
+        stay whole streams and fragments, so their long context (adaptation)
+        is kept. Groups holding a fragment file form the ``'fragments'``
+        stratum (the streams that copy them go with them); the other streams
+        are drawn per category.
+
+        **Asari** (``asari_level='segment'`` only). The unit is the source
+        track (``stim_meta['source']``): all cuts of a track and all their
+        occurrences go to one set. The tracks are drawn fragment set by
+        fragment set (the sets of tracks the Asari cells heard, A1 and MGB
+        together, largest number of cells first), so the large sets get val
+        and test tracks; a track drawn with an earlier set keeps its set.
+        Seven tracks also play inside Wehr files (both cohorts used the same
+        Cornell CDs); each takes the set of its Wehr group, so a model fitted
+        to both cohorts never has that audio in training and test. At
+        the sequence level no leak-free split exists (every fragment recurs
+        in several sequences of its set), so this raises.
+
+        In each stratum the units go, in a shuffled order, to the set
+        furthest below its target share of that stratum. The draw is over the
+        whole corpus (all 51 Wehr files; all Asari tracks and fragment sets),
+        not over the stimuli of this instance: a given ``seed`` puts a sound in
+        the same set whichever cells or sites are loaded.
+
+        Parameters
+        ----------
+        seed : int, optional
+            Seed of the draw. ``None`` draws a new random split at each call.
+        fractions : sequence of 3 floats, default (0.7, 0.1, 0.2)
+            Target train / val / test shares, in files (Wehr) or source tracks
+            (Asari).
+
+        Returns
+        -------
+        dict
+            ``{'train': [...], 'val': [...], 'test': [...]}``: absolute stimulus
+            indices (into ``stim_meta``), whatever the current selection. Use
+            :meth:`stim_to_iter_indices` to build a ``torch.utils.data.Subset``.
+
+        Raises
+        ------
+        ValueError
+            If Asari stimuli are loaded at the sequence level.
+        """
+        if len(fractions) != 3 or abs(sum(fractions) - 1.0) > 1e-6:
+            raise ValueError(f"fractions must be 3 shares summing to 1, got {fractions}")
+        if any(m["experimenter"] == "asari" and "source" not in m for m in self.stim_meta):
+            raise ValueError(
+                "No leak-free split exists for Asari sequences: every fragment recurs in "
+                "several sequences of its set. Load asari_level='segment' to split.")
+        keys = ("train", "val", "test")
+        rng = random.Random(seed)
+
+        def draw(units: Sequence[str], size: Dict[str, int], assign: Dict[str, str]):
+            """Assign the not-yet-assigned ``units`` (one stratum), counting the
+            already assigned ones toward the shares."""
+            todo = sorted(u for u in set(units) if u not in assign)
+            rng.shuffle(todo)
+            total = sum(size[u] for u in set(units))
+            count = dict.fromkeys(keys, 0)
+            for u in set(units) - set(todo):
+                count[assign[u]] += size[u]
+            for u in todo:
+                k = max(keys, key=lambda k: fractions[keys.index(k)] * total - count[k])
+                assign[u] = k
+                count[k] += size[u]
+
+        assign: Dict[str, str] = {}
+        # Wehr: units = overlap groups of the 51 files
+        groups: Dict[str, List[str]] = {}
+        for cat, n in _WEHR_CORPUS:
+            for idx in range(1, n + 1):
+                groups.setdefault(wehr_overlap_group(cat, idx), []).append(f"wehr/{cat}/{idx}")
+        stratum = {g: "fragments" if any("/fragments/" in f for f in fs) else fs[0].split("/")[1]
+                   for g, fs in groups.items()}
+        size = {g: len(fs) for g, fs in groups.items()}
+        for st in sorted(set(stratum.values())):
+            draw([g for g in groups if stratum[g] == st], size, assign)
+        # Asari: a track whose audio is also inside a Wehr file takes that file's set
+        # (one model fitted to both cohorts must not see it in training and test)
+        for src, wehr_groups in _asari_table()["wehr_links"].items():
+            sets = {assign[g] for g in wehr_groups}
+            assert len(sets) == 1, (src, wehr_groups)
+            assign["asari/" + src] = sets.pop()
+        # Asari: units = source tracks, drawn per fragment set
+        for _n_cells, sources in _asari_table()["ensembles"]:
+            draw(["asari/" + x for x in sources], {"asari/" + x: 1 for x in sources}, assign)
+
+        split: Dict[str, List[int]] = {k: [] for k in keys}
+        for i, m in enumerate(self.stim_meta):
+            split[assign[m["overlap_group"]]].append(i)
+        return split
 
     def _waveform_for_stim(
         self, waveform: np.ndarray, sf_stim: float, T_canon: int,

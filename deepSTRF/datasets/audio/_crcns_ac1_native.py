@@ -335,7 +335,8 @@ def detect_spikes_psth(
     detrend_gauss_ms: float = 10.0,
     spk_clip_med_ms: float = 10.0,
     threshold_sigma: float = 2.5,
-    smooth_ms: float = 21.0,
+    smooth_ms: Optional[float] = None,
+    refractory_ms: float = 1.0,
 ) -> np.ndarray:
     """Extract a spike-rate PSTH from a cell-attached voltage trace.
 
@@ -344,8 +345,15 @@ def detect_spikes_psth(
     recipe follows Asari 2009: drift-detrend (MedGauss subtract) →
     high-pass by subtracting a ``spk_clip_med_ms`` median (isolates the
     fast spikes from slower fluctuations) → threshold at
-    ``threshold_sigma × σ`` → Hann smooth at ``smooth_ms``. Output is in
-    arbitrary units proportional to spike rate.
+    ``threshold_sigma × σ``. Each upward threshold crossing is one spike,
+    except crossings within ``refractory_ms`` of the previous spike (the
+    absolute refractory period: the trace can recross the threshold on one
+    spike's rebound or on noise riding on it).
+    Output is a per-sample spike train (1 at a spike sample, 0 elsewhere),
+    so summing it over a time bin gives the bin's spike count.
+    ``smooth_ms`` (default None: no smoothing) spreads each spike over a
+    centred, unit-area Hann window of that width; the window is centred,
+    so a smoothed bin holds spikes from up to ``smooth_ms / 2`` later.
 
     The ``spk_clip_med_ms`` default is **10 ms** — the value stated in
     the Asari 2009 methods. (The legacy ``asari.py`` passed
@@ -363,12 +371,20 @@ def detect_spikes_psth(
     clip_size = max(1, int(round(spk_clip_med_ms * sf / 1000.0)))
     y_hp = y - median_filter(y, size=clip_size, mode="reflect")
     thr = threshold_sigma * float(np.std(y_hp))
-    spikes = (y_hp > thr).astype(np.float64)
-    # Hann smooth
-    win_n = max(3, int(round(smooth_ms * sf / 1000.0)))
-    hann = scsig.windows.hann(win_n)
-    psth = scsig.convolve(spikes, hann, mode="same", method="direct")
-    return psth
+    above = y_hp > thr
+    rate = np.zeros(y_hp.size, dtype=np.float64)
+    crossings = np.flatnonzero(above[1:] & ~above[:-1]) + 1
+    dead = int(round(refractory_ms * sf / 1000.0))
+    last = -dead - 1
+    for c in crossings:                              # one spike per crossing, refractory
+        if c - last > dead:
+            rate[c] = 1.0
+            last = c
+    if smooth_ms:
+        win_n = max(3, int(round(smooth_ms * sf / 1000.0)))
+        hann = scsig.windows.hann(win_n)
+        rate = scsig.convolve(rate, hann / hann.sum(), mode="same", method="direct")
+    return rate
 
 
 # ---------------------------------------------------------------------------

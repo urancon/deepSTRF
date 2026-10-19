@@ -382,3 +382,25 @@ def test_n_selected_respects_bidirectional_stim_filter():
     # the 2 val-only neurons have no est responses -> hidden -> n_selected == 3
     assert ds.n_selected == 3
     assert len(ds[0]["responses"]) == 3
+
+
+def test_stim_to_iter_indices_identity_without_selection():
+    ds = _audio_with_subset_meta(N=3, S_est=4, S_val=2)
+    assert ds.stim_to_iter_indices([5, 0, 2]) == [5, 0, 2]
+
+
+def test_stim_to_iter_indices_follows_selection_and_subset():
+    from torch.utils.data import Subset
+    ds = _audio_with_subset_meta(N=3, S_est=4, S_val=2)
+    ds.select_stims([1, 3, 5])
+    it = ds.stim_to_iter_indices([5, 3])
+    assert it == [2, 1]
+    names = [Subset(ds, it)[i]['stim_meta']["name"] for i in range(2)]
+    assert names == ["val1", "est3"]
+
+
+def test_stim_to_iter_indices_drops_stims_not_iterable():
+    """A stim outside the selection (or with no valid response) has no iteration index."""
+    ds = _audio_with_subset_meta(N=3, S_est=4, S_val=2)
+    ds.select_stims([1, 3])
+    assert ds.stim_to_iter_indices([0, 1, 3, 4]) == [0, 1]

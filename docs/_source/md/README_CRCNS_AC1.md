@@ -55,7 +55,7 @@ the recording mode dictates what signal physically exists:
 | recording mode | subset | `nrn_meta['signal_type']` | sign | pair with |
 |----------------|--------|---------------------------|------|-----------|
 | whole-cell | Wehr, Asari A1 | `'subthresh'` (MedGauss-detrended Vm) | signed | `mse_loss` |
-| cell-attached | Asari MGB | `'spikes'` (Hann-smoothed rate) | ≥ 0 | `poisson_loss` |
+| cell-attached | Asari MGB | `'spikes'` (count per bin) | ≥ 0 | `poisson_loss` |
 
 Cell-attached recordings have no intracellular Vm; whole-cell recordings have
 no spikes (blocked in Wehr, not analysed in Asari A1 per the paper). The
@@ -70,22 +70,23 @@ both.
 
 |        | Recording        | sf       | Subjects   | Stimuli                           | N (loader) |
 |--------|------------------|----------|------------|-----------------------------------|------------|
-| Wehr   | whole-cell A1    | 4 kHz    | anaesth. rat | 15-s natural-sound fragments  | 25         |
+| Wehr   | whole-cell A1    | 4 kHz    | anaesth. rat | 15-s fragments (2002 cells), 18–31-s streams (2003 cells) | 25 |
 | Asari A1 | whole-cell A1  | 10 kHz   | anaesth. rat | spliced *sequences* of segments | 39         |
-| Asari MGB | cell-attached MGB | 10 kHz | anaesth. rat | same as Asari A1 (subset)     | 14         |
+| Asari MGB | cell-attached MGB | 10 kHz | anaesth. rat | same as Asari A1 (subset)     | 13         |
 
-(The "N (loader)" numbers reproduce the Asari 2009 paper counts —
-39 A1 + 14 MGB cells tested with natural-sound ensembles, plus the 25
-Wehr sessions used by Rançon 2024/2025.)
+(The "N (loader)" numbers follow the Asari 2009 paper counts — 39 A1 +
+14 MGB cells tested with natural-sound ensembles, plus the 25 Wehr sessions
+used by Rançon 2024/2025 — except that one MGB cell is left out by default:
+see the spike extraction below.)
 
 Wehr stimuli are documented by their fragment name (``humpback whale``,
 ``jaguar mating call``, etc.) and live under
 ``Stimuli/{fragments,category{1,2,3}}/<idx>.mat``. Asari stimuli are
 *sequences* of 5 segments spliced together (e.g.
 ``'Sequence 1: 2  1  3  1  4'`` indexes into the recording's own
-``param.stimulus[i].file`` lookup table — typically class<N>/<base>.mat
-plus suffixed amplitude / frequency variants). The loader resolves the
-exact segment files and records them in ``stim_meta['segment_files']``.
+``param.stimulus[i].file`` lookup table — ``class<N>/<n>.mat`` plus short
+``<n>s`` and long ``<n>l`` cuts of the same recording). The loader resolves
+the exact segment files and records them in ``stim_meta['segment_files']``.
 
 ## Processing pipeline
 
@@ -113,8 +114,108 @@ The loader is fully Python (no MATLAB runtime). Each instantiation:
 
 For the **cell-attached MGB** cohort, the subthreshold step is replaced by
 spike extraction: drift-detrend → high-pass (subtract a **10 ms** median, the
-Asari 2009 value) → threshold at 2.5 σ → 21 ms Hann smooth. On a sample MGB
-cell this yields ~12 Hz evoked rate, matching the paper's 11.4 ± 16.9 Hz.
+Asari 2009 value) → threshold at 2.5 σ → one spike per upward crossing,
+ignoring crossings within 1 ms of the previous spike (the absolute refractory
+period: a spike's rebound or noise riding on it can recross the threshold) →
+counted per bin (no smoothing by default; ``smooth=True`` spreads each spike
+over a centred 21-ms Hann window).
+
+The authors set the threshold by eye, sweep by sweep; the loader uses one
+automatic rule, which fails on one cell. In session ``20071009-ha1-003`` the
+spikes are ~13 mV, far above the threshold (~1 mV), so each spike's rebound
+also crosses it and half of its inter-spike intervals stay under 2 ms. It is
+left out by default (``ASARI_EXCLUDED_SESSIONS``; pass
+``exclude_sessions=()`` to keep it), so the loader has 13 MGB cells. Over
+them the mean rate during the sequences is 15.2 ± 11.5 Hz (mean ± SD over
+cells), in line with the paper's evoked 11.4 ± 16.9 Hz (16 cells).
+
+## Wehr: shared audio and `group_split`
+
+The Wehr stimuli are 18 *fragment* files (15 s each, one source each; the
+Hendrix file is 32 s) and 33 *streams* of 18–31 s. The streams are grouped
+by the frequency range of their sounds (``category1`` 0–1.6 kHz,
+``category2`` 0–6.4 kHz, ``category3`` 0–22 kHz). The labels are spectral
+classes, not filters. A stream is a series of pieces from different sources,
+cut on a 0.5-s grid with short fades at the joins.
+
+Some files share audio:
+
+- The first ~10 s of 13 fragment files reappear inside 14 streams; for
+  example, the tungara frog fragment opens ``category2/18``.
+- Fragments 12 and 13 are themselves built from fragment 8 and a screaming
+  piha recording.
+- Streams share no audio with each other.
+
+The 10 cells recorded in 2002 heard only fragments, and the 15 cells
+recorded in 2003 heard only streams. A model fitted to all cells therefore
+sees the same audio in training and test whenever a fragment and a stream
+that copies it fall in different sets. ``WEHR_SHARED_AUDIO`` lists the 9
+groups of files that share audio, and ``stim_meta['overlap_group']`` gives
+each Wehr stimulus its group (37 groups over the 51 files).
+
+``CRCNSAC1Dataset.group_split(seed, fractions=(0.7, 0.1, 0.2))`` returns
+train / val / test stimulus indices with every group in one set. The
+stimuli stay whole, so their long context, and the adaptation it drives,
+is kept. Groups holding a fragment file are drawn together (the streams
+that copy them follow them); the other streams are drawn per category. At
+``seed=0`` the split is 33 / 4 / 14 files, every category has test files,
+24 of the 25 cells heard at least one test file, and 17 heard at least one
+val file (3 of the 10 fragment cells: each of them heard only 3–11
+fragments).
+
+```python
+from torch.utils.data import Subset
+ds = CRCNSAC1Dataset(experimenter="wehr", sites="A1", dt_ms=5.0)
+split = ds.group_split(seed=0)
+train = Subset(ds, ds.stim_to_iter_indices(split["train"]))
+```
+
+## Asari: fragment-level stimuli and `group_split`
+
+Asari & Zador (2009) built each stimulus set from N natural-sound fragments
+and played sequences of them with no gap (5-ms ramps at the joins), so that
+each fragment is heard after many different preceding fragments: the
+design measures context dependence. A fragment therefore recurs in several
+sequences of its set (about 3–4 times in the 7-fragment set heard by most
+A1 cells). Any split of the *sequences* puts the same fragments in training
+and test, so no leak-free split exists at the default
+``asari_level='sequence'``, and ``group_split`` raises there.
+
+``asari_level='segment'`` makes one stimulus per fragment file:
+
+- every sequence is cut at its fragment boundaries (the cumulative file
+  lengths, exactly as the loader splices it), and the trials of all the
+  occurrences of a fragment are pooled as its repeats (A1: median 28
+  trials per fragment and cell, MGB: 100);
+- the context before a fragment is not part of the stimulus, so its effect
+  on the response counts as trial-to-trial variability: a model cannot
+  learn it, and the noise ceiling (``cc_norm``) treats it as noise;
+- occurrences the recording stops inside are dropped (a few sequences end
+  early).
+
+``stim_meta`` gives each fragment its ``source``: the CD track it was cut
+from (``'<CD>/<track>'``, parsed from the file's description), shared by the
+base file and its short and long cuts. ``occurrences`` lists where it was
+heard: ``(sequence, position, previous fragment, onset)``.
+
+``group_split(seed)`` keeps every source track in one set, at A1 and MGB
+alike (they share tracks). Tracks are drawn set by set, over the sets of
+tracks the cells heard, largest first, so the 7-track set heard by most A1
+cells gets val and test tracks. Seven Asari tracks also play inside Wehr
+files (both subsets used the same Cornell CDs); each takes the set of its
+Wehr group, so a model fitted to both cohorts never has that audio in
+training and test. At ``seed=0``:
+
+| Site | fragments train / val / test | cells with test data | cells with val data |
+|------|------------------------------|----------------------|---------------------|
+| A1   | 33 / 5 / 7                   | 38 / 39              | 35 / 39             |
+| MGB  | 18 / 2 / 6                   | 13 / 13              | 7 / 13              |
+
+```python
+ds = CRCNSAC1Dataset(experimenter="asari", sites="A1", dt_ms=5.0,
+                     asari_level="segment")
+split = ds.group_split(seed=0)
+```
 
 ## Reproducibility constants
 

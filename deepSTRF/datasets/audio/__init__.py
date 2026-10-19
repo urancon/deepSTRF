@@ -10,6 +10,8 @@ from .crcns_ac1 import (
     download_ac1,
     WEHR_VALID_NEURONS,
     WEHR_NEURONS_SPLIT_NATURAL,
+    WEHR_SHARED_AUDIO,
+    ASARI_EXCLUDED_SESSIONS,
 )
 from .espejo import (
     EspejoDataset,
@@ -29,7 +31,7 @@ __all__ = ['AudioNeuralDataset',
            'CRCNSAA4Dataset', 'AA4_ANIMAL_IDS',
            'CRCNSAA5Dataset', 'AA5_BIRDS', 'AA5_SITES', 'prepare_aa5', 'download_aa5',
            'CRCNSAC1Dataset', 'download_ac1',
-           'WEHR_VALID_NEURONS', 'WEHR_NEURONS_SPLIT_NATURAL',
+           'WEHR_VALID_NEURONS', 'WEHR_NEURONS_SPLIT_NATURAL', 'WEHR_SHARED_AUDIO', 'ASARI_EXCLUDED_SESSIONS',
            'EspejoDataset', 'download_espejo', 'download_espejo_nat_waveforms',
            'AliceEEGDataset', 'download_alice_eeg',
            'Le2025Dataset',

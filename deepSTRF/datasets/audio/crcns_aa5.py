@@ -165,7 +165,7 @@ class CRCNSAA5Dataset(AudioNeuralDataset):
                  sites: Optional[Sequence[str]] = None,
                  stimuli: Sequence[str] = STIM_CLASSES,
                  dt_ms: float = 5.0,
-                 smooth: bool = True,
+                 smooth: bool = False,
                  n_mels: int = 32,
                  compression: str = "cubic",
                  window_ms: float = 10.0,
@@ -194,9 +194,11 @@ class CRCNSAA5Dataset(AudioNeuralDataset):
         dt_ms : float, default 5.0
             Time-bin width in ms. Must divide the 5000 ms window. The default
             keeps the full release in ~0.8 GB of responses (1 ms: ~3.7 GB).
-        smooth : bool, default True
+        smooth : bool, default False
             Smooth each trial with a 21 ms Hanning window (Hsu, Borst &
             Theunissen 2004; same kernel as the other CRCNS-AA loaders).
+            Off by default: the window is centred, so a smoothed bin holds spikes
+            from up to ~10 ms later (the target is no longer strictly causal).
         n_mels, compression, window_ms
             Mel spectrogram: number of bands, compression (``'cubic'``,
             ``'log1p'`` or ``'none'``), analysis window length. Frames are

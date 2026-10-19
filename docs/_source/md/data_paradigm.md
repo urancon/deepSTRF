@@ -268,6 +268,11 @@ handling, eval-only metrics): see
    stim is `(1, T_audio)` with `T_audio = T_resp_s · hop` and integer
    `hop = audio_fs · dt_ms / 1000` (§3.4, conventions C1–C4). Enforced by
    `AudioNeuralDataset.validate()`.
+9. **Loaders do not smooth responses by default.** A `smooth` option may
+   exist (21-ms Hanning window, Hsu, Borst & Theunissen 2004), but it
+   defaults to `False`: the window is centred, so a smoothed bin holds
+   spikes from up to ~10 ms later, and the target is no longer strictly
+   causal. Binning at `dt_ms` is the only default temporal averaging.
 
 ## 8. Iteration honours the current selection (bidirectional)
 
@@ -423,6 +428,19 @@ ds.nrn_masks[42]            # which neurons have data for stim 42
 
 The selection filter applies only at the iteration interface (`__len__`,
 `__getitem__`).
+
+Split helpers (e.g. `Le2025Dataset.song_split`) return *absolute* stim
+indices, while `torch.utils.data.Subset` indexes the *iterable* stims.
+`stim_to_iter_indices` maps one to the other under the current selection,
+dropping stims that are not iterable:
+
+```python
+split = ds.song_split(seed=0)                          # absolute indices
+train = Subset(ds, ds.stim_to_iter_indices(split['train']))
+```
+
+Call it after the last selection change: iteration indices shift with the
+selection.
 
 ## 9. Gotchas
 

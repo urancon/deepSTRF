@@ -1,46 +1,32 @@
 """Tests for the raw-waveform branch of the Le 2025 dataset.
 
-Integration test — needs the unpacked figshare archive AND skips when the box
-has too little RAM: nat8b loads ~445 cells of response data and peaks near 14 GB,
-so we gate on MemAvailable to avoid OOM-killing the runner. The waveform-branch
-*core logic* (grid-lock + offset-0 + gammatone build) is validated memory-light in
-``untracked/meliza_wav_light.py``; this test exercises it through the real loader
-when the hardware allows.
+Integration test — needs the unpacked figshare archive. Loading nat8b in
+waveform mode peaks near 1.2 GB (measured 2026-10-14). The earlier ~14 GB peak,
+and the RAM gate that went with it, came from responses binned at the audio
+rate instead of ``dt_ms``, a bug fixed since.
 """
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 import torch
 
 
-def _mem_available_gb() -> float:
-    try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) / (1024 * 1024)
-    except OSError:
-        pass
-    return 0.0
-
-
 _LE2025_LOCAL = os.environ.get(
     "LE2025_DATA",
-    "/home/ulysse/Documents/NRFdatasets/Audio/ZF_Restore_Bao/zebf-auditory-restoration-1",
+    str(Path.home() / "Library/Caches/deepSTRF/Le_2025/zebf-auditory-restoration-1"),
 )
 _HAS_DATA = os.path.isdir(os.path.join(_LE2025_LOCAL, "nat8b-stimuli"))
 
 
 @pytest.mark.skipif(not _HAS_DATA,
                     reason=f"Le2025 data not at {_LE2025_LOCAL!r}; set $LE2025_DATA.")
-@pytest.mark.skipif(_mem_available_gb() < 18.0,
-                    reason="nat8b loads ~14 GB of responses; need >=18 GB free to avoid OOM.")
 def test_le_waveform_branch():
     """Le 2025's waveform branch hands out the 48 kHz source wavs grid-locked to
     the gammatone-gram frames (hop=240 at dt=5 ms, offset 0 — the wav is the full
-    stimulus). Skips unless the data is present and RAM is sufficient."""
+    stimulus). Skips unless the data is present."""
     from deepSTRF.datasets.audio.le_2025 import Le2025Dataset
 
     ds = Le2025Dataset(path=_LE2025_LOCAL, experiment="nat8b",
@@ -56,9 +42,17 @@ def test_le_waveform_branch():
             f"Le 2025 stim {s} must be (1, T_audio); got {tuple(stim.shape)}"
         assert stim.shape[-1] % ds.hop == 0
 
-    # the wav aligns from t=0 (no silence flank): sound energy starts immediately
+    # the wav aligns from t=0: the loaded waveform is the file itself from its first
+    # sample (no offset), zero-padded at the end. (Testing for sound in the first
+    # frame is wrong: 65/96 nat8b files are digitally silent for their first ~7 ms.)
+    import soundfile as sf
+    raw, sr = sf.read(os.path.join(_LE2025_LOCAL, "nat8b-stimuli",
+                                   ds.stim_meta[0]["name"] + ".wav"))
+    assert sr == ds.audio_fs
     w0 = ds.stims[0][0]
-    assert float((w0[:ds.hop] ** 2).sum()) > 0.0
+    n = min(len(raw), w0.shape[-1])
+    assert torch.allclose(w0[:n], torch.as_tensor(raw[:n], dtype=torch.float32))
+    assert float(w0[n:].abs().sum()) == 0.0
 
 
 @pytest.mark.skipif(not os.path.isdir(os.path.join(_LE2025_LOCAL, "synth8b-stimuli")),
@@ -66,8 +60,7 @@ def test_le_waveform_branch():
 def test_le_waveform_responses_binned_at_dt():
     """Regression: in waveform mode the responses were binned to the number of AUDIO
     samples (the per-stim length was read after the spectrograms were swapped for
-    waveforms), so validate() rejected every waveform dataset. synth8b is small enough
-    to run without the nat8b RAM gate."""
+    waveforms), so validate() rejected every waveform dataset."""
     from deepSTRF.datasets.audio.le_2025 import Le2025Dataset
 
     wav = Le2025Dataset(path=_LE2025_LOCAL, experiment="synth8b",

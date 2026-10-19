@@ -1,0 +1,458 @@
+{
+ "sources": {
+  "class1/1.mat": [
+   "diversity/03",
+   "Jaguar"
+  ],
+  "class1/4.mat": [
+   "diversity/27",
+   "Red Howler Monkey"
+  ],
+  "class1/5.mat": [
+   "diversity/51",
+   "Lion"
+  ],
+  "class2/1.mat": [
+   "diversity/11",
+   "Knudsen's Frog"
+  ],
+  "class2/10.mat": [
+   "neotropical-mammals-1/46",
+   "Mexican Hairy Porcupine"
+  ],
+  "class2/11.mat": [
+   "neotropical-mammals-1/54",
+   "Ecuadorian Bamboo Rat"
+  ],
+  "class2/2.mat": [
+   "diversity/12",
+   "Tungara Frog"
+  ],
+  "class2/2l.mat": [
+   "diversity/12",
+   "Tungara Frog"
+  ],
+  "class2/2s.mat": [
+   "diversity/12",
+   "Tungara Frog"
+  ],
+  "class3/1.mat": [
+   "diversity/08",
+   "Franquet's Epauletted Bat"
+  ],
+  "class3/10s.mat": [
+   "neotropical-mammals-1/38",
+   "Variegated Squirrel"
+  ],
+  "class3/6.mat": [
+   "diversity/46",
+   "Gray-necked Wood-Rail"
+  ],
+  "class3/6s.mat": [
+   "diversity/46",
+   "Gray-necked Wood-Rail"
+  ],
+  "class3/8.mat": [
+   "diversity/56",
+   "Common Loon (tremolo call)"
+  ],
+  "class3/8l.mat": [
+   "diversity/56",
+   "Common Loon (tremolo call)"
+  ],
+  "class4/1.mat": [
+   "diversity/04",
+   "Superb Lyrebird"
+  ],
+  "class4/10.mat": [
+   "neotropical-mammals-2/48",
+   "Yellow-tailed woolly monkey"
+  ],
+  "class4/10s.mat": [
+   "neotropical-mammals-2/48",
+   "Yellow-tailed woolly monkey"
+  ],
+  "class4/4.mat": [
+   "diversity/32",
+   "Common Nightingale"
+  ],
+  "class4/4s.mat": [
+   "diversity/32",
+   "Common Nightingale"
+  ],
+  "class4/5.mat": [
+   "diversity/36",
+   "Canyon Wren"
+  ],
+  "class4/5l.mat": [
+   "diversity/36",
+   "Canyon Wren"
+  ],
+  "class4/6.mat": [
+   "neotropical-mammals-1/10",
+   "Bush Dog"
+  ],
+  "class4/6s.mat": [
+   "neotropical-mammals-1/10",
+   "Bush Dog"
+  ],
+  "class4/7.mat": [
+   "neotropical-mammals-1/20",
+   "Jaguarundi"
+  ],
+  "class4/8.mat": [
+   "neotropical-mammals-1/22",
+   "Puma (Mountain Lion)"
+  ],
+  "class5/1.mat": [
+   "diversity/34",
+   "Winter Wren"
+  ],
+  "class5/1l.mat": [
+   "diversity/34",
+   "Winter Wren"
+  ],
+  "class5/2.mat": [
+   "neotropical-mammals-1/07",
+   "Greater Spear-nosed Bat"
+  ],
+  "class5/3.mat": [
+   "neotropical-mammals-1/30",
+   "Amazonian manatee"
+  ],
+  "class5/4.mat": [
+   "neotropical-mammals-1/40",
+   "Amazon Dwarf Squirrel"
+  ],
+  "class5/4l.mat": [
+   "neotropical-mammals-1/40",
+   "Amazon Dwarf Squirrel"
+  ],
+  "class5/4s.mat": [
+   "neotropical-mammals-1/40",
+   "Amazon Dwarf Squirrel"
+  ],
+  "class5/5.mat": [
+   "neotropical-mammals-2/07",
+   "Saddleback tamarin"
+  ],
+  "class5/6.mat": [
+   "neotropical-mammals-2/18",
+   "Golden lion tamarin"
+  ],
+  "class5/7.mat": [
+   "neotropical-mammals-2/20",
+   "Golden-rumped lion tamarin"
+  ],
+  "class6/1.mat": [
+   "diversity/25",
+   "Greater Sac-winged Bat"
+  ],
+  "class6/2.mat": [
+   "neotropical-mammals-1/06",
+   "White-lined Sac-winged Bat"
+  ],
+  "class6/3.mat": [
+   "neotropical-mammals-1/44",
+   "Alston's Pygmy Mouse"
+  ],
+  "class6/3l.mat": [
+   "neotropical-mammals-1/44",
+   "Alston's Pygmy Mouse"
+  ],
+  "class6/3s.mat": [
+   "neotropical-mammals-1/44",
+   "Alston's Pygmy Mouse"
+  ],
+  "class6/4.mat": [
+   "neotropical-mammals-2/01",
+   "Pygmy marmoset"
+  ],
+  "class6/4s.mat": [
+   "neotropical-mammals-2/01",
+   "Pygmy marmoset"
+  ],
+  "class6/5.mat": [
+   "neotropical-mammals-2/02",
+   "Silvery marmoset"
+  ],
+  "class6/6.mat": [
+   "neotropical-mammals-2/06",
+   "Buffy-headed marmoset"
+  ],
+  "class6/6l.mat": [
+   "neotropical-mammals-2/06",
+   "Buffy-headed marmoset"
+  ],
+  "class6/6s.mat": [
+   "neotropical-mammals-2/06",
+   "Buffy-headed marmoset"
+  ],
+  "class6/7.mat": [
+   "neotropical-mammals-2/12",
+   "Black-chested mustached tamarin"
+  ],
+  "class6/8.mat": [
+   "neotropical-mammals-2/15",
+   "Silvery-brown bare-face tamarin"
+  ]
+ },
+ "ensembles": [
+  [
+   22,
+   [
+    "diversity/12",
+    "diversity/34",
+    "diversity/36",
+    "diversity/56",
+    "neotropical-mammals-1/40",
+    "neotropical-mammals-1/44",
+    "neotropical-mammals-2/06"
+   ]
+  ],
+  [
+   4,
+   [
+    "diversity/34",
+    "neotropical-mammals-2/07",
+    "neotropical-mammals-2/18",
+    "neotropical-mammals-2/20"
+   ]
+  ],
+  [
+   3,
+   [
+    "diversity/03",
+    "diversity/11",
+    "diversity/34",
+    "diversity/36",
+    "diversity/56",
+    "neotropical-mammals-2/06"
+   ]
+  ],
+  [
+   3,
+   [
+    "diversity/25",
+    "neotropical-mammals-1/06",
+    "neotropical-mammals-1/44",
+    "neotropical-mammals-2/01"
+   ]
+  ],
+  [
+   3,
+   [
+    "diversity/34",
+    "neotropical-mammals-2/02",
+    "neotropical-mammals-2/06",
+    "neotropical-mammals-2/07",
+    "neotropical-mammals-2/12",
+    "neotropical-mammals-2/15",
+    "neotropical-mammals-2/18",
+    "neotropical-mammals-2/20"
+   ]
+  ],
+  [
+   3,
+   [
+    "neotropical-mammals-2/02",
+    "neotropical-mammals-2/06",
+    "neotropical-mammals-2/12",
+    "neotropical-mammals-2/15"
+   ]
+  ],
+  [
+   2,
+   [
+    "diversity/03",
+    "diversity/04",
+    "diversity/08",
+    "diversity/11",
+    "diversity/12",
+    "diversity/25",
+    "diversity/27",
+    "diversity/32",
+    "diversity/34",
+    "diversity/36",
+    "diversity/46",
+    "diversity/51",
+    "diversity/56",
+    "neotropical-mammals-1/40",
+    "neotropical-mammals-1/44",
+    "neotropical-mammals-1/46",
+    "neotropical-mammals-1/54",
+    "neotropical-mammals-2/06",
+    "neotropical-mammals-2/18"
+   ]
+  ],
+  [
+   2,
+   [
+    "diversity/25",
+    "neotropical-mammals-1/06",
+    "neotropical-mammals-1/44",
+    "neotropical-mammals-2/01",
+    "neotropical-mammals-2/02",
+    "neotropical-mammals-2/06",
+    "neotropical-mammals-2/12",
+    "neotropical-mammals-2/15"
+   ]
+  ],
+  [
+   2,
+   [
+    "neotropical-mammals-1/10",
+    "neotropical-mammals-1/40",
+    "neotropical-mammals-2/01",
+    "neotropical-mammals-2/06",
+    "neotropical-mammals-2/48"
+   ]
+  ],
+  [
+   1,
+   [
+    "diversity/03",
+    "diversity/11",
+    "diversity/34",
+    "diversity/36",
+    "diversity/56",
+    "neotropical-mammals-1/10",
+    "neotropical-mammals-1/20",
+    "neotropical-mammals-1/22",
+    "neotropical-mammals-1/40",
+    "neotropical-mammals-2/01",
+    "neotropical-mammals-2/06",
+    "neotropical-mammals-2/48"
+   ]
+  ],
+  [
+   1,
+   [
+    "diversity/03",
+    "diversity/11",
+    "diversity/34",
+    "diversity/36",
+    "diversity/56",
+    "neotropical-mammals-1/10",
+    "neotropical-mammals-1/40",
+    "neotropical-mammals-2/01",
+    "neotropical-mammals-2/06",
+    "neotropical-mammals-2/48"
+   ]
+  ],
+  [
+   1,
+   [
+    "diversity/12",
+    "diversity/25",
+    "diversity/34",
+    "diversity/36",
+    "diversity/56",
+    "neotropical-mammals-1/06",
+    "neotropical-mammals-1/40",
+    "neotropical-mammals-1/44",
+    "neotropical-mammals-2/01",
+    "neotropical-mammals-2/02",
+    "neotropical-mammals-2/06",
+    "neotropical-mammals-2/12",
+    "neotropical-mammals-2/15"
+   ]
+  ],
+  [
+   1,
+   [
+    "diversity/12",
+    "diversity/32",
+    "diversity/46",
+    "neotropical-mammals-1/10",
+    "neotropical-mammals-1/38",
+    "neotropical-mammals-1/40",
+    "neotropical-mammals-1/44",
+    "neotropical-mammals-2/01",
+    "neotropical-mammals-2/06",
+    "neotropical-mammals-2/48"
+   ]
+  ],
+  [
+   1,
+   [
+    "diversity/12",
+    "diversity/34",
+    "diversity/36",
+    "diversity/56",
+    "neotropical-mammals-1/07",
+    "neotropical-mammals-1/30",
+    "neotropical-mammals-1/40",
+    "neotropical-mammals-1/44",
+    "neotropical-mammals-2/06"
+   ]
+  ],
+  [
+   1,
+   [
+    "diversity/12",
+    "diversity/34",
+    "diversity/36",
+    "diversity/56",
+    "neotropical-mammals-1/10",
+    "neotropical-mammals-1/20",
+    "neotropical-mammals-1/22",
+    "neotropical-mammals-1/40",
+    "neotropical-mammals-1/44",
+    "neotropical-mammals-2/06"
+   ]
+  ],
+  [
+   1,
+   [
+    "diversity/12",
+    "diversity/34",
+    "diversity/36",
+    "diversity/56",
+    "neotropical-mammals-1/40",
+    "neotropical-mammals-1/44",
+    "neotropical-mammals-2/06",
+    "neotropical-mammals-2/15"
+   ]
+  ],
+  [
+   1,
+   [
+    "diversity/36",
+    "neotropical-mammals-1/10",
+    "neotropical-mammals-2/48"
+   ]
+  ],
+  [
+   1,
+   [
+    "neotropical-mammals-1/44",
+    "neotropical-mammals-2/06",
+    "neotropical-mammals-2/15"
+   ]
+  ]
+ ],
+ "wehr_links": {
+  "diversity/03": [
+   "wehr/fragments/1"
+  ],
+  "diversity/25": [
+   "wehr/fragments/15"
+  ],
+  "diversity/32": [
+   "wehr/fragments/16"
+  ],
+  "diversity/36": [
+   "wehr/fragments/18"
+  ],
+  "diversity/46": [
+   "wehr/category1/6"
+  ],
+  "neotropical-mammals-1/20": [
+   "wehr/fragments/6"
+  ],
+  "neotropical-mammals-1/46": [
+   "wehr/category2/1"
+  ]
+ }
+}

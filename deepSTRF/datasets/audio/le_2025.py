@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import csv
 import json
+import random
 import re
 import warnings
 from collections import defaultdict
@@ -74,6 +75,22 @@ except ImportError:  # pragma: no cover - exercised only when extra missing
 
 EXPERIMENTS: Tuple[str, ...] = ("nat8a", "nat8b", "synth8b")
 VARIANTS: Tuple[str, ...] = ("C", "G", "N", "GB", "CB", "GM", "CM")
+
+# The 8 natural songs (named after the singer, as in nat8a) and the familiarity
+# group each singer was housed in for cohort 1 (metadata/song-birds.csv). The
+# same songs reappear in nat8b under the ``nat8mkN`` names. Hard-coded so that
+# ``song_split`` draws over the full song set whatever the instance contains.
+NATURAL_SONG_GROUPS: Dict[str, str] = {
+    "B189": "178B", "B30": "178B", "B72": "178B", "O129": "178B",
+    "R56": "180B", "R180": "180B", "B2": "180B", "R253": "180B",
+}
+_NAT8B_TO_SONG: Dict[str, str] = {
+    "nat8mk0": "B189", "nat8mk1": "R56", "nat8mk2": "R180", "nat8mk3": "B30",
+    "nat8mk4": "B72", "nat8mk5": "B2", "nat8mk6": "O129", "nat8mk7": "R253",
+}
+# The 8 scrambled-syntax pseudo-motifs of synth8b. Their syllables come from 16
+# other birds (Margoliash lab), so they share no audio with the natural songs.
+SYNTH_MOTIFS: Tuple[str, ...] = tuple(f"synth8mk{i}" for i in range(8))
 
 # experiment → tuple of response subdirectories (in cohort order)
 _EXP_RESPONSE_DIRS: Dict[str, Tuple[str, ...]] = {
@@ -252,8 +269,9 @@ class Le2025Dataset(AudioNeuralDataset):
         Gammatone analysis-window width, in ms. Default 2.5, matching the
         paper. Hop is ``dt_ms``.
     smooth
-        If True (default), apply a 21 ms Hanning smoother to all PSTHs
-        (Hsu / Borst / Theunissen 2004).
+        If True, apply a 21 ms Hanning smoother to all PSTHs
+        (Hsu / Borst / Theunissen 2004). Off by default: the window is centred,
+        so a smoothed bin holds spikes from up to ~10 ms later.
     keep_areas
         Optional iterable of area strings to filter on (per the per-unit
         ``area`` metadata field; values vary by cohort).
@@ -273,6 +291,14 @@ class Le2025Dataset(AudioNeuralDataset):
     Stim-side metadata fields:
         - ``name``               : filename stem.
         - ``motif``              : e.g. ``"B189"`` (nat8a) or ``"nat8mk0"`` (nat8b).
+        - ``song_id``            : the song, named the same in every experiment
+                                   (``"R56"`` for both ``R56_*`` and
+                                   ``ep_nat8mk1_*``; the motif name for synth8b).
+                                   Split on this key, never on ``motif``
+                                   (:meth:`song_split` does).
+        - ``familiarity_group``  : ``"178B"`` | ``"180B"``, the group of singers
+                                   the song belongs to (cohort-1 familiarity
+                                   manipulation); ``None`` for synth8b.
         - ``critical_interval``  : ``int`` (1/2) for per-CI variants, ``None``
                                    for ``C`` and ``CM`` (CI-independent), or
                                    a string like ``"2a"`` for synth8b.
@@ -301,7 +327,7 @@ class Le2025Dataset(AudioNeuralDataset):
         fmin: float = _PAPER_FMIN_HZ,
         fmax: float = _PAPER_FMAX_HZ,
         window_ms: float = _PAPER_WINDOW_MS,
-        smooth: bool = True,
+        smooth: bool = False,
         keep_areas: Optional[Sequence[str]] = None,
         compute_reliability: bool = True,
         download: bool = False,
@@ -394,9 +420,12 @@ class Le2025Dataset(AudioNeuralDataset):
                 self.stims.append(self._load_stim_waveform(rec["wav_path"], spec.shape[-1]))
             else:
                 self.stims.append(spec)
+            song_id = _NAT8B_TO_SONG.get(rec["motif"], rec["motif"])
             self.stim_meta.append({
                 "name":              rec["name"],
                 "motif":             rec["motif"],
+                "song_id":           song_id,
+                "familiarity_group": NATURAL_SONG_GROUPS.get(song_id),
                 "critical_interval": rec["critical_interval"],
                 "variant":           rec["variant"],
                 "syntax":            "scrambled" if experiment == "synth8b" else "natural",
@@ -869,6 +898,64 @@ class Le2025Dataset(AudioNeuralDataset):
     # -----------------------------------------------------------------------
     # Convenience selectors for the restoration paradigm
     # -----------------------------------------------------------------------
+
+    def song_split(self, seed: Optional[int] = None) -> Dict[str, List[int]]:
+        """Split the stimuli into train / val / test by song (6 / 1 / 1).
+
+        Every variant of a song goes to the same set, so no test song is heard
+        in training through another variant (the variants of one song share
+        most of their audio). Songs are identified across experiments
+        (``song_id``): nat8a ``R56`` and nat8b ``nat8mk1`` are the same song and
+        always land in the same set, so a concatenation of nat8a, nat8b and
+        synth8b is split consistently.
+
+        Rules:
+
+        - natural songs: 6 train / 1 val / 1 test; the val and test songs come
+          from different familiarity groups (``"178B"``, ``"180B"``), and
+          which group gives the test song is part of the draw;
+        - synth8b pseudo-motifs: 6 train / 1 val / 1 test;
+        - the isolated noise burst (variant ``N``) always goes to train. It
+          contains no song, and in nat8b and synth8b it is the same frozen
+          noise token for every song.
+
+        Each experiment contains every song, so every unit has train, val and
+        test stimuli. The draw is over the full lists of 8 natural songs and 8
+        pseudo-motifs, not over the stimuli of this instance, so a given
+        ``seed`` picks the same songs whichever experiments are loaded.
+
+        With one test song per stimulus set, scores restricted to one
+        experiment depend on which song is drawn (about +/- 0.05 cc_norm);
+        report pooled scores, or average over several seeds.
+
+        Parameters
+        ----------
+        seed : int, optional
+            Seed of the draw. ``None`` draws a new random split at each call.
+
+        Returns
+        -------
+        dict
+            ``{'train': [...], 'val': [...], 'test': [...]}``: absolute stimulus
+            indices (into ``stim_meta``), whatever the current selection. Use
+            :meth:`stim_to_iter_indices` to build a ``torch.utils.data.Subset``.
+        """
+        rng = random.Random(seed)
+        song_set: Dict[str, str] = {s: "train" for s in (*NATURAL_SONG_GROUPS, *SYNTH_MOTIFS)}
+        groups = sorted(set(NATURAL_SONG_GROUPS.values()))
+        rng.shuffle(groups)
+        for group, key in zip(groups, ("test", "val")):
+            songs = sorted(s for s, g in NATURAL_SONG_GROUPS.items() if g == group)
+            song_set[rng.choice(songs)] = key
+        synth = list(SYNTH_MOTIFS)
+        rng.shuffle(synth)
+        song_set[synth[0]], song_set[synth[1]] = "test", "val"
+
+        split: Dict[str, List[int]] = {"train": [], "val": [], "test": []}
+        for i, m in enumerate(self.stim_meta):
+            key = "train" if m["variant"] == "N" else song_set[m["song_id"]]
+            split[key].append(i)
+        return split
 
     def select_variant(self, variant: str) -> List[int]:
         """Restrict iteration to one variant code, e.g. ``'GB'``."""

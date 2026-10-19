@@ -1,6 +1,8 @@
+import json
 import os
+import random
 import re
-from typing import Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import h5py
 import numpy as np
@@ -42,6 +44,48 @@ _AA4_SUBSORT_RE = re.compile(r"_ss(\d+)$")
 # Some cells in the data have a typo'd sortType ("singl" instead of "single").
 # Normalise so downstream filters don't have to care.
 _AA4_SORTTYPE_FIXES = {"singl": "single"}
+
+
+# Stimulus identity table, computed once from the audio of the whole corpus (the CRCNS release
+# is fixed). The md5 of a wav cannot be trusted as the identity of a sound: the 20 songs and 10
+# ripple noises played to every bird were saved in three slightly different copies (one shared
+# by four birds, LblBlu2028M's copy with ~420 samples changed at the onset, WhiBlu5396M's copy
+# re-quantised), and 3 calls in two. And call stimuli are 2.5-s bouts of three renditions drawn
+# from a pool per caller and call type, so different bouts can contain the same rendition.
+# Entry per md5: [canonical md5, overlap group id, stim type, caller, call type, identity id].
+#   - canonical: the copy that duplicates of the same sound are merged into (same length and
+#     log-mel r > 0.999 on the louder half of the bins; the copy heard by most birds);
+#   - overlap group: stimuli sharing any identical audio, the duplicates included. Renditions
+#     are separated by digital silence and a reused rendition is bit-identical, so each
+#     stimulus is cut into events at its silences and every event is slid along every other
+#     stimulus: linked at waveform r > 0.9, or, for WhiBlu5396M's re-quantised quiet calls,
+#     at log-mel r > 0.999 at the best waveform lag. Different recordings of one caller's
+#     stereotyped call stay below waveform r 0.4. 594 md5s -> 539 sounds -> 224 groups (at
+#     most 18 stimuli); no group mixes stimulus types or callers.
+#   - caller / call type: from the original wav name. Calls 'Caller_[XYZ_]Ty_<renditions>'
+#     -> (Caller, Ty); named songs -> (singer, 'So'); the 20 'STRFxx0000' songs (singer not
+#     given) -> (None, 'So'); ripple noises -> (None, 'Ri').
+#   - identity: what is held out together by group_split(holdout='caller_type'). Union of the
+#     overlap group, the caller x call type (songs: singer), the bird's-own / tutor / brother
+#     song trio (learned copies of one song), and the two call pairs of different callers with
+#     whole-call log-mel r > 0.90 (Th WhiWhi1415 ~ WhiGra0114, LT LblBlu1630 ~ LblBlu2028; all
+#     other cross-caller pairs stay <= 0.90). A zebra finch has its own version of each call
+#     type (Elie & Theunissen 2018, Nat Commun 9:4026): 15% of the acoustic variance of the
+#     call stimuli lies within a caller x call type, 43% between callers of a type and 42%
+#     between call types. 539 sounds -> 136 identities.
+_STIM_GROUPS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 '_crcns_aa4_stim_groups.json')
+_STIM_GROUPS: Optional[Dict[str, Tuple[str, str, str, Optional[str], str, str]]] = None
+
+
+def aa4_stim_groups() -> Dict[str, Tuple[str, str, str, Optional[str], str, str]]:
+    """``{md5: (canonical md5, overlap group id, stim type, caller, call type, identity id)}``
+    for every AA4 stimulus wav (caller is None for the ripples and the 20 unnamed songs)."""
+    global _STIM_GROUPS
+    if _STIM_GROUPS is None:
+        with open(_STIM_GROUPS_FILE) as f:
+            _STIM_GROUPS = {k: tuple(v) for k, v in json.load(f).items()}
+    return _STIM_GROUPS
 
 
 AA4_ANIMAL_IDS = ('BlaBro09xxF', 'GreBlu9508M', 'LblBlu2028M', 'WhiBlu5396M', 'WhiWhi4522M', 'YelBlu6903F')
@@ -118,8 +162,17 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
     - ``stims`` are mel-spectrograms ``(1, F, T_s)``.
     - ``stim_meta`` dicts hold ``name`` (the stimulus md5 — the canonical
       identifier, since the wav filename is per-animal and not unique across
-      the corpus), ``type``, ``class`` and ``duration_s`` (the
-      ``stim_duration`` attr from the h5, in seconds).
+      the corpus), ``type``, ``class``, ``duration_s`` (the
+      ``stim_duration`` attr from the h5, in seconds), ``md5s`` (the md5s of
+      every wav merged into this stimulus, see ``merge_duplicates``) and
+      ``overlap_group`` (stimuli that share any audio carry the same id),
+      ``caller`` (the bird that produced a call or song; ``None`` for the
+      ripples and the 20 songs whose singer is not given), ``call_type``
+      (``'Ag'``, ``'Be'``, ``'DC'``, ``'Di'``, ``'LT'``, ``'Ne'``, ``'Te'``,
+      ``'Th'``, ``'Wh'``; ``'So'`` for songs, ``'Ri'`` for ripples) and
+      ``identity`` (one caller's call type, merged with any stimulus it shares
+      audio with). :meth:`group_split` splits by these keys; they are there to
+      build any other split too.
     - ``nrn_meta`` dicts hold: ``cell_id`` (h5 basename, no extension),
       ``animal_id``, ``sex`` (``'M'`` / ``'F'``), ``site`` (e.g. ``"Site1"``),
       ``electrode`` (int 1-32, channel index across both 16-channel arrays at
@@ -148,9 +201,10 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
 
     def __init__(self, path: Optional[str] = None, animals='all',
                  stimuli=('song', 'call', 'mlnoise'),
-                 dt_ms=1.0, smooth=True, n_mels=32, compression='cubic',
+                 dt_ms=1.0, smooth=False, n_mels=32, compression='cubic',
                  window_ms: float = 10.0,
                  return_waveform: bool = False, audio_fs: int = 24000,
+                 merge_duplicates: bool = True,
                  download: bool = False,
                  username: Optional[str] = None,
                  password: Optional[str] = None):
@@ -169,9 +223,10 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
             Stimulus types to keep; subset of {'song', 'call', 'mlnoise'}.
         dt_ms : float
             Time-bin width in ms.
-        smooth : bool
+        smooth : bool, default False
             If True, smooth PSTHs in place with a 21 ms Hanning window
-            (Hsu, Borst & Theunissen 2004).
+            (Hsu, Borst & Theunissen 2004). Off by default: the window is centred, so a smoothed bin holds spikes
+            from up to ~10 ms later (the target is no longer strictly causal).
         n_mels : int
             Number of mel frequency bands of the stimulus spectrogram.
         compression : {'cubic', 'log1p', 'none'}
@@ -201,6 +256,16 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
             native spec's 0.983 ms). Other values must keep
             ``audio_fs * dt_ms / 1000`` an integer. Ignored unless
             ``return_waveform=True``.
+        merge_duplicates : bool, default True
+            If True, wav files that hold the same sound are merged into one
+            stimulus: the songs and ripple noises played to every bird exist in
+            up to three copies with different md5s (differences ~50 dB below the
+            signal), and 3 calls in two. Each bird heard only one copy, so the
+            neurons of all birds share the merged stimulus (539 stimuli instead
+            of 594). The audio is the copy heard by most birds among the loaded
+            ones. ``name`` is the canonical md5 and ``md5s`` lists the merged
+            ones. If False, every md5 is its own stimulus (the previous
+            behaviour); duplicates then still share an ``overlap_group``.
         download : bool, default False
             If True and an animal's data is missing under ``path``, fetch
             its tarball (~hundreds of MB per animal) from the CRCNS download server
@@ -311,6 +376,9 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
         stim_meta_map = {}   # md5 -> {"name", "type", "class"}
         stim_spec_map = {}   # md5 -> spectrogram tensor (1, F, T)
         stim_wav_map = {}    # md5 -> waveform tensor (1, T_audio)  [waveform mode]
+        src_rank = {}        # md5 -> rank of the copy whose audio is stored (0 = canonical)
+        groups = aa4_stim_groups()
+        self.merge_duplicates = bool(merge_duplicates)
 
         # per-neuron accumulator
         units_data = []  # list of dicts: {'meta': nrn_meta_dict, 'responses': {md5: (R, T) tensor}}
@@ -362,25 +430,39 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
                             stim_class = _decode_attr(stim_grp.attrs.get('stim_class', b''))
                             stim_dur_s = float(stim_grp.attrs.get('stim_duration', np.nan))
 
-                            # register unique stimulus on first encounter
-                            if stim_md5 not in stim_meta_map:
-                                spec = wav_specs_by_animal[animal].get(f'stim{stim_key}')
-                                if spec is None:
-                                    # wav missing for this animal — skip the stim altogether
-                                    continue
-                                stim_uids.append(stim_md5)
-                                stim_meta_map[stim_md5] = {
-                                    'name': stim_md5,
+                            spec = wav_specs_by_animal[animal].get(f'stim{stim_key}')
+                            if spec is None:
+                                # wav missing for this animal — skip the stim altogether
+                                continue
+                            canon, group, _, caller, call_type, ident = groups.get(
+                                stim_md5, (stim_md5, stim_md5, stim_type, None, None, stim_md5))
+                            uid = canon if merge_duplicates else stim_md5
+                            # Rank of this copy as the audio of the merged stimulus: the
+                            # canonical one, then any copy but WhiBlu5396M's re-quantised one.
+                            rank = 0 if stim_md5 == canon else 2 if animal == 'WhiBlu5396M' else 1
+                            if uid not in stim_meta_map:
+                                stim_uids.append(uid)
+                                stim_meta_map[uid] = {
+                                    'name': uid,
                                     'type': stim_type,
                                     'class': stim_class,
                                     'duration_s': stim_dur_s,
+                                    'md5s': [],
+                                    'overlap_group': group,
+                                    'caller': caller,
+                                    'call_type': call_type,
+                                    'identity': ident,
                                 }
-                                stim_spec_map[stim_md5] = spec
+                            meta = stim_meta_map[uid]
+                            if stim_md5 not in meta['md5s']:
+                                meta['md5s'] = sorted(meta['md5s'] + [stim_md5])
+                            if uid not in stim_spec_map or rank < src_rank[uid]:
+                                src_rank[uid] = rank
+                                stim_spec_map[uid] = spec
                                 if return_waveform:
-                                    stim_wav_map[stim_md5] = \
-                                        wav_audio_by_animal[animal].get(f'stim{stim_key}')
+                                    stim_wav_map[uid] = wav_audio_by_animal[animal].get(f'stim{stim_key}')
 
-                            T_stim = stim_spec_map[stim_md5].shape[-1]
+                            T_stim = stim_spec_map[uid].shape[-1]
 
                             # bin spike times (in seconds in h5) into (R, T_stim)
                             trial_tensors = []
@@ -409,7 +491,9 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
                             if torch.all(counts == 0):
                                 continue
 
-                            responses[stim_md5] = counts
+                            # one copy per bird, so a unit never has two trial sets for one sound
+                            assert uid not in responses, (cell_id, uid)
+                            responses[uid] = counts
 
                     if responses:
                         units_data.append({'meta': nrn_meta, 'responses': responses})
@@ -442,3 +526,111 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
         # self.nrn_masks is a derived @property on the base class — no need
         # to populate it here
         self.validate()
+
+    _HOLDOUTS = ('caller_type', 'caller', 'call_type', 'audio')
+
+    def group_split(self, seed: Optional[int] = None,
+                    fractions: Sequence[float] = (0.7, 0.1, 0.2),
+                    holdout: str = 'caller_type') -> Dict[str, List[int]]:
+        """Split the stimuli into train / val / test, keeping related sounds together.
+
+        Stimuli that share any audio (copies of one song or ripple noise, call
+        bouts that contain the same recorded call) always land in the same set,
+        whatever ``holdout``. ``holdout`` says what else a val or test stimulus
+        must be new in:
+
+        - ``'caller_type'`` (default): a call type of a caller never heard in
+          training (all of one bird's begging calls, say, go to one set; the
+          bird can be in training with its other call types). Songs: all songs
+          of one singer go to one set. Units = ``identity``. Every call type is
+          drawn separately, so each set gets about ``fractions`` of each call
+          type, of the songs and of the ripples. With few callers a call type
+          can miss a set: LT, Th and Wh have no val stimuli at ``seed=0``.
+        - ``'caller'``: a bird never heard in training, in any of its calls and
+          songs. Units = identities merged per caller.
+        - ``'call_type'``: a call type never heard in training: all calls of a
+          type go to one set (9 call types, so the shares are coarse). Songs and
+          ripples are split as under ``'caller_type'``.
+        - ``'audio'``: only shared audio is kept together (``overlap_group``);
+          other calls of the same bird and call type can be in train and test.
+          Drawn per stimulus type (song, call, mlnoise).
+
+        Each unit goes, in a shuffled order, to the set furthest below its
+        target share of that stratum's stimuli. The draw is over the whole AA4
+        corpus (the stimulus table shipped with the loader), not over the
+        stimuli of this instance: a given ``seed`` and ``holdout`` put a sound
+        in the same set whichever birds or stimulus types are loaded. For
+        other splits (e.g. new callers AND new call types), use the
+        ``caller``, ``call_type``, ``identity`` and ``overlap_group`` keys of
+        ``stim_meta``, or intersect two of these splits.
+
+        Parameters
+        ----------
+        seed : int, optional
+            Seed of the draw. ``None`` draws a new random split at each call.
+        fractions : sequence of 3 floats, default (0.7, 0.1, 0.2)
+            Target train / val / test shares, in stimuli (after merging
+            duplicates).
+        holdout : {'caller_type', 'caller', 'call_type', 'audio'}
+            What a val / test stimulus is new in (see above).
+
+        Returns
+        -------
+        dict
+            ``{'train': [...], 'val': [...], 'test': [...]}``: absolute stimulus
+            indices (into ``stim_meta``), whatever the current selection. Use
+            :meth:`stim_to_iter_indices` to build a ``torch.utils.data.Subset``.
+        """
+        if len(fractions) != 3 or abs(sum(fractions) - 1.0) > 1e-6:
+            raise ValueError(f"fractions must be 3 shares summing to 1, got {fractions}")
+        if holdout not in self._HOLDOUTS:
+            raise ValueError(f"holdout must be one of {self._HOLDOUTS}, got {holdout!r}")
+        keys = ("train", "val", "test")
+        table = aa4_stim_groups()
+        # union-find over the corpus: md5 -> unit
+        parent: Dict[str, str] = {}
+
+        def find(x):
+            parent.setdefault(x, x)
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a, b):
+            parent[find(a)] = find(b)
+
+        for md5, (canon, group, stim_type, caller, call_type, ident) in table.items():
+            union(md5, 'g' + group)
+            if holdout != 'audio':
+                union(md5, 'i' + ident)
+            if holdout == 'caller' and caller is not None:
+                union(md5, 'c' + caller)
+            if holdout == 'call_type' and stim_type == 'call':
+                union(md5, 't' + call_type)
+        sounds: Dict[str, set] = {}          # unit -> canonical md5s
+        types: Dict[str, set] = {}           # unit -> stim types, or call types
+        first: Dict[str, str] = {}           # unit -> smallest overlap group id (draw order)
+        for md5, (canon, group, stim_type, caller, call_type, ident) in table.items():
+            u = find(md5)
+            sounds.setdefault(u, set()).add(canon)
+            types.setdefault(u, set()).add(call_type if holdout == 'caller_type' else stim_type)
+            first[u] = min(first.get(u, group), group)
+        # stratum: the call type ('caller_type'), else the stimulus type; a bird with calls
+        # and songs ('caller') is drawn with the calls
+        stratum = {u: 'call' if 'call' in t else min(t) for u, t in types.items()}
+        rng = random.Random(seed)
+        assign: Dict[str, str] = {}
+        for st in sorted(set(stratum.values())):
+            us = sorted((u for u, x in stratum.items() if x == st), key=first.get)
+            rng.shuffle(us)
+            total = sum(len(sounds[u]) for u in us)
+            count = dict.fromkeys(keys, 0)
+            for u in us:
+                k = max(keys, key=lambda k: fractions[keys.index(k)] * total - count[k])
+                assign[u] = k
+                count[k] += len(sounds[u])
+        split: Dict[str, List[int]] = {k: [] for k in keys}
+        for i, m in enumerate(self.stim_meta):
+            split[assign[find(m["name"])] if m["name"] in table else "train"].append(i)
+        return split

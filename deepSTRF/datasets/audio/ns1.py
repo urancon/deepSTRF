@@ -185,7 +185,7 @@ class NS1Dataset(AudioNeuralDataset):
     """
 
     def __init__(self, path: Optional[str] = None, dt_ms: float = 5.0,
-                 smooth: bool = True, download: bool = False,
+                 smooth: bool = False, download: bool = False,
                  return_waveform: bool = False, audio_fs: int = 48000):
         """
         Parameters
@@ -199,9 +199,10 @@ class NS1Dataset(AudioNeuralDataset):
             Time-bin width in ms. Must equal 5.0 — the bundled spectrogram is
             precomputed at this resolution. Other values would require
             re-spectrogramming the wavs (not implemented).
-        smooth : bool, default True
+        smooth : bool, default False
             If True, smooth PSTHs in place with a 21 ms Hanning window
-            (Hsu, Borst & Theunissen 2004).
+            (Hsu, Borst & Theunissen 2004). Off by default: the window is centred, so a smoothed bin holds spikes
+            from up to ~10 ms later (the target is no longer strictly causal).
         download : bool, default False
             If True and the data assets are missing under ``path``, fetch
             them from their public sources (no account required) — OSF

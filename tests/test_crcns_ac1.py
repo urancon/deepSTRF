@@ -163,11 +163,17 @@ def test_detect_spikes_defaults_and_nonnegative():
     sf = 10000.0
     x = 0.05 * np.random.randn(int(sf))          # 1 s of small noise
     x[5000:5010] += 8.0                           # one sharp ~1 ms spike at 0.5 s
-    psth = detect_spikes_psth(x, sf)
-    assert (psth >= 0).all()                      # spike rate is non-negative
-    # the smoothed rate should peak near the injected spike (within 30 ms)
-    peak_t = psth.argmax() / sf
-    assert abs(peak_t - 0.5) < 0.03
+    rate = detect_spikes_psth(x, sf)
+    assert (rate >= 0).all()                      # spike rate is non-negative
+    # unsmoothed: one spike, at the injected spike's onset
+    assert rate.sum() == 1 and abs(rate.argmax() / sf - 0.5) < 0.002
+    # a second crossing within the 1-ms refractory period is not a new spike
+    y = 0.05 * np.random.randn(int(sf)); y[5000:5003] += 8.0; y[5006:5009] += 8.0
+    assert detect_spikes_psth(y, sf).sum() == 1
+    assert detect_spikes_psth(y, sf, refractory_ms=0.0).sum() == 2
+    # smoothed (opt-in): same spike count, spread around the spike
+    smooth = detect_spikes_psth(x, sf, smooth_ms=21.0)
+    assert abs(smooth.sum() - 1) < 1e-6 and abs(smooth.argmax() / sf - 0.5) < 0.012
 
 
 # ============================================================
