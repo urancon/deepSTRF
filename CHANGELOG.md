@@ -99,6 +99,12 @@ While the version is `0.x`, the public API may still change between minor releas
   removed cells while iterating over them and skipped the next one, so it
   kept cells that never heard the requested class (119 of 355 with
   `stimuli=('songrip',)`).
+- **CRCNS-AA4 silent trials.** The loader dropped every trial without a
+  spike after stimulus onset (8.5% of trials; in the h5 files often a lone
+  `-999` sentinel) and turned a unit that heard a sound but never fired into
+  a NaN "not heard" slot. Silent trials and silent responses are now kept as
+  zeros: repeats per unit and stimulus are back to the recorded 9-12 (down
+  to 1 before), and PSTHs, SNR and CCmax lose their upward bias.
 - **CRCNS auto-download** (`download=True` for CRCNS AA1, AA2, AA4, AC1, and
   the new AA5): CRCNS moved its data to AWS in June 2026 and the old NERSC
   portal no longer serves the files. `crcns_download` now logs in to

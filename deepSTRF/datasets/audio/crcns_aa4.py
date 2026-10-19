@@ -468,9 +468,10 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
                             trial_tensors = []
                             for trial_key in sorted(_get_subgroups(stim_grp)):
                                 raw_times = stim_grp[trial_key]['spike_times'][()]
-                                raw_times = raw_times[raw_times >= 0]    # post-onset only
-                                if raw_times.size == 0:
-                                    continue
+                                # post-onset only. A trial with no spike after onset (in the h5
+                                # often a lone -999 sentinel) is a real silent trial: it is kept
+                                # as zeros, so it lowers the PSTH and counts as a repeat.
+                                raw_times = raw_times[raw_times >= 0]
                                 times_ms = (raw_times * 1000.0).tolist()
                                 trial_tensors.append(time_binning(times_ms, dt_ms=self.dt))
                             if not trial_tensors:
@@ -486,10 +487,9 @@ class CRCNSAA4Dataset(AudioNeuralDataset):
                                 elif t.shape[-1] > T_stim:
                                     t = t[..., :T_stim]
                                 aligned.append(t)
-                            counts = torch.stack(aligned, dim=0)    # (R, T_stim)
-
-                            if torch.all(counts == 0):
-                                continue
+                            # (R, T_stim); all zeros = the unit heard the sound and stayed
+                            # silent, which is data (not a missing "not heard" slot)
+                            counts = torch.stack(aligned, dim=0)
 
                             # one copy per bird, so a unit never has two trial sets for one sound
                             assert uid not in responses, (cell_id, uid)
