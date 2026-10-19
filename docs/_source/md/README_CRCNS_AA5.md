@@ -55,16 +55,19 @@ chronic 16-channel arrays recorded from their auditory pallium for ~4 weeks.
   **unit by unit**, so the number of repeats varies per (stim, unit): the
   median is 3, and 5–95% range from 1 to 8.
 
-| **Bird** | **Sex** | **#sites** | **#units with data** |
-|:--------:|:-------:|:----------:|:--------------------:|
-| **ZF4F** |    F    |     14     |         224          |
-| **ZF5M** |    M    |     17     |  *not yet counted*   |
-| **ZF6M** |    M    |      9     |         161          |
-| **ZF7F** |    F    |     10     |  38 (in 4 of 10 sites) |
+| **Bird** | **Sex** | **#sites** | **#units with data** | **spike_snr > 5** | **good units** |
+|:--------:|:-------:|:----------:|:--------------------:|:-----------------:|:--------------:|
+| **ZF4F** |    F    |     14     |         224          |        156        |      121       |
+| **ZF5M** |    M    |     17     |         307          |        181        |       84       |
+| **ZF6M** |    M    |      9     |         161          |         64        |       38       |
+| **ZF7F** |    F    |     10     |         146          |         70        |       47       |
+| **Total**|         |     50     |       **838**        |      **471**      |    **290**     |
 
 A "site" is one recording location (microdrive depth + date), and all its
 units were recorded simultaneously. The release has 50 sites in total
-(~163 GB).
+(~163 GB). "Good units" are those kept by `ds.select_good_units()`
+(`spike_snr > 5` and `reliability > 0.1`, at the default `dt_ms=5`; see
+[Selecting good units](#selecting-good-units)).
 
 ## Setup
 
@@ -189,21 +192,36 @@ Each `nrn_meta` dict carries:
 | `spike_snr` | the authors' spike-waveform SNR; the paper uses > 5 for candidate single units |
 | `rate_threshold`, `kde_bw` | the authors' motion-artifact exclusion parameters |
 | `auditory_z` | mean / SD, over all the unit's trials, of the firing-rate change 0–500 ms after vs. 500–0 ms before onset: the effect size behind the paper's "auditory" test, recomputed here (negative = inhibited by sound) |
+| `reliability` | split-half reliability of the responses during the sounds (each stimulus from sound onset to 100 ms after its offset, all loaded stimuli): correlation between the PSTHs of the odd and of the even trials, Spearman–Brown corrected. Always computed on responses smoothed with the 21-ms Hanning window, whatever `smooth` is; depends on `dt_ms` |
 | `n_trials` | number of trials loaded for the unit |
 | `spike_shape`, `spike_std` | mean spike waveform and its SD (40 samples) |
 
-`spike_snr` measures **spike-sorting quality** and is unrelated to the
-response `snr` / `ccmax` that `ds.compute_neuron_quality()` adds to
-`nrn_meta`. For example:
+### Selecting good units
+
+`spike_snr` measures **spike-sorting quality** only: it says nothing about
+whether a unit responds to sound. Many well-isolated units barely do, notably
+in ZF5M. `reliability` measures how much of a unit's response repeats from
+trial to trial, which bounds what any model can predict. On the full release,
+it predicts a StateNet's held-out correlation per unit much better than the
+alternatives (Spearman 0.80, vs 0.69 for `auditory_z`, 0.00 for `spike_snr`;
+reliability computed on training stimuli only for that check; this check
+and the correlations below were measured with an earlier version of the
+smoothing kernel, which selected 249 units instead of 290).
+
+The recommended selection is one call:
 
 ```python
-ds.compute_neuron_quality()                                   # ~3 min on everything
-ds.select_pop_by_nrn_predicate(lambda n: n["spike_snr"] > 5 and n["snr"] > 0.1)
+ds.select_good_units()                      # spike_snr > 5 and reliability > 0.1 -> 290 units
+ds.select_good_units(min_reliability=0.2)   # stricter: 178 units
 ```
 
-Response SNRs are low overall in this dataset (median ≈ 0.02 over the
-5 s window, which is mostly silence). `auditory_z` is a fast proxy that
-tracks them well.
+The units it drops are essentially unpredictable (median held-out correlation
+0.04, vs 0.24 for the kept ones).
+
+The response `snr` / `ccmax` that `ds.compute_neuron_quality()` adds to
+`nrn_meta` are computed over the whole 5 s window, which is mostly silence,
+so they come out very low here (median SNR ≈ 0.02) and are not a good
+selection criterion for this dataset.
 
 See the **[aa5_inspection notebook](../ipynb/aa5_inspection.ipynb)** for a
 visual tour of the dataset.

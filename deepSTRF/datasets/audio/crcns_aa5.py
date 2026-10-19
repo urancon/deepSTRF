@@ -67,6 +67,32 @@ CALL_TYPES = {
 }
 
 
+RELIABILITY_TAIL_S = 0.1     # sound window for `reliability` = sound onset -> offset + 100 ms
+
+
+def split_half_reliability(segments: Sequence[torch.Tensor]) -> float:
+    """Spearman-Brown corrected split-half reliability of a unit's responses.
+
+    ``segments`` are ``(R, T_k)`` response tensors (one per stimulus, any
+    lengths). Stimuli with fewer than 2 trials are ignored. The PSTHs of the
+    odd and of the even trials are concatenated across stimuli and
+    correlated (Pearson r), then corrected to full length: ``2r / (1 + r)``.
+    Returns NaN when no stimulus has 2 trials or a half is constant.
+    """
+    odd, even = [], []
+    for r in segments:
+        if r.shape[0] >= 2:
+            odd.append(r[0::2].float().mean(0))
+            even.append(r[1::2].float().mean(0))
+    if not odd:
+        return float("nan")
+    a, b = torch.cat(odd), torch.cat(even)
+    if a.std() == 0 or b.std() == 0:
+        return float("nan")
+    rh = float(torch.corrcoef(torch.stack([a, b]))[0, 1])
+    return 2 * rh / (1 + rh) if rh > -1 else float("nan")
+
+
 def _stim_info(name: str) -> dict:
     """Parse a stimulus file name into its ``stim_meta`` fields."""
     info = dict(name=name, stim_class=None, call_type=None, vocalizer=None,
@@ -154,9 +180,24 @@ class CRCNSAA5Dataset(AudioNeuralDataset):
     (authors' artifact-exclusion parameters), ``auditory_z`` (mean / SD over
     all the unit's trials of the firing-rate change 0-500 ms after vs
     500-0 ms before onset — the effect size behind the paper's "auditory"
-    t-test, recomputed here; negative = inhibited by sound), ``n_trials``,
+    t-test, recomputed here; negative = inhibited by sound),
+    ``reliability`` (split-half reliability of the responses during the
+    sounds — each stimulus from sound onset to 100 ms after its offset, over
+    all loaded stimuli; see :func:`split_half_reliability`), ``n_trials``,
     ``spike_shape`` / ``spike_std`` (mean spike waveform, 40 samples).
     No per-unit brain-area label is released.
+
+    **Selecting good units.** ``spike_snr`` measures spike-sorting quality
+    only, not whether a unit responds to sound. ``reliability`` measures how
+    much of the response repeats from trial to trial, i.e. how much any model
+    can predict: on the full release it predicts a StateNet's held-out
+    correlation per unit far better (Spearman 0.80) than ``spike_snr``
+    (0.00) or ``auditory_z`` (0.69), as measured with an earlier smoothing
+    kernel. :meth:`select_good_units` applies the
+    recommended selection, ``spike_snr > 5`` and ``reliability > 0.1``.
+    ``reliability`` is always computed on responses smoothed with the 21-ms
+    Hanning window, whatever ``smooth`` is, so the selection does not change
+    with how the targets are loaded; it still depends on ``dt_ms``.
     """
 
     def __init__(self,
@@ -367,6 +408,21 @@ class CRCNSAA5Dataset(AudioNeuralDataset):
                            for n in range(self.N_neurons)] for s in range(len(self.stims))]
         self.trial_ids = [[columns[n][s][1] if s in columns[n] else []
                            for n in range(self.N_neurons)] for s in range(len(self.stims))]
+
+        # split-half reliability over the sound windows (see class docstring),
+        # always on 21-ms smoothed responses so that it does not depend on `smooth`
+        def smoothed(r):
+            return r if smooth else hanning_smooth(r, window_ms=21.0, dt_ms=dt_ms)
+
+        windows = []
+        for meta in self.stim_meta:
+            a = self.onset_bin + int(round(meta["sound_onset_s"] * 1000.0 / dt_ms))
+            b = self.onset_bin + int(np.ceil((meta["sound_offset_s"] + RELIABILITY_TAIL_S) * 1000.0 / dt_ms))
+            windows.append((max(a, 0), min(b, self.T)))
+        for n in range(self.N_neurons):
+            self.nrn_meta[n]["reliability"] = split_half_reliability(
+                [smoothed(self.responses[s][n])[:, a:b] for s, (a, b) in enumerate(windows)
+                 if s in columns[n]])
         self.validate()
 
     # ------------------------------------------------------------------
@@ -413,3 +469,20 @@ class CRCNSAA5Dataset(AudioNeuralDataset):
     def select_stim_class(self, stim_class: str) -> List[int]:
         """Restrict to one stimulus class (see ``STIM_CLASSES``); returns their indices."""
         return self.select_stims_by_attr("stim_class", stim_class)
+
+    def select_good_units(self, min_spike_snr: float = 5.0,
+                          min_reliability: float = 0.1) -> List[int]:
+        """Select well-isolated, sound-driven units; returns their indices.
+
+        Keeps units with ``spike_snr > min_spike_snr`` (the authors' single-unit
+        threshold) and ``reliability > min_reliability``. Pass ``None`` to drop
+        a criterion. On the full release (dt_ms=5, defaults) this keeps 290 of
+        the 471 units with ``spike_snr > 5``; the dropped ones are essentially
+        unpredictable (median held-out cc 0.04 vs 0.24 for the kept ones, measured
+        on an earlier, near-identical selection of 249 units).
+        """
+        def good(n):
+            if min_spike_snr is not None and not ((n["spike_snr"] or 0) > min_spike_snr):
+                return False
+            return min_reliability is None or n["reliability"] > min_reliability   # NaN -> False
+        return self.select_pop_by_nrn_predicate(good)
