@@ -216,3 +216,18 @@ def test_asari_segments_are_slices_of_the_sequences():
             assert np.nanmax(C, axis=1).min() > 0.999, (m["name"], n)
             n_checked += 1
     assert n_checked > 50
+
+
+def test_asari_tracks_follow_their_wehr_copies():
+    """An Asari track whose audio is inside a Wehr file lands in that file's set."""
+    w, a = _dataset(), _asari_dataset()
+    ds = CRCNSAC1Dataset.__new__(CRCNSAC1Dataset)
+    ds.stim_meta = w.stim_meta + a.stim_meta
+    for seed in range(5):
+        split = ds.group_split(seed=seed)
+        where = {ds.stim_meta[i]["overlap_group"]: k for k, v in split.items() for i in v}
+        for src, groups in _asari_table()["wehr_links"].items():
+            assert {where["asari/" + src]} == {where[g] for g in groups}, (seed, src)
+        # the Wehr draw does not depend on the Asari stimuli
+        assert {i: k for k, v in w.group_split(seed=seed).items() for i in v} == \
+            {i: k for k, v in split.items() for i in v if i < len(w.stim_meta)}

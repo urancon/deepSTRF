@@ -689,7 +689,10 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         occurrences go to one set. The tracks are drawn fragment set by
         fragment set (the sets of tracks the Asari cells heard, A1 and MGB
         together, largest number of cells first), so the large sets get val
-        and test tracks; a track drawn with an earlier set keeps its set. At
+        and test tracks; a track drawn with an earlier set keeps its set.
+        Seven tracks also play inside Wehr files (both cohorts used the same
+        Cornell CDs); each takes the set of its Wehr group, so a model fitted
+        to both cohorts never has that audio in training and test. At
         the sequence level no leak-free split exists (every fragment recurs
         in several sequences of its set), so this raises.
 
@@ -753,6 +756,12 @@ class CRCNSAC1Dataset(AudioNeuralDataset):
         size = {g: len(fs) for g, fs in groups.items()}
         for st in sorted(set(stratum.values())):
             draw([g for g in groups if stratum[g] == st], size, assign)
+        # Asari: a track whose audio is also inside a Wehr file takes that file's set
+        # (one model fitted to both cohorts must not see it in training and test)
+        for src, wehr_groups in _asari_table()["wehr_links"].items():
+            sets = {assign[g] for g in wehr_groups}
+            assert len(sets) == 1, (src, wehr_groups)
+            assign["asari/" + src] = sets.pop()
         # Asari: units = source tracks, drawn per fragment set
         for _n_cells, sources in _asari_table()["ensembles"]:
             draw(["asari/" + x for x in sources], {"asari/" + x: 1 for x in sources}, assign)

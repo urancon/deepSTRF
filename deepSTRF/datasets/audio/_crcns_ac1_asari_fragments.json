@@ -431,5 +431,28 @@
     "neotropical-mammals-2/15"
    ]
   ]
- ]
+ ],
+ "wehr_links": {
+  "diversity/03": [
+   "wehr/fragments/1"
+  ],
+  "diversity/25": [
+   "wehr/fragments/15"
+  ],
+  "diversity/32": [
+   "wehr/fragments/16"
+  ],
+  "diversity/36": [
+   "wehr/fragments/18"
+  ],
+  "diversity/46": [
+   "wehr/category1/6"
+  ],
+  "neotropical-mammals-1/20": [
+   "wehr/fragments/6"
+  ],
+  "neotropical-mammals-1/46": [
+   "wehr/category2/1"
+  ]
+ }
 }
