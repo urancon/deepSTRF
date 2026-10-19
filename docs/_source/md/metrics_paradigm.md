@@ -366,7 +366,14 @@ the numerator's concatenated `cov` and `var` perform automatically — see
 §11. Replaces the noise-inflated `var(psth)` in the denominator of the
 raw Pearson correlation with the unbiased signal-only variance estimator.
 Cells with `SP_n ≤ 0` (the noise-floor regime where the unbiased
-estimator fails) return NaN.
+estimator fails) return NaN. `SP_n` is a difference of two nearly equal
+terms, so for a nearly silent cell (e.g. a single spike in the whole
+evaluation set) float rounding can leave a tiny positive value and the
+division by `sqrt(SP_n)` explodes. Cells with
+`SP_n ≤ sp_rel_threshold · (SP_n + NP_n)` (default `1e-6`; `SP_n + NP_n` is
+the mean single-trial variance) are therefore also treated as having no
+signal and return NaN. Pass `sp_rel_threshold=0` for the plain `SP_n > 0`
+test.
 
 #### `method='hsu'`
 
@@ -385,7 +392,16 @@ half-trial pairs, then length-weighted across stims with `T_b` as the
 weight. Same robustness convention as `signal_power` (§6.5). Per-stim
 cells with `ρ_half ≤ 0` (worse-than-chance ceiling — too noisy to
 estimate) are dropped from the weighted average rather than
-contaminating it.
+contaminating it. Silent responses need two more rules, since a
+correlation with a constant vector is undefined:
+
+- a stim to which the cell gave a constant response on every trial
+  (typically: it never fired) carries no reliability information and is
+  dropped from the average, like a `ρ_half ≤ 0` stim;
+- a half-split whose half-average is constant while the other half is not
+  (one half fired, the other never did) counts as `ρ = 0`. It is evidence
+  of unreliability; leaving such splits out would overestimate `CCmax`
+  for sparse cells.
 
 #### Single-trial degenerate case
 
