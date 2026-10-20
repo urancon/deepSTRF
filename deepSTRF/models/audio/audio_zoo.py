@@ -290,15 +290,14 @@ class DNet(AudioEncodingModel):
     input with a learned one-sided exponential kernel.
 
     Because the units carry their own temporal memory, the STRF window can be
-    very short: the default is a single frame (the paper's best DNet used
-    25 ms STRFs).
+    short: the default is 5 frames (the paper's best DNet used 25 ms STRFs).
 
     Parameters
     ----------
     n_frequency_bands : int, default 34
         Number of input frequency bands ``F``.
-    temporal_window_size : int, default 1
-        STRF temporal extent ``T`` in frames.
+    temporal_window_size : int, default 5
+        STRF temporal extent ``T`` in frames (25 ms at ``dt = 5 ms``).
     n_hidden : int, default 20
         Hidden layer width ``H``.
     init_tau : float, default 2.0
@@ -344,7 +343,7 @@ class DNet(AudioEncodingModel):
     - The hidden STRF kernel can be parameterized (DCLS); the paper
       uses a vanilla full kernel.
     """
-    def __init__(self, n_frequency_bands: int = 34, temporal_window_size: int = 1,
+    def __init__(self, n_frequency_bands: int = 34, temporal_window_size: int = 5,
                  n_hidden: int = 20, init_tau: float = 2.0, decay_input: bool = True,
                  output_decay: bool = True,
                  out_neurons: int = 1,

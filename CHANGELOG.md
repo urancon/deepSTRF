@@ -12,8 +12,8 @@ While the version is `0.x`, the public API may still change between minor releas
 - **DNet output unit is stateful again**, as in Rahman et al. (2019): the
   output activation (default `nn.Sigmoid`) is followed by a learnable
   exponential decay per output neuron (`output_decay=True`). The default STRF
-  window is now 1 frame (`temporal_window_size=1`), since hidden and output
-  units carry their own memory.
+  window is now 5 frames (`temporal_window_size=5`, 25 ms at 5-ms bins), since
+  hidden and output units carry their own memory.
 - **NRF and DNet normalise their hidden units with `nn.BatchNorm2d`** after the
   STRF layer, instead of a per-timestep `CausalLayerNorm`, consistent with the
   per-neuron BatchNorm of Linear / LinearNonlinear. In eval mode BatchNorm uses
