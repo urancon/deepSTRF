@@ -183,7 +183,7 @@ class NetworkReceptiveField(AudioEncodingModel):
         Number of output neurons ``N``.
     output_activation : nn.Module, optional
         Pointwise nonlinearity at the readout output. Default
-        ``nn.Sigmoid``.
+        ``ParametricSoftplus(out_neurons)``.
     prefiltering : nn.Module, optional
         Optional spectrogram prefilter (``AdapTrans``, ``ICAdaptation``,
         any module exposing ``out_channels``). ``None`` (default) gives
@@ -204,9 +204,10 @@ class NetworkReceptiveField(AudioEncodingModel):
     -----
     Differences from the original paper:
 
-    - We add a causal LayerNorm over input frequencies and over the
-      hidden channel axis. The original assumes preprocessing-time
-      input normalization and uses no internal norm.
+    - We add a BatchNorm over the hidden units, after the STRF layer.
+      The original assumes preprocessing-time input normalization and
+      uses no internal norm. In eval mode the BatchNorm is a frozen
+      per-unit affine map, so causality holds at inference.
     - The hidden activation is ``nn.Tanh`` (paper-faithful: scaled
       tanh with ρ₁ ≈ 1.7159, ρ₂ = 2/3 — we use the unscaled standard
       tanh, equivalent up to a learned rescaling absorbed into the
@@ -230,12 +231,14 @@ class NetworkReceptiveField(AudioEncodingModel):
         )
         self.H = n_hidden
 
-        # core: hidden STRF projection → channel norm → tanh.
+        # core: hidden STRF projection → per-hidden-unit BatchNorm → tanh.
         # The hidden STRF projection emits (B, H, 1, T); LinearReadout downstream
-        # squeezes the singleton spatial axis automatically.
+        # squeezes the singleton spatial axis automatically. BatchNorm after the
+        # affine STRF layer, as in Linear/LinearNonlinear: in eval mode it is a
+        # frozen per-unit affine map, so the model stays strictly causal.
         self.core = nn.Sequential(
             layers.CausalSTRFConv(self.F, self.T, self.C_in, self.H, kernel=kernel),
-            layers.CausalLayerNorm(self.H, dim=1),
+            nn.BatchNorm2d(self.H),
             nn.Tanh(),
         )
 
@@ -277,32 +280,44 @@ class DNet(AudioEncodingModel):
     Dynamic Network (DNet) — an NRF whose hidden and output units are
     stateful with learnable temporal decay.
 
-    Architecture: STRF projection → channel-norm → sigmoid → learnable
-    exponential decay (one time constant per hidden unit) → 1×1 readout
-    → output activation. The exponential decay is causal: each unit's
-    output at time ``t`` is a convolution of its instantaneous input
-    with a learned one-sided exponential kernel.
+    Architecture: STRF projection → per-hidden-unit BatchNorm → sigmoid →
+    learnable exponential decay (one time constant per hidden unit) → 1×1
+    readout → output activation → learnable exponential decay (one time
+    constant per output neuron). Hidden AND output units are stateful, as in
+    the paper ("τ_j and τ_o are the membrane time constants of j-th hidden
+    unit and output unit respectively"). The exponential decays are causal:
+    each unit's output at time ``t`` is a convolution of its instantaneous
+    input with a learned one-sided exponential kernel.
+
+    Because the units carry their own temporal memory, the STRF window can be
+    very short: the default is a single frame (the paper's best DNet used
+    25 ms STRFs).
 
     Parameters
     ----------
     n_frequency_bands : int, default 34
         Number of input frequency bands ``F``.
-    temporal_window_size : int, default 9
-        STRF temporal extent ``T``.
+    temporal_window_size : int, default 1
+        STRF temporal extent ``T`` in frames.
     n_hidden : int, default 20
         Hidden layer width ``H``.
     init_tau : float, default 2.0
-        Initial time constant (in frames) for the hidden-unit
-        exponential decay.
+        Initial time constant (in frames) for the hidden- and output-unit
+        exponential decays.
     decay_input : bool, default True
         If True, the exponential decay also weights its instantaneous
         input by ``1/(1+d²)`` (paper convention); if False, the
         instantaneous input passes through unscaled.
+    output_decay : bool, default True
+        Give each output neuron its own learnable exponential decay, applied
+        after ``output_activation`` (the paper's stateful output unit).
+        ``False`` gives a stateless output unit.
     out_neurons : int, default 1
         Number of output neurons ``N``.
     output_activation : nn.Module, optional
-        Pointwise nonlinearity at the readout output. Default
-        ``nn.Identity`` (paper-faithful linear readout).
+        Pointwise nonlinearity of the output unit, before its decay. Default
+        ``nn.Sigmoid`` (the output unit is "similar" to the sigmoid hidden
+        units in the paper).
     prefiltering : nn.Module, optional
         Optional spectrogram prefilter.
     kernel : nn.Module, optional
@@ -319,15 +334,19 @@ class DNet(AudioEncodingModel):
     -----
     Differences from the original paper:
 
-    - Causal LayerNorm replaces the missing internal normalization
-      (paper assumes preprocessing-time input normalization).
+    - A BatchNorm over the hidden units replaces the missing internal
+      normalization (the paper assumes preprocessing-time input
+      normalization). In eval mode it is a frozen per-unit affine map,
+      so causality holds at inference.
+    - The decay kernels are truncated to ``round(7 * init_tau)`` frames.
     - Causal left-padding extends the model to arbitrary input lengths;
       the paper uses fixed-window slicing.
     - The hidden STRF kernel can be parameterized (DCLS); the paper
       uses a vanilla full kernel.
     """
-    def __init__(self, n_frequency_bands: int = 34, temporal_window_size: int = 9,
+    def __init__(self, n_frequency_bands: int = 34, temporal_window_size: int = 1,
                  n_hidden: int = 20, init_tau: float = 2.0, decay_input: bool = True,
+                 output_decay: bool = True,
                  out_neurons: int = 1,
                  output_activation: nn.Module = None,
                  prefiltering: nn.Module = None,
@@ -341,23 +360,33 @@ class DNet(AudioEncodingModel):
         self.H = n_hidden
         decay_kernel = round(init_tau * 7)
 
-        # core: hidden STRF projection → channel norm → sigmoid
+        # core: hidden STRF projection → per-hidden-unit BatchNorm → sigmoid
         #       → per-hidden-unit causal exponential decay
         self.core = nn.Sequential(
             layers.CausalSTRFConv(self.F, self.T, self.C_in, self.H, kernel=kernel),
-            layers.CausalLayerNorm(self.H, dim=1),
+            nn.BatchNorm2d(self.H),
             nn.Sigmoid(),
             layers.LearnableExponentialDecay(self.H, kernel_size=decay_kernel,
                                              init_tau=init_tau, decay_input=decay_input),
         )
 
-        # readout: per-neuron 1×1 projection from H decayed hidden units;
-        # the hidden-side decay already provides temporal smoothing.
+        # readout: per-neuron 1×1 projection from H decayed hidden units, then
+        # the output unit's nonlinearity.
         self.readout = LinearReadout(
             in_features=self.H, out_neurons=self.O,
-            activation=output_activation if output_activation is not None else nn.Identity(),
+            activation=output_activation if output_activation is not None else nn.Sigmoid(),
         )
-        # forward inherited from NeuralModel — wav2spec → prefiltering → core → readout
+        # stateful output unit: one learnable decay per output neuron
+        self.output_decay = (
+            layers.LearnableExponentialDecay(self.O, kernel_size=decay_kernel,
+                                             init_tau=init_tau, decay_input=decay_input)
+            if output_decay else nn.Identity()
+        )
+
+    def forward(self, x):
+        """wav2spec → prefiltering → core → readout → output-unit decay."""
+        y = super().forward(x)                     # (B, N, 1, T)
+        return self.output_decay(y)
 
     def STRFs(self, hidden_idx: int = 0, polarity: str = 'ON'):
         """

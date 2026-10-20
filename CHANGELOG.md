@@ -8,6 +8,18 @@ While the version is `0.x`, the public API may still change between minor releas
 
 ## [Unreleased]
 
+### Changed
+- **DNet output unit is stateful again**, as in Rahman et al. (2019): the
+  output activation (default `nn.Sigmoid`) is followed by a learnable
+  exponential decay per output neuron (`output_decay=True`). The default STRF
+  window is now 1 frame (`temporal_window_size=1`), since hidden and output
+  units carry their own memory.
+- **NRF and DNet normalise their hidden units with `nn.BatchNorm2d`** after the
+  STRF layer, instead of a per-timestep `CausalLayerNorm`, consistent with the
+  per-neuron BatchNorm of Linear / LinearNonlinear. In eval mode BatchNorm uses
+  frozen statistics, so the models stay strictly causal. Checkpoints saved
+  with the previous NRF / DNet layout do not load into the new classes.
+
 ### Added
 - **CRCNS-AA5 dataset** (`CRCNSAA5Dataset`) — awake, freely behaving zebra
   finches (Robotka, Gahr & Theunissen; Robotka et al. 2023, *Cell Reports*)
