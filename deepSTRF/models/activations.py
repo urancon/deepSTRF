@@ -246,7 +246,12 @@ class ParametricDoubleExponential(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Gain enters as -exp(k) (Thorson 2015 / NEMS), which is negative for ANY real k, so
         # the curve is monotonically INCREASING by construction. See the class docstring.
-        out = self.a * torch.exp(-torch.exp(-torch.exp(self.k) * (x - self.s)))
+        # Clamp the inner exponent: for very negative drive exp() overflows to inf (float32
+        # above ~88) and the backward pass becomes inf * 0 = NaN, which silently kills the
+        # neuron's parameters. At 80 the output is already exactly a*0, so the clamp changes
+        # no forward value; it only turns that NaN gradient into the correct zero.
+        z = torch.clamp(-torch.exp(self.k) * (x - self.s), max=80.0)
+        out = self.a * torch.exp(-torch.exp(z))
         if self.bias:
             out = out + self.b
         return out
