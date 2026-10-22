@@ -211,7 +211,11 @@ class ParametricDoubleExponential(nn.Module):
         self.k = nn.Parameter(torch.empty(self.N))
         self.s = nn.Parameter(torch.empty(self.N))
         nn.init.uniform_(self.k, -0.5, 0.5)
-        nn.init.uniform_(self.s, 0.5, 1.5)
+        # Threshold at 0 = the mean of a normalised (BatchNorm / LayerNorm) drive, so most
+        # inputs start on the rising part of the curve. A threshold above the drive (the
+        # former U(0.5, 1.5)) leaves many inputs in the flat floor, where the gradient is
+        # ~0: on sparse data (NAT4) those neurons never leave it.
+        nn.init.zeros_(self.s)
 
         # Saturated rate (and optionally baseline) gate non-negativity. The init keeps
         # ``f(0)`` SMALL: neural PSTH targets are sparse and low-rate (NAT4: 95.5 % exact

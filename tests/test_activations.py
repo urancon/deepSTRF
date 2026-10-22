@@ -181,6 +181,13 @@ def test_parametric_double_exp_gradient_finite_at_extreme_inputs(x):
     assert all(torch.isfinite(p.grad).all() for p in m.parameters())
 
 
+def test_parametric_double_exp_threshold_starts_at_zero():
+    """The threshold starts at the mean of a normalised drive, so inputs begin on the
+    rising part of the curve, not in its flat floor (dead units on sparse data)."""
+    m = ParametricDoubleExponential(num_features=8)
+    assert torch.equal(m.s.detach(), torch.zeros(8))
+
+
 def test_parametric_double_exp_clamp_does_not_change_ordinary_outputs():
     m = ParametricDoubleExponential(num_features=4)
     x = torch.linspace(-20, 20, 400).view(-1, 1).repeat(1, 4)

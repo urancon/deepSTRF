@@ -20,6 +20,13 @@ While the version is `0.x`, the public API may still change between minor releas
   frozen statistics, so the models stay strictly causal. Checkpoints saved
   with the previous NRF / DNet layout do not load into the new classes.
 
+### Changed
+- **`ParametricDoubleExponential` threshold `s` now starts at 0** (was
+  `U(0.5, 1.5)`), the mean of a normalised drive, so inputs start on the rising
+  part of the curve instead of its flat floor. On sparse data the old init left
+  many neurons stuck in the floor with no gradient (NAT4 StateNet: 282 of 1083
+  cells; cc_norm 0.644 → 0.680 with the new init).
+
 ### Fixed
 - **`ParametricDoubleExponential` no longer produces NaN gradients** for very
   negative drive: the inner exponential overflowed (float32) and the backward
