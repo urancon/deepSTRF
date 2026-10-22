@@ -20,6 +20,15 @@ While the version is `0.x`, the public API may still change between minor releas
   frozen statistics, so the models stay strictly causal. Checkpoints saved
   with the previous NRF / DNet layout do not load into the new classes.
 
+### Fixed
+- **`ParametricDoubleExponential` no longer produces NaN gradients** for very
+  negative drive: the inner exponential overflowed (float32) and the backward
+  pass computed inf * 0. The exponent is now clamped where the output is
+  already exactly zero, so forward values are unchanged.
+- **`mse_loss` / `poisson_loss` are NaN-loud**: a neuron that has data but a NaN
+  prediction now makes the scalar loss NaN instead of being silently dropped by
+  `nanmean`. Neurons with no valid data are still skipped.
+
 ### Added
 - **CRCNS-AA5 dataset** (`CRCNSAA5Dataset`) — awake, freely behaving zebra
   finches (Robotka, Gahr & Theunissen; Robotka et al. 2023, *Cell Reports*)

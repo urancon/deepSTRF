@@ -13,7 +13,7 @@ import torch
 from deepSTRF.metrics._masking import (
     collapse_to_psth_if_needed,
     per_neuron_mean,
-    reduce_over_neurons,
+    reduce_loss_over_neurons,
     resolve_mask,
 )
 
@@ -68,7 +68,7 @@ def mse_loss(
     gt_safe = torch.where(valid, gt, torch.zeros_like(gt))
     diff_sq = (pred - gt_safe) ** 2
     per_neuron = per_neuron_mean(diff_sq, valid)
-    return reduce_over_neurons(per_neuron, reduction)
+    return reduce_loss_over_neurons(per_neuron, valid, reduction)
 
 
 def poisson_loss(
@@ -164,4 +164,4 @@ def poisson_loss(
         elem = pred - gt_safe * torch.log(pred.clamp(min=eps) + eps)
 
     per_neuron = per_neuron_mean(elem, valid)
-    return reduce_over_neurons(per_neuron, reduction)
+    return reduce_loss_over_neurons(per_neuron, valid, reduction)
