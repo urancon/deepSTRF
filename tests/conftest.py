@@ -27,6 +27,7 @@ _SLOW_TEST_MODULES = {
     "test_crcns_aa_waveform",
     "test_ns1_waveform",
     "test_nat4_waveform",
+    "test_nat4_units",
     "test_le_2025_waveform",
     "test_downer2025_dataset",
     "test_wingert2026",

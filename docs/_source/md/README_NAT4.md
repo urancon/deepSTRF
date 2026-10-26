@@ -28,6 +28,9 @@
 - Per-area `<area>_pred_correlation.csv` flagging the 777 A1 and 339
   PEG neurons that the dataset's authors classified as auditory.
 
+- Responses (both subsets) are spike counts per 10-ms bin; est stimuli are single
+  trials, val stimuli are averaged over their 20 trials by the PSTH.
+
 **deepSTRF parses the NAT4 archive directly — NEMS0 is no longer required.**
 
 

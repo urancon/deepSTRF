@@ -16,7 +16,6 @@ from deepSTRF.datasets.audio._nat4_native import (
     load_per_site_recording,
     load_pop_recording,
     normalize_log1p_minmax_inplace,
-    normalize_minmax_inplace,
 )
 from deepSTRF.utils.audio_io import load_wav
 from deepSTRF.utils.data_download import (
@@ -264,12 +263,14 @@ class NAT4Dataset(AudioNeuralDataset):
             )
         rec = load_pop_recording(datafile)
 
-        # log1p + minmax for the spectrogram, plain minmax for the response —
-        # matches the preprocessing baked into the published Pennington &
-        # David models. Both operations are global (single (min, max) per
-        # signal across all of T × K).
+        # log1p + minmax for the spectrogram — matches the preprocessing baked
+        # into the published Pennington & David models (a single global
+        # (min, max) across all of T × F). The response is NOT rescaled: est
+        # stays in spike counts per 10-ms bin, the same units as the val
+        # responses read from the per-site files below. (A global min-max of
+        # the response used to divide est alone by the area's max count, 7 in
+        # A1 and 8 in PEG, so est and val came out in different units.)
         normalize_log1p_minmax_inplace(rec)
-        normalize_minmax_inplace(rec)
 
         cells = rec.chans
         val_sounds = epoch_names_matching(rec.epochs, "^STIM_00cat")

@@ -28,6 +28,11 @@ While the version is `0.x`, the public API may still change between minor releas
   cells; cc_norm 0.644 → 0.680 with the new init).
 
 ### Fixed
+- **NAT4 est and val responses are now in the same units** (spike counts per
+  10-ms bin). The est responses used to be divided by the area's maximum count
+  (7 in A1, 8 in PEG) while the val responses stayed raw counts, so a model
+  trained on est predicted the val responses about 7x too low. Per-cell cc and
+  cc_norm were unaffected; MSE and any absolute response level were not.
 - **`ParametricDoubleExponential` no longer produces NaN gradients** for very
   negative drive: the inner exponential overflowed (float32) and the backward
   pass computed inf * 0. The exponent is now clamped where the output is
