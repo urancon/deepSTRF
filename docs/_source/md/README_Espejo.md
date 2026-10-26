@@ -13,7 +13,7 @@ The deposit packages **two disjoint releases** from awake passively-listening ad
 
 - 540 single-units across 35 recording sites in 6 ferrets.
 - 93 different 3-second natural sounds in the canonical bank (vocalizations, speech, environmental, music). Different sites present different subsets — the union across sites in this deposit is ~686 unique stimulus names.
-- Each stimulus was presented with 0.5 s pre-stim and 0.5 s post-stim silence — total epoch is 4 s in the file (T=400 bins at fs=100 Hz) or up to 5.5 s for sites with longer windows.
+- Each stimulus was presented with 0.5 s pre-stim and 0.5 s post-stim silence — total epoch is 5 s (T=500 bins at fs=100 Hz) for the 4 s sounds, or 5.5 s (T=550) for the 3 s sounds, which have 2.0 s of pre-stim silence instead of 0.5 s (93 of the 686 NAT sounds; the waveform branch insets each sound accordingly).
 - Stimuli stored as **18-band gammatone log-spectrograms** ("ozgf" NEMS format), F=18.
 - A subset (~3 sounds per site) was presented 10–30 times for high-quality PSTH estimation; the rest at 1–5 reps.
 

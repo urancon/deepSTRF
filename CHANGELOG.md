@@ -28,6 +28,12 @@ While the version is `0.x`, the public API may still change between minor releas
   cells; cc_norm 0.644 → 0.680 with the new init).
 
 ### Fixed
+- **Espejo waveforms of the 3 s sounds are now aligned with their responses**
+  (`EspejoDataset(return_waveform=True)`). 93 of the 686 NAT sounds are 3 s
+  long and their cochleagrams start with 2.0 s of silence, not 0.5 s; their
+  waveforms were inset at 0.5 s, 1.5 s ahead of the responses. The inset is now
+  derived per sound from the cochleagram length. Cochleagram mode was not
+  affected.
 - **NAT4 est and val responses are now in the same units** (spike counts per
   10-ms bin). The est responses used to be divided by the area's maximum count
   (7 in A1, 8 in PEG) while the val responses stayed raw counts, so a model
