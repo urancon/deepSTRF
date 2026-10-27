@@ -54,6 +54,12 @@ class Gammatonegram(nn.Module):
     compression : {'log1p', 'log', 'none'}, default 'log1p'
         Post-integration compression. ``'log1p'`` = ``log(1 + clip(x, 0))`` is
         the Le 2025 / NEMS convention.
+    input_scale : float, default 32768.0
+        Gain applied to the waveform before filtering. ``log1p`` is not scale
+        invariant: the Le 2025 authors compute it on the int16 sample values
+        (``ewave`` read), so a float waveform in [-1, 1] is brought back to that
+        scale by default. With 1.0 the gammatone RMS of a float waveform is ~1e-2
+        and ``log1p`` stays in its linear regime.
     log_floor : float, default 1e-8
         Pre-log clamp for ``compression='log'``.
     """
@@ -61,7 +67,7 @@ class Gammatonegram(nn.Module):
     def __init__(self, audio_fs: int, n_filters: int = 50, hop_ms: float = 5.0,
                  window_ms: float = 2.5, f_min: float = 1000.0,
                  f_max: Optional[float] = 8000.0, compression: str = "log1p",
-                 log_floor: float = 1e-8):
+                 log_floor: float = 1e-8, input_scale: float = 32768.0):
         super().__init__()
         try:
             from gammatone.filters import make_erb_filters, centre_freqs
@@ -75,6 +81,7 @@ class Gammatonegram(nn.Module):
             raise ValueError(f"compression must be 'log1p'/'log'/'none', got {compression!r}")
 
         self.audio_fs = int(audio_fs)
+        self.input_scale = float(input_scale)
         self.n_filters = int(n_filters)
         self.out_channels = self.n_filters
         self.hop = max(1, int(round(audio_fs * hop_ms / 1000.0)))
@@ -104,7 +111,7 @@ class Gammatonegram(nn.Module):
 
     def extra_repr(self) -> str:
         return (f"audio_fs={self.audio_fs}, n_filters={self.n_filters}, hop={self.hop}, "
-                f"nwin={self.nwin}, compression={self.compression!r}")
+                f"nwin={self.nwin}, compression={self.compression!r}, input_scale={self.input_scale:g}")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() != 3 or x.shape[1] != 1:
@@ -116,7 +123,7 @@ class Gammatonegram(nn.Module):
             )
         B, _, T = x.shape
         C = self.n_filters
-        xe = x.expand(B, C, T)                                   # (B, C, T)
+        xe = (x * self.input_scale).expand(B, C, T)              # (B, C, T)
         # Slaney ERB filterbank: 4 cascaded causal 2nd-order IIR sections.
         y = torchaudio.functional.lfilter(xe, self.a_coeffs, self.b1, batching=True, clamp=False)
         y = torchaudio.functional.lfilter(y, self.a_coeffs, self.b2, batching=True, clamp=False)
