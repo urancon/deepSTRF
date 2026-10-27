@@ -243,10 +243,12 @@ gammatone = pytest.importorskip("gammatone.gtgram", reason="needs the `gammatone
 
 
 def test_gammatonegram_reproduces_native_gtgram():
-    """Gammatonegram(wav) must reproduce gammatone.gtgram + log1p to fp precision —
-    that is the whole point of having the *native* transform in the zoo (the
-    deepSTRF CausalGammatone reimplementation only correlates ~0.27 to it on a
-    sub-hop window)."""
+    """Gammatonegram(wav) must reproduce the Le 2025 authors' pipeline to fp
+    precision: gammatone.gtgram on the int16 sample values + log1p — that is the
+    whole point of having the *native* transform in the zoo (the deepSTRF
+    CausalGammatone reimplementation only correlates ~0.27 to it on a sub-hop
+    window). The float waveform in [-1, 1] is scaled by 32768 (default
+    ``input_scale``), as the authors' ewave read returns int16 values."""
     import numpy as np
     from gammatone.gtgram import gtgram as _gtgram
     from deepSTRF.models.wav2spec import Gammatonegram
@@ -254,9 +256,9 @@ def test_gammatonegram_reproduces_native_gtgram():
     fs, F, dt_ms, win_ms, fmin, fmax = 16000, 34, 5.0, 2.5, 300.0, 7000.0
     hop = round(fs * dt_ms / 1000)
     rng = np.random.default_rng(0)
-    wav = rng.standard_normal(200 * hop).astype(np.float64)
+    wav = 0.1 * rng.standard_normal(200 * hop).astype(np.float64)   # float, ~-20 dBFS
 
-    nat = np.log1p(np.clip(_gtgram(wav, fs, window_time=win_ms * 1e-3,
+    nat = np.log1p(np.clip(_gtgram(wav * 32768.0, fs, window_time=win_ms * 1e-3,
                                    hop_time=dt_ms * 1e-3, channels=F,
                                    f_min=fmin, f_max=fmax), 0.0, None))
     gg = Gammatonegram(audio_fs=fs, n_filters=F, hop_ms=dt_ms, window_ms=win_ms,
