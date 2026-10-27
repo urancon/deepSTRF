@@ -513,6 +513,10 @@ class Fitter:
         n_batches = 0
         preds_list: List[torch.Tensor] = []
         responses_list: List[torch.Tensor] = []
+        streaming, plain = self._split_metrics()
+        if self.track_train_metrics:
+            for m in streaming.values():
+                m.reset()
 
         for batch in self.train_loader:
             stims = batch['stims'].to(self.device)
@@ -538,17 +542,35 @@ class Fitter:
             # halves wall time on large datasets where users only care
             # about val metrics.
             if self.track_train_metrics:
-                preds_list.append(pred.detach().cpu())
-                responses_list.append(responses.detach().cpu())
+                for m in streaming.values():
+                    m.update(pred.detach(), responses.detach())
+                if plain:
+                    preds_list.append(pred.detach().cpu())
+                    responses_list.append(responses.detach().cpu())
 
         out: Dict[str, Any] = {"loss": loss_sum / max(n_batches, 1)}
         if self.track_train_metrics:
             with torch.no_grad():
-                preds_cat = _pad_and_cat(preds_list)
-                responses_cat = _pad_and_cat(responses_list)
-                for name, fn in self.val_metrics.items():
-                    out[name] = fn(preds_cat, responses_cat)
+                for name, m in streaming.items():
+                    out[name] = m.compute()
+                if plain:
+                    preds_cat = _pad_and_cat(preds_list)
+                    responses_cat = _pad_and_cat(responses_list)
+                    for name, fn in plain.items():
+                        out[name] = fn(preds_cat, responses_cat)
         return out
+
+    def _split_metrics(self):
+        """(streaming, plain): metrics with ``reset/update/compute`` (accumulated batch by
+        batch, see :mod:`deepSTRF.metrics.streaming`) and plain callables ``fn(preds, resp)``
+        on the whole set (which need every prediction and response kept in memory)."""
+        streaming, plain = {}, {}
+        for name, fn in self.val_metrics.items():
+            if all(hasattr(fn, a) for a in ("reset", "update", "compute")):
+                streaming[name] = fn
+            else:
+                plain[name] = fn
+        return streaming, plain
 
     def _update_ema(self) -> None:
         """In-place EMA of the model's full state_dict (params + buffers)."""
@@ -580,6 +602,11 @@ class Fitter:
         self.model.eval()
         preds_list: List[torch.Tensor] = []
         responses_list: List[torch.Tensor] = []
+        streaming, plain = self._split_metrics()
+        for m in streaming.values():
+            m.reset()
+        loss_w = 0.0
+        w_sum = 0.0
 
         with torch.no_grad():
             for batch in loader:
@@ -590,17 +617,32 @@ class Fitter:
                 if hasattr(self.model, "detach"):
                     self.model.detach()
 
-                # Same CPU-accumulation as in _train_one_epoch — see comment
-                # there for the AA2-scale memory rationale.
-                preds_list.append(pred.cpu())
-                responses_list.append(responses.cpu())
+                for m in streaming.values():
+                    m.update(pred, responses)
+                if plain:
+                    # Same CPU-accumulation as in _train_one_epoch — see comment
+                    # there for the AA2-scale memory rationale.
+                    preds_list.append(pred.cpu())
+                    responses_list.append(responses.cpu())
+                else:
+                    # all metrics streaming: the loss too, as the mean of the batch losses
+                    # weighted by their number of valid PSTH bins (equals the full-set loss
+                    # when every neuron has data in every batch)
+                    w = float((~torch.isnan(responses).all(dim=2)).sum().item())
+                    if w > 0:
+                        loss_w += float(self.compute_loss(pred, responses).item()) * w
+                        w_sum += w
 
-            preds_cat = _pad_and_cat(preds_list)
-            responses_cat = _pad_and_cat(responses_list)
-
-            out: Dict[str, Any] = {
-                "loss": float(self.compute_loss(preds_cat, responses_cat).item()),
-            }
-            for name, fn in self.val_metrics.items():
-                out[name] = fn(preds_cat, responses_cat)
+            out: Dict[str, Any] = {}
+            if plain:
+                preds_cat = _pad_and_cat(preds_list)
+                responses_cat = _pad_and_cat(responses_list)
+                out["loss"] = float(self.compute_loss(preds_cat, responses_cat).item())
+                for name, fn in plain.items():
+                    out[name] = fn(preds_cat, responses_cat)
+            else:
+                out["loss"] = loss_w / w_sum if w_sum > 0 else float("nan")
+            for name, m in streaming.items():
+                out[name] = m.compute()
+            out = {k: out[k] for k in ["loss"] + list(self.val_metrics)}   # keep key order
         return out
