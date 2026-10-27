@@ -68,8 +68,9 @@ reconstructs occluded syllables in conspecific song. Nature Communications,
 
 **Processing needed (Dataset class `__init__`):**
 - Wav → gammatone spectrogram (50 log-spaced bands, 1–8 kHz,
-  2.5 ms window, hop = `dt_ms`, `log(P+1)` compression). Matches the
-  paper's `gammatone` package recipe (Methods p. 10).
+  2.5 ms window, hop = `dt_ms`, `log(P+1)` compression on the int16 sample
+  values, as the authors' code reads the wavs). Matches the paper's `gammatone`
+  package recipe (Methods p. 10).
 - pprox → `(R, T)` PSTH per (stim, neuron), aligned to stim onset,
   binned at `dt_ms`.
 - Optional 21 ms Hanning smoothing

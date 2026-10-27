@@ -579,12 +579,16 @@ class Le2025Dataset(AudioNeuralDataset):
         """Return (native_sr, n_samples, duration_s, spec (1, F, T) tensor).
 
         Paper-faithful gammatone spectrogram (Le, Bjoring & Meliza 2025
-        Methods p. 10): filter bank at the source sample rate, ``log(P+1)``
-        power compression, no resampling. The on-disk wavs are already at the
+        Methods p. 10): filter bank at the source sample rate on the int16
+        sample values, ``log(P+1)`` power compression, no resampling. The on-disk wavs are already at the
         paper-stated RMS levels (−27 dBFS for nat8a, −30 dBFS for nat8b /
         synth8b), so no further amplitude normalization is needed.
         """
-        wav, sr_native = sf.read(str(wav_path), always_2d=False)
+        # int16 sample values, as the authors' pipeline reads them (`ewave.open(...).read()`
+        # returns the raw int16 samples, melizalab/auditory-restoration scripts/core.py).
+        # The ``log(P+1)`` compression depends on that scale: on float samples in [-1, 1]
+        # the gammatone RMS is ~1e-2 and log1p stays in its linear regime.
+        wav, sr_native = sf.read(str(wav_path), dtype="int16", always_2d=False)
         if wav.ndim == 2:  # collapse stereo if any
             wav = wav.mean(axis=-1)
         wav = np.asarray(wav, dtype=np.float64)
