@@ -115,3 +115,16 @@ def test_batch_sp_np_matches_per_stim_loop():
             assert torch.allclose(sp[b][ok].float(), s_ref[ok], atol=1e-5)
             assert torch.allclose(np_[b][ok].float(), n_ref[ok], atol=1e-5)
             assert torch.equal(tv[b].float(), t_ref)
+
+
+def test_neuron_chunking_gives_same_result(monkeypatch):
+    import deepSTRF.metrics.streaming as st
+    batches = _batches(seed=5)
+    full = StreamingCorrcoef("schoppe")
+    for p, r in batches:
+        full.update(p, r)
+    monkeypatch.setattr(st, "_CHUNK_ELEMS", 50)            # forces one neuron per chunk
+    chunked = StreamingCorrcoef("schoppe")
+    for p, r in batches:
+        chunked.update(p, r)
+    assert torch.allclose(full.compute(), chunked.compute(), equal_nan=True)

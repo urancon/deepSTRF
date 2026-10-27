@@ -28,23 +28,26 @@ from deepSTRF.metrics.performance import _EPS
 
 __all__ = ["StreamingCorrcoef"]
 
+_CHUNK_ELEMS = 32_000_000     # neurons per signal-power chunk: n * R * T <= this
+
 
 @torch.no_grad()
 def _batch_sp_np(responses: torch.Tensor):
     """Vectorised :func:`~deepSTRF.metrics.performance._per_stim_sp_np` over a whole batch.
 
-    ``responses`` ``(B, N, R, T)``, NaN = invalid. Returns float64 ``(B, N)`` tensors SP, NP
+    ``responses`` ``(B, N, R, T)``, NaN = invalid. Computed in the input dtype (float32, as the
+    loop version), returned as float64 ``(B, N)`` tensors SP, NP
     and the valid-time count ``T_v`` (0 where the (stim, neuron) cell has < 2 valid repeats
     or < 2 valid bins). Same per-cell definition: valid repeats = repeats with any valid bin,
     valid bins = bins with any valid repeat; a NaN left inside that block propagates, as in
     the loop version.
     """
-    x = responses.double()
+    x = responses                                        # float32 elementwise, like the loop
     v = ~x.isnan()
     vr = v.any(dim=-1)                                   # (B, N, R)
     vt = v.any(dim=-2)                                   # (B, N, T)
-    Rv = vr.sum(-1).double()                             # (B, N)
-    Tv = vt.sum(-1).double()
+    Rv = vr.sum(-1).to(x.dtype)                          # (B, N)
+    Tv = vt.sum(-1).to(x.dtype)
     block = vr.unsqueeze(-1) & vt.unsqueeze(-2)          # (B, N, R, T)
     xb = torch.where(block, x, torch.zeros((), dtype=x.dtype, device=x.device))
     xb = torch.where(block & x.isnan(), x, xb)           # keep NaN inside the block
@@ -55,7 +58,8 @@ def _batch_sp_np(responses: torch.Tensor):
     mr = xb.sum(-1) / Tv1.unsqueeze(-1)                  # (B, N, R) per-repeat mean
     var_r = (((xb - mr.unsqueeze(-1)) ** 2) * block).sum(-1) / (Tv - 1).clamp(min=1).unsqueeze(-1)
     tp = (var_r * vr).sum(-1) / Rv1                      # mean over valid repeats
-    sp = (Rv * var_psth - tp) / (Rv - 1).clamp(min=1)
+    sp = ((Rv * var_psth - tp) / (Rv - 1).clamp(min=1)).double()
+    tp, Tv = tp.double(), Tv.double()
     ok = (Rv >= 2) & (Tv >= 2)
     nan = torch.full_like(sp, float("nan"))
     return (torch.where(ok, sp, nan), torch.where(ok, tp - sp, nan),
@@ -115,13 +119,18 @@ class StreamingCorrcoef:
             acc += s
         self._r_max = max(self._r_max, responses.shape[2])
         if self.method == "schoppe" and responses.shape[2] > 1:
-            for b in range(responses.shape[0]):     # one stimulus at a time: bounded memory
-                sp_b, np_b, tv_b = _batch_sp_np(responses[b:b + 1])   # (1, N) each
-                ok = tv_b > 0
-                zero = torch.zeros_like(tv_b)
-                self._w += tv_b.sum(0)
-                self._wsp += torch.where(ok, tv_b * sp_b, zero).sum(0)
-                self._wnp += torch.where(ok, tv_b * np_b, zero).sum(0)
+            # one stimulus and a chunk of neurons at a time: bounded memory (~32M elements)
+            N, R, T = responses.shape[1], responses.shape[2], responses.shape[3]
+            step = max(1, int(_CHUNK_ELEMS // max(R * T, 1)))
+            for b in range(responses.shape[0]):
+                for n0 in range(0, N, step):
+                    sl = slice(n0, n0 + step)
+                    sp_b, np_b, tv_b = _batch_sp_np(responses[b:b + 1, sl])   # (1, n) each
+                    ok = tv_b > 0
+                    zero = torch.zeros_like(tv_b)
+                    self._w[sl] += tv_b.sum(0)
+                    self._wsp[sl] += torch.where(ok, tv_b * sp_b, zero).sum(0)
+                    self._wnp[sl] += torch.where(ok, tv_b * np_b, zero).sum(0)
 
     @torch.no_grad()
     def compute(self) -> torch.Tensor:
