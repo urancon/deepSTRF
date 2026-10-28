@@ -150,7 +150,7 @@ spectrogram `(1, F, T)` so every model works unchanged.
 | `area` | `"CN"`, `"IC"` or `"AC"` |
 | `session`, `session_id` | recording session as released, and `"CN-s3"` (unique across areas) |
 | `index_in_release` | row in the original `Dataset_*.npy` |
-| `best_freq_khz` | *derived by the loader*: the 70-dB pure tone with the largest evoked response |
+| `best_freq_khz` | *derived by the loader*: the 70-dB pure tone with the largest evoked response (`None` if no tone evokes a response above baseline) |
 | `spont_rate` | *derived by the loader*: mean pre-stimulus activity (spikes/s for CN / IC) |
 
 Dataset-level attributes: `species`, `hearing_range_hz`, `recording_type`

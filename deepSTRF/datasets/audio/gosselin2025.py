@@ -44,6 +44,15 @@ COCHLEAR_CHANNELS = ("ihc", "fibres")
 COCHLEAR_TRANSFORMS = (None, "log1p")
 
 
+def _best_freq(evoked: np.ndarray, freqs: Sequence[float]) -> Optional[float]:
+    """Frequency of the tone with the largest evoked response, or None when no
+    tone evokes a response above baseline (a neuron silent or suppressed by
+    every tone has no best frequency)."""
+    ev = np.nan_to_num(np.asarray(evoked, dtype=np.float64), nan=-np.inf)
+    i = int(np.argmax(ev))
+    return float(freqs[i]) if ev[i] > 0 else None
+
+
 class Gosselin2025Dataset(AudioNeuralDataset):
     """Mouse CN / IC (Neuropixels) or AC (2-photon) responses to 307 sounds.
 
@@ -244,6 +253,7 @@ class Gosselin2025Dataset(AudioNeuralDataset):
         base = psth[:, :, pre].mean(axis=2)                              # (N, S)
         ev = psth[:, :, evoked].mean(axis=2) - base
         scale = 1.0 if area == "AC" else 1000.0 / self.dt               # counts/bin -> sp/s
+        pt70_khz = [self.stim_meta[s]["frequency_khz"][0] for s in pt70]
         for n in range(N):
             for s in range(S):
                 if area != "AC":
@@ -255,10 +265,7 @@ class Gosselin2025Dataset(AudioNeuralDataset):
                 else:
                     r = t_all[n, s][torch.from_numpy(valid[n, s])]
                 self.responses[s].append(r)
-            bf = None
-            if pt70:
-                tone = pt70[int(np.argmax(np.nan_to_num(ev[n, pt70], nan=-np.inf)))]
-                bf = self.stim_meta[tone]["frequency_khz"][0]
+            bf = _best_freq(ev[n, pt70], pt70_khz) if pt70 else None
             self.nrn_meta.append({
                 "cell_id": f"{area}_{n:04d}",
                 "area": area,

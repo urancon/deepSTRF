@@ -303,3 +303,12 @@ def test_group_split_same_across_areas(release, tmp_path):
     a = Gosselin2025Dataset(str(root), areas=("IC",), cache_dir=str(tmp_path)).group_split(seed=3)
     b = Gosselin2025Dataset(str(root), areas=("AC",), cache_dir=str(tmp_path)).group_split(seed=3)
     assert a == b
+
+
+def test_best_freq_none_without_excitatory_tone_response():
+    from deepSTRF.datasets.audio.gosselin2025 import _best_freq
+    freqs = [2.0, 4.0, 8.0]
+    assert _best_freq(np.array([0.1, 0.5, 0.2]), freqs) == 4.0
+    assert _best_freq(np.array([0.0, 0.0, 0.0]), freqs) is None      # silent: no argmax default
+    assert _best_freq(np.array([-0.2, -0.1, np.nan]), freqs) is None  # only suppression
+    assert _best_freq(np.array([np.nan, 0.3, np.nan]), freqs) == 4.0
