@@ -317,4 +317,32 @@ class Gosselin2025Dataset(AudioNeuralDataset):
     # ----------------------------------------------------------------- split
     def group_split(self, seed: Optional[int] = None,
                     fractions: Sequence[float] = (0.7, 0.1, 0.2)) -> Dict[str, List[int]]:
-        raise NotImplementedError   # group_split: later commit
+        """Split the 307 sounds into train / val / test without leakage.
+
+        Sounds that are the same waveform up to a gain (50 / 70 dB copies)
+        stay together, and so does each decomposed clip (forward original,
+        components, reconstruction). Time-reversed clips and up/down ramps
+        and sweeps are separate sounds. Units are drawn category by category
+        (decomposed clips form one stratum), each to the set furthest below
+        its target share. The draw covers all 307 sounds whatever ``areas``
+        is loaded, so a seed gives the same split for CN, IC and AC.
+
+        Coarse at the edges: the decomposition stratum has only 4 (large)
+        units, and the smallest categories (5 harmonic chords) may get no
+        validation sound.
+
+        Parameters
+        ----------
+        seed : int, optional
+            Seed of the draw. ``None`` draws a new random split at each call.
+        fractions : sequence of 3 floats, default (0.7, 0.1, 0.2)
+            Target train / val / test shares, in sounds.
+
+        Returns
+        -------
+        dict
+            ``{'train', 'val', 'test'}``: absolute stimulus indices. Use
+            :meth:`stim_to_iter_indices` to build a ``Subset``.
+        """
+        units, strata = gsplit.split_units(self.stim_meta, gs.load_gain_copies())
+        return gsplit.draw_split(units, strata, seed, fractions)

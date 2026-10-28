@@ -11,6 +11,7 @@ from tests.gosselin2025_fake import write_fake_release
 from deepSTRF.datasets.audio import _gosselin2025_stims as gs
 from deepSTRF.datasets.audio import _gosselin2025_cochlear as gc
 from deepSTRF.datasets.audio import _gosselin2025_prepare as gp
+from deepSTRF.datasets.audio import _gosselin2025_split as gsp
 from deepSTRF.datasets.audio.gosselin2025 import Gosselin2025Dataset
 
 
@@ -265,3 +266,36 @@ def test_cochlear_rejects_waveform(release, tmp_path):
     with pytest.raises(ValueError, match="exclude"):
         Gosselin2025Dataset(str(root), spec_backend="cochlear_model", return_waveform=True,
                             cache_dir=str(tmp_path))
+
+
+def test_split_units_on_fake(release):
+    root, _ = release
+    st = gs.build_stim_table(root / "Sound Parameters.csv", root / "Soundset")
+    units, strata = gsp.split_units(st, [["PT_50dB_8kHz", "PT_70dB_8kHz"], ["bird_50dB", "bird_70dB"]])
+    u = dict(zip([m["name"] for m in st], units))
+    assert u["PT_50dB_8kHz"] == u["PT_70dB_8kHz"]
+    assert u["bird_50dB"] == u["bird_70dB"] == u["bird_reconstructed"] \
+        == u["bird_Chirp_50to25kHz_0.02s_80dB"] == "decomp:bird"
+    assert u["bird_inverted50dB"] != u["bird_50dB"]
+    assert dict(zip(units, strata))["decomp:bird"] == "decomposition"
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_draw_split_invariants(release, seed):
+    root, _ = release
+    st = gs.build_stim_table(root / "Sound Parameters.csv", root / "Soundset")
+    units, strata = gsp.split_units(st, [["PT_50dB_8kHz", "PT_70dB_8kHz"], ["bird_50dB", "bird_70dB"]])
+    sp = gsp.draw_split(units, strata, seed, (0.7, 0.1, 0.2))
+    allidx = sorted(sp["train"] + sp["val"] + sp["test"])
+    assert allidx == list(range(len(st)))                          # a partition
+    where = {i: k for k, v in sp.items() for i in v}
+    for u in set(units):
+        assert len({where[i] for i, x in enumerate(units) if x == u}) == 1
+    assert gsp.draw_split(units, strata, seed, (0.7, 0.1, 0.2)) == sp   # deterministic
+
+
+def test_group_split_same_across_areas(release, tmp_path):
+    root, _ = release
+    a = Gosselin2025Dataset(str(root), areas=("IC",), cache_dir=str(tmp_path)).group_split(seed=3)
+    b = Gosselin2025Dataset(str(root), areas=("AC",), cache_dir=str(tmp_path)).group_split(seed=3)
+    assert a == b
