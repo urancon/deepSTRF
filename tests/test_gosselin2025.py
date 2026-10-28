@@ -5,11 +5,13 @@ import zipfile
 
 import numpy as np
 import pytest
+import torch
 
 from tests.gosselin2025_fake import write_fake_release
 from deepSTRF.datasets.audio import _gosselin2025_stims as gs
 from deepSTRF.datasets.audio import _gosselin2025_cochlear as gc
 from deepSTRF.datasets.audio import _gosselin2025_prepare as gp
+from deepSTRF.datasets.audio.gosselin2025 import Gosselin2025Dataset
 
 
 @pytest.fixture(scope="module")
@@ -168,3 +170,70 @@ def test_required_files():
     f = gp.required_files(["IC"], cochlear=False, fibres=False)
     assert set(f) == {"Sound Parameters.csv", "Soundset.zip", "Info_IC.csv", "Dataset_IC.npy"}
     assert "Dataset_CC.npy" in gp.required_files(["AC"], cochlear=True, fibres=False)
+
+
+@pytest.fixture(scope="module")
+def ds_ephys(release, tmp_path_factory):
+    root, _ = release
+    return Gosselin2025Dataset(str(root), cache_dir=str(tmp_path_factory.mktemp("c1")))
+
+
+def test_ephys_shapes_and_order(ds_ephys, release):
+    _, info = release
+    ds = ds_ephys
+    assert ds.N_neurons == 5 and len(ds.stim_meta) == info["S"]
+    assert [m["area"] for m in ds.nrn_meta] == ["CN"] * 3 + ["IC"] * 2
+    assert ds.nrn_meta[3]["cell_id"] == "IC_0000" and ds.nrn_meta[4]["session_id"] == "IC-s2"
+    for s in range(info["S"]):
+        r = ds.responses[s][1]                         # CN neuron 1
+        assert r.shape == (12, 180) and r.dtype == torch.float32
+        assert int(r[0].argmax()) == 40 + s
+    assert ds.responses[0][0][11].sum() == 0           # faded repeat kept as zeros
+    assert ds.stims[0].shape == (1, 31, 180)
+    assert ds.F == 31 and ds.dt == 5.0
+
+
+def test_waveform_mode_levels(release, tmp_path):
+    root, _ = release
+    ds = Gosselin2025Dataset(str(root), areas=("IC",), return_waveform=True, cache_dir=str(tmp_path))
+    assert ds.audio_fs == 192000 and ds.hop == 960
+    w50, w70 = ds.stims[0], ds.stims[1]                # PT_50dB_8kHz, PT_70dB_8kHz
+    assert w50.shape == (1, 180 * 960)
+    ratio = w70.pow(2).sum().sqrt() / w50.pow(2).sum().sqrt()
+    assert float(20 * torch.log10(ratio)) == pytest.approx(20.0, abs=0.05)
+
+
+def test_ac_drops_nan_repeats(release, tmp_path):
+    root, info = release
+    ds = Gosselin2025Dataset(str(root), areas=("AC",), cache_dir=str(tmp_path))
+    assert ds.dt == 43.5 and ds.recording_type == "2p-calcium" and ds.indicator == "GCaMP6s"
+    assert ds.responses[3][1].shape == (10, 24)
+    assert ds.responses[0][2].shape == (9, 24)
+    assert not any(torch.isnan(r).any() for row in ds.responses for r in row)
+    assert ds.stims[0].shape[-1] == 24
+
+
+@pytest.mark.parametrize("kw, msg", [
+    (dict(areas=("CN", "AC")), "AC"),
+    (dict(areas=("XX",)), "unknown area"),
+    (dict(dt_ms=3), "dt_ms"),
+    (dict(areas=("AC",), dt_ms=5.0), "43.5"),
+    (dict(audio_fs=48000, return_waveform=True), "audio_fs"),
+    (dict(spec_backend="mel"), "spec_backend"),
+])
+def test_bad_arguments(release, tmp_path, kw, msg):
+    root, _ = release
+    with pytest.raises(ValueError, match=msg):
+        Gosselin2025Dataset(str(root), cache_dir=str(tmp_path), **kw)
+
+
+def test_missing_files_message(tmp_path):
+    with pytest.raises(FileNotFoundError, match="Dataset_IC.npy"):
+        Gosselin2025Dataset(str(tmp_path), areas=("IC",))
+
+
+def test_derived_neuron_meta(ds_ephys):
+    m = ds_ephys.nrn_meta[0]
+    assert set(m) >= {"cell_id", "area", "session", "session_id", "index_in_release",
+                      "best_freq_khz", "spont_rate"}
+    assert m["best_freq_khz"] == 8.0                   # only one 70 dB tone in the fake set
