@@ -320,16 +320,21 @@ class Gosselin2025Dataset(AudioNeuralDataset):
         """Split the 307 sounds into train / val / test without leakage.
 
         Sounds that are the same waveform up to a gain (50 / 70 dB copies)
-        stay together, and so does each decomposed clip (forward original,
-        components, reconstruction). Time-reversed clips and up/down ramps
-        and sweeps are separate sounds. Units are drawn category by category
-        (decomposed clips form one stratum), each to the set furthest below
-        its target share. The draw covers all 307 sounds whatever ``areas``
-        is loaded, so a seed gives the same split for CN, IC and AC.
+        stay together, and so does each decomposed clip's reconstruction with
+        its components (the reconstruction is assembled from their audio).
+        Everything else is a separate sound: tones, sweeps and ramps at other
+        frequencies or directions, time-reversed clips (a reversed clip can be
+        tested while its forward version is trained on), and an original
+        clip vs its reconstruction (similar, but no shared audio). Units are
+        drawn category by category (the decompositions form one stratum),
+        each to the set furthest below its target share. The draw covers all
+        307 sounds whatever ``areas`` is loaded, so a seed gives the same
+        split for CN, IC and AC.
 
-        Coarse at the edges: the decomposition stratum has only 4 (large)
-        units, and the smallest categories (5 harmonic chords) may get no
-        validation sound.
+        Coarse at the edges: the decomposition stratum has only 4 units, one
+        of 25 sounds (the dolphin call), so the decompositions are rarely in
+        val or test (all in train at ``seed=0``); the smallest categories
+        (5 harmonic chords) may get no validation sound.
 
         Parameters
         ----------

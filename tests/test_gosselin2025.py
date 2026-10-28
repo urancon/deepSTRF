@@ -274,10 +274,14 @@ def test_split_units_on_fake(release):
     units, strata = gsp.split_units(st, [["PT_50dB_8kHz", "PT_70dB_8kHz"], ["bird_50dB", "bird_70dB"]])
     u = dict(zip([m["name"] for m in st], units))
     assert u["PT_50dB_8kHz"] == u["PT_70dB_8kHz"]
-    assert u["bird_50dB"] == u["bird_70dB"] == u["bird_reconstructed"] \
-        == u["bird_Chirp_50to25kHz_0.02s_80dB"] == "decomp:bird"
+    # the reconstruction is built from its components' audio: one unit
+    assert u["bird_reconstructed"] == u["bird_Chirp_50to25kHz_0.02s_80dB"] == "decomp:bird"
+    # the original clip shares no audio with them: it goes with its own level copy only
+    assert u["bird_50dB"] == u["bird_70dB"] != u["bird_reconstructed"]
     assert u["bird_inverted50dB"] != u["bird_50dB"]
-    assert dict(zip(units, strata))["decomp:bird"] == "decomposition"
+    stratum = dict(zip(units, strata))
+    assert stratum["decomp:bird"] == "decomposition"
+    assert stratum[u["bird_50dB"]] == "complex_sounds"
 
 
 @pytest.mark.parametrize("seed", range(20))

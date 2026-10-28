@@ -2,9 +2,11 @@
 
 Kept together (one unit): (1) sounds that are the same waveform up to a gain
 (the 50 / 70 dB copies, from ``_gosselin2025_stim_groups.json``); (2) a
-decomposed clip's forward original(s), all its components and its
-reconstruction. Everything else, including time-reversed clips and up/down
-ramps and sweeps, is its own unit. Units are drawn per stratum (the CSV
+decomposed clip's reconstruction and all its components, since the
+reconstruction is assembled from the components' audio. The original clip
+only resembles its reconstruction (no shared audio), so it goes with its own
+level copy. Everything else, including time-reversed clips and tones, sweeps
+and ramps at other frequencies or directions, is its own unit. Units are drawn per stratum (the CSV
 category, or ``decomposition``) to the set furthest below its target share.
 """
 from __future__ import annotations
@@ -24,7 +26,7 @@ def split_units(stim_meta: Sequence[dict], gain_copies: Sequence[Sequence[str]]
             rep[n] = sorted(g)[0]
     units, strata = [], []
     for m in stim_meta:
-        if m["decomposition_role"] is not None:
+        if m["category"] == "decompositions":
             units.append(f"decomp:{m['source_clip']}")
             strata.append("decomposition")
         else:
