@@ -12,12 +12,15 @@ from typing import List, Optional
 import numpy as np
 import soundfile as sf
 
+from deepSTRF.datasets.audio._logspectrogram import logspectrogram
+
 ZENODO_RECORD = 17271813
 NATIVE_FS = 192000
 ONSET_MS = 200.0
 EPHYS_BINS = 900            # 1 ms bins, -200..+700 ms
 AC_DT_MS = 43.5
 AC_BINS = 24                # -200..+844 ms
+ONSET_SAMPLES = int(round(ONSET_MS * NATIVE_FS / 1000.0))      # 38400
 N_REPS = 12
 DECOMPOSED_CLIPS = ("dauphin2", "India", "bird", "bird3")
 
@@ -132,3 +135,39 @@ def build_stim_table(csv_path, wav_dir) -> List[dict]:
         n = sf.info(str(Path(wav_dir) / f"{row['name']}.wav")).frames
         out.append(derive_stim_meta(row, 1000.0 * n / NATIVE_FS))
     return out
+
+
+def trial_waveform(wav: np.ndarray, n_bins: int, hop: int) -> np.ndarray:
+    """Zero buffer of ``n_bins * hop`` samples with the sound at +200 ms.
+
+    Samples stay in int16 units (absolute level kept). A sound that would
+    overrun the buffer is cropped (none does in the release).
+    """
+    buf = np.zeros(n_bins * hop, dtype=np.float64)
+    n = min(len(wav), len(buf) - ONSET_SAMPLES)
+    buf[ONSET_SAMPLES:ONSET_SAMPLES + n] = wav[:n]
+    return buf
+
+
+def spec_floor_db(window_ms: float, fs: int = NATIVE_FS) -> float:
+    """dB level of int16 quantisation noise (variance 1/12) through the
+    Hamming window used by :func:`logspectrogram`: ``10 log10(sum(w^2) / 12)``.
+
+    Silence and anything quieter than the 16-bit quantisation noise of the
+    files sit at this floor, for every sound alike.
+    """
+    win = np.hamming(max(int(round(window_ms * fs / 1000.0)), 4))
+    return float(10.0 * np.log10(np.sum(win ** 2) / 12.0))
+
+
+def logspec_trial(wav: np.ndarray, n_bins: int, dt_ms: float, fmin: float, fmax: float,
+                  bins_per_octave: int, window_ms: Optional[float] = None) -> np.ndarray:
+    """(F, n_bins) log-spaced spectrogram (dB re 1 int16 step) of the trial
+    buffer, clipped below at :func:`spec_floor_db`."""
+    hop = int(round(dt_ms * NATIVE_FS / 1000.0))
+    window_ms = 2.0 * dt_ms if window_ms is None else window_ms
+    S_db, _ = logspectrogram(trial_waveform(wav, n_bins, hop), NATIVE_FS, dt_ms=dt_ms,
+                             fmin=fmin, fmax=fmax, bins_per_octave=bins_per_octave,
+                             window_ms=window_ms)
+    S_db = np.maximum(S_db[:, :n_bins], spec_floor_db(window_ms))
+    return S_db.astype(np.float32)

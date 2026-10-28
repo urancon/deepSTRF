@@ -53,3 +53,28 @@ def test_build_stim_table_derived_fields(release):
     assert by["dassin_50dB"]["decomposition_role"] is None
     assert by["bird_reconstructed"]["duration_ms"] == pytest.approx(480.0)   # from the wav
     assert by["bird_reconstructed"]["duration_ms_csv"] == 460.0
+
+
+def test_trial_waveform_places_onset_and_pads(release):
+    root, _ = release
+    wav = gs.load_wav_int16(root / "Soundset", "PT_50dB_8kHz")
+    buf = gs.trial_waveform(wav, n_bins=180, hop=960)
+    assert buf.shape == (180 * 960,)
+    assert np.all(buf[:38400] == 0)
+    np.testing.assert_array_equal(buf[38400:38400 + len(wav)], wav.astype(np.float64))
+    assert np.all(buf[38400 + len(wav):] == 0)
+    ac = gs.trial_waveform(wav, n_bins=24, hop=8352)          # 43.5 ms bins
+    assert ac.shape == (24 * 8352,)
+
+
+def test_logspec_keeps_absolute_level_and_floor(release):
+    root, _ = release
+    lo = gs.logspec_trial(gs.load_wav_int16(root / "Soundset", "PT_50dB_8kHz"),
+                          n_bins=180, dt_ms=5.0, fmin=2000.0, fmax=64000.0, bins_per_octave=6)
+    hi = gs.logspec_trial(gs.load_wav_int16(root / "Soundset", "PT_70dB_8kHz"),
+                          n_bins=180, dt_ms=5.0, fmin=2000.0, fmax=64000.0, bins_per_octave=6)
+    assert lo.shape == (31, 180) and lo.dtype == np.float32
+    band = int(np.argmax(hi[:, 100]))                         # the 8 kHz band, mid-sound
+    assert hi[band, 100] - lo[band, 100] == pytest.approx(20.0, abs=0.1)
+    floor = gs.spec_floor_db(10.0)                            # window = 2 * dt
+    assert lo[:, :30].min() == pytest.approx(floor) and lo[:, :30].max() == pytest.approx(floor)
