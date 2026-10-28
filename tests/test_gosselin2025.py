@@ -237,3 +237,31 @@ def test_derived_neuron_meta(ds_ephys):
     assert set(m) >= {"cell_id", "area", "session", "session_id", "index_in_release",
                       "best_freq_khz", "spont_rate"}
     assert m["best_freq_khz"] == 8.0                   # only one 70 dB tone in the fake set
+
+
+def test_cochlear_ihc_mode(release, tmp_path):
+    root, info = release
+    ds = Gosselin2025Dataset(str(root), areas=("IC",), spec_backend="cochlear_model",
+                             cache_dir=str(tmp_path))
+    assert ds.F == 4 and ds.stims[0].shape == (1, 4, 180)
+    x = ds.stims[0][0]
+    assert float(x[2, 39]) == pytest.approx(np.mean([1.0, 5.0, 20.0]))      # spont, pre-onset
+    assert float(x[2, 40]) == pytest.approx(np.mean([1.0, 5.0, 20.0]) + 300.0)
+    assert len(ds.cochlear_cf_khz) == 4
+
+
+def test_cochlear_fibres_log1p_and_ac_padding(release, tmp_path):
+    root, _ = release
+    ds = Gosselin2025Dataset(str(root), areas=("AC",), spec_backend="cochlear_model",
+                             cochlear_channels="fibres", cochlear_transform="log1p",
+                             cache_dir=str(tmp_path))
+    assert ds.stims[0].shape == (1, 12, 24)
+    assert float(ds.stims[0][0, 0, 23]) == pytest.approx(np.log1p(1.0))       # padded spont
+    np.testing.assert_array_equal(ds.cochlear_ihc_of_fibre, np.repeat(np.arange(4), 3))
+
+
+def test_cochlear_rejects_waveform(release, tmp_path):
+    root, _ = release
+    with pytest.raises(ValueError, match="exclude"):
+        Gosselin2025Dataset(str(root), spec_backend="cochlear_model", return_waveform=True,
+                            cache_dir=str(tmp_path))

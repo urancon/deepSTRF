@@ -291,7 +291,28 @@ class Gosselin2025Dataset(AudioNeuralDataset):
         self.F = int(self.stims[0].shape[1])
 
     def _build_cochlear(self, root, cache, T, dt, channels, transform):
-        raise NotImplementedError   # cochlear mode: next commit
+        ihc, groups = gp.load_cochlear_ihc(cache)                       # (G, 900, S), (fibres,)
+        if channels == "fibres":
+            order = np.array([m["index_cc"] for m in self.stim_meta])
+            cc = np.load(root / "Dataset_CC.npy", mmap_mode="r")
+
+            def per_stim(s):
+                return np.asarray(cc[:, :, order[s]])                   # (fibres, 900)
+
+            self.cochlear_ihc_of_fibre = groups
+            self.cochlear_cf_khz = gc.approx_cf_khz(int(groups.max()) + 1)[groups]
+        else:
+            def per_stim(s):
+                return ihc[:, :, s]
+
+            self.cochlear_cf_khz = gc.approx_cf_khz(ihc.shape[0])
+        self.cochlear_transform = transform
+        for s in range(len(self.stim_meta)):
+            x = gc.rebin_cochlear(per_stim(s), dt, T)
+            if transform == "log1p":
+                x = np.log1p(x)
+            self.stims.append(torch.from_numpy(x.astype(np.float32))[None])
+        self.F = int(self.stims[0].shape[1])
 
     # ----------------------------------------------------------------- split
     def group_split(self, seed: Optional[int] = None,
