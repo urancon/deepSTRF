@@ -341,11 +341,17 @@ class ICNet(AudioEncodingModel):
         Total receptive field of the encoder, used to size the kernels that
         are not given explicitly (:func:`icnet_kernel_sizes`). ``None`` keeps
         the paper's 64-tap kernels.
+    init_rate : float or None, default 0.05
+        Initial predicted rate: the decoder bias is set so that ``softplus(bias)`` equals
+        it (pass the mean training response, as a prior initialisation). Neural targets
+        are sparse and low; PyTorch's default bias gives ``softplus(0) = 0.69``, and the
+        first epochs are then spent pulling the output down. ``None`` keeps the default.
 
     .. versionchanged:: 0.1.1
        ``norm='layer'`` and ``receptive_field_ms=250`` are the new defaults
-       (previously no normalisation and 64-tap kernels). SincNet filters are
-       now peak-normalised as in the reference code.
+       (previously no normalisation and 64-tap kernels), and the decoder bias starts
+       the prediction at ``init_rate`` (0.05). SincNet filters are now peak-normalised
+       as in the reference code.
 
     References
     ----------
@@ -365,7 +371,8 @@ class ICNet(AudioEncodingModel):
                  bottleneck_channels: int = 64,
                  encoder_strides: Optional[Sequence[int]] = None,
                  norm: Optional[str] = "layer",
-                 receptive_field_ms: Optional[float] = 250.0):
+                 receptive_field_ms: Optional[float] = 250.0,
+                 init_rate: Optional[float] = 0.05):
         encoder = _ICNetEncoder(
             audio_fs=audio_fs, dt_ms=dt_ms,
             n_filters=n_filters,
@@ -391,6 +398,14 @@ class ICNet(AudioEncodingModel):
         # readout: per-timestep linear projection from the 64-dim latent
         # to N output neurons + softplus (Poisson head).
         self.decoder = nn.Linear(bottleneck_channels, out_neurons, bias=True)
+        if init_rate is not None:
+            # softplus(bias) = init_rate: the initial prediction sits at the response scale
+            # instead of softplus(0) = 0.69, as for the parametric output activations
+            if init_rate <= 0:
+                raise ValueError(f"init_rate must be positive, got {init_rate}")
+            with torch.no_grad():
+                r = torch.as_tensor(float(init_rate), dtype=torch.float64)
+                self.decoder.bias.fill_(float(r + torch.log(-torch.expm1(-r))))
         self.readout = self.decoder  # base-class compat (validate() looks here)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

@@ -188,3 +188,16 @@ def test_icnet_defaults_norm_and_ms_kernels():
     with pytest.raises(ValueError):
         ICNet(audio_fs=16000, out_neurons=3, dt_ms=5.0, norm="batch")
 
+
+
+def test_icnet_init_rate():
+    """The initial prediction sits at init_rate (softplus of the decoder bias)."""
+    import torch.nn.functional as F
+    from deepSTRF.models.audio import ICNet
+
+    m = ICNet(audio_fs=16000, out_neurons=3, dt_ms=5.0, init_rate=0.02)
+    assert torch.allclose(F.softplus(m.decoder.bias), torch.full((3,), 0.02), atol=1e-6)
+    m = ICNet(audio_fs=16000, out_neurons=3, dt_ms=5.0)
+    assert torch.allclose(F.softplus(m.decoder.bias), torch.full((3,), 0.05), atol=1e-6)
+    with pytest.raises(ValueError):
+        ICNet(audio_fs=16000, out_neurons=3, dt_ms=5.0, init_rate=0.0)

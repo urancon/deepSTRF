@@ -54,8 +54,10 @@ While the version is `0.x`, the public API may still change between minor releas
   encoder covers the same duration at any sample rate and stride
   factorisation. With fixed 64-tap kernels it spanned from tens of ms to over
   a second across datasets, and without normalisation training was unstable on
-  datasets recorded at unusual waveform levels. `ICNet(..., norm=None,
-  receptive_field_ms=None)` gives the paper's layer structure.
+  datasets recorded at unusual waveform levels. The decoder bias now starts the
+  prediction at `init_rate` (0.05; pass the mean training response) instead of
+  softplus(0) = 0.69. `ICNet(..., norm=None, receptive_field_ms=None,
+  init_rate=None)` gives the paper's layer structure and init.
 - **Responses are no longer smoothed by default.** NS1, CRCNS-AA1, AA2,
   AA4, AA5, Le 2025 and Downer 2025 now default to `smooth=False`. The
   21-ms Hanning window is centred, so a smoothed bin holds spikes from up to
