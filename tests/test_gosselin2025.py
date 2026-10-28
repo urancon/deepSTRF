@@ -8,6 +8,7 @@ import pytest
 
 from tests.gosselin2025_fake import write_fake_release
 from deepSTRF.datasets.audio import _gosselin2025_stims as gs
+from deepSTRF.datasets.audio import _gosselin2025_cochlear as gc
 
 
 @pytest.fixture(scope="module")
@@ -92,3 +93,33 @@ def test_shipped_gain_copies_json():
     assert len(groups) == 44 and all(len(g) == 2 for g in groups)
     assert ["PT_50dB_2kHz", "PT_70dB_2kHz"] in groups
     assert ["bird_inverted50dB", "bird_inverted70dB"] in groups
+
+
+def test_ihc_groups_from_spont_resets():
+    spont = np.array([1, 5, 20, 1, 5, 20, 0.5, 3, 2, 9])
+    np.testing.assert_array_equal(gc.ihc_groups_from_spont(spont), [0, 0, 0, 1, 1, 1, 2, 2, 3, 3])
+
+
+def test_approx_cf():
+    cf = gc.approx_cf_khz(51)
+    assert cf[0] == pytest.approx(5.0) and cf[-1] == pytest.approx(50.0)
+    assert np.allclose(np.diff(np.log(cf)), np.log(10) / 50)
+
+
+def test_rebin_integer_and_fractional_with_spont_pad():
+    x = np.zeros((1, 900))
+    x[0, :200] = 2.0                  # spontaneous
+    x[0, 200:700] = 10.0
+    x[0, 700:] = 2.0
+    r5 = gc.rebin_cochlear(x, 5.0, 180)
+    assert r5.shape == (1, 180) and r5[0, 39] == 2.0 and r5[0, 40] == 10.0
+    rac = gc.rebin_cochlear(x, 43.5, 24)
+    assert rac.shape == (1, 24)
+    assert rac[0, 0] == pytest.approx(2.0)
+    assert rac[0, 4] == pytest.approx((26.0 * 2 + 17.5 * 10) / 43.5)   # bin 4 = 174..217.5 ms
+    assert rac[0, 23] == pytest.approx(2.0)                           # 1000.5..1044 ms: padded
+
+
+def test_overlap_weights_rows_sum_to_one():
+    W = gc.overlap_weights(1044, 43.5, 24)
+    np.testing.assert_allclose(W.sum(1), 1.0)
