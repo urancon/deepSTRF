@@ -137,3 +137,67 @@ def test_icnet_not_exposed_in_wav2spec_namespace():
     import deepSTRF.models.wav2spec as w
     assert not hasattr(w, "ICNetFrontend")
     assert not hasattr(w, "_ICNetEncoder")
+
+
+def test_icnet_kernel_sizes_fixed_duration():
+    """Kernels sized in ms: receptive field <= the target, and the same layer durations
+    at any sample rate."""
+    from deepSTRF.models.audio.icnet import icnet_kernel_sizes
+
+    # 44.1 kHz / 10 ms (Espejo, NAT4, Wingert) and 48 kHz / 5 ms (NS1)
+    assert icnet_kernel_sizes(44100, [7, 7, 3, 3, 1])[:2] == (189, [186, 53, 15, 10, 7, 13])
+    assert icnet_kernel_sizes(48000, [5, 4, 3, 2, 2])[:2] == (194, [191, 76, 38, 26, 26, 26])
+    for fs, st in [(16000, [5, 4, 2, 2, 2]), (24000, [5, 4, 3, 2, 2]), (44100, [7, 7, 3, 3, 1])]:
+        k_sinc, k_enc, rf = icnet_kernel_sizes(fs, st, receptive_field_ms=250.0)
+        assert 230.0 < rf <= 250.0
+        assert len(k_enc) == len(st) + 1
+        assert k_sinc >= 2 and all(k >= s for k, s in zip(k_enc, st))
+        # the first conv lasts about as long at every rate (paper: 64 taps at 24 414 Hz)
+        assert abs(k_enc[0] / fs * 1000 - 4.2) < 0.3
+    # a longer target gives longer kernels
+    assert icnet_kernel_sizes(44100, [7, 7, 3, 3, 1], 500.0)[2] > 400.0
+
+
+def test_icnet_defaults_norm_and_ms_kernels():
+    """Default: CausalLayerNorm after each conv and kernels from receptive_field_ms;
+    norm=None, receptive_field_ms=None gives the paper's structure."""
+    from deepSTRF.models.audio import ICNet
+    from deepSTRF.models.audio.icnet import icnet_kernel_sizes
+    from deepSTRF.models.layers import CausalLayerNorm
+
+    m = ICNet(audio_fs=44100, out_neurons=3, dt_ms=10.0)
+    enc = m.wav2spec
+    k_sinc, k_enc, _ = icnet_kernel_sizes(44100, enc.encoder_strides)
+    assert enc.sincnet_kernel_size == k_sinc and enc.encoder_kernel_sizes == k_enc
+    assert enc.sincnet.kernel_size == k_sinc
+    assert [b.conv.kernel_size[0] for b in [*enc.encoder, enc.bottleneck]] == k_enc
+    assert all(isinstance(b.norm, CausalLayerNorm) for b in [*enc.encoder, enc.bottleneck])
+
+    p = ICNet(audio_fs=44100, out_neurons=3, dt_ms=10.0, norm=None, receptive_field_ms=None)
+    assert p.wav2spec.sincnet_kernel_size == 64 and p.wav2spec.encoder_kernel_sizes == [64] * 6
+    assert all(isinstance(b.norm, torch.nn.Identity)
+               for b in [*p.wav2spec.encoder, p.wav2spec.bottleneck])
+
+    # explicit kernels win over receptive_field_ms
+    e = ICNet(audio_fs=16000, out_neurons=3, dt_ms=5.0, sincnet_kernel_size=31,
+              encoder_kernel_size=[9, 8, 7, 6, 5, 4])
+    assert e.wav2spec.sincnet_kernel_size == 31
+    assert e.wav2spec.encoder_kernel_sizes == [9, 8, 7, 6, 5, 4]
+    with pytest.raises(ValueError):
+        ICNet(audio_fs=16000, out_neurons=3, dt_ms=5.0, encoder_kernel_size=[9, 8])
+    with pytest.raises(ValueError):
+        ICNet(audio_fs=16000, out_neurons=3, dt_ms=5.0, norm="batch")
+
+
+
+def test_icnet_init_rate():
+    """The initial prediction sits at init_rate (softplus of the decoder bias)."""
+    import torch.nn.functional as F
+    from deepSTRF.models.audio import ICNet
+
+    m = ICNet(audio_fs=16000, out_neurons=3, dt_ms=5.0, init_rate=0.02)
+    assert torch.allclose(F.softplus(m.decoder.bias), torch.full((3,), 0.02), atol=1e-6)
+    m = ICNet(audio_fs=16000, out_neurons=3, dt_ms=5.0)
+    assert torch.allclose(F.softplus(m.decoder.bias), torch.full((3,), 0.05), atol=1e-6)
+    with pytest.raises(ValueError):
+        ICNet(audio_fs=16000, out_neurons=3, dt_ms=5.0, init_rate=0.0)

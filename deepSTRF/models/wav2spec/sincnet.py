@@ -51,6 +51,9 @@ class SincNet(nn.Module):
         hard clamps are at 0 Hz and audio_fs/2.
     init : {'mel', 'linear'}, default 'mel'
         Initial filter edge spacing.
+    normalize : bool, default True
+        Peak-normalise each band-pass kernel (before the window), as in the reference
+        SincNet and ICNet code. ``False`` gives the previous behaviour (passband gain ~1).
     activation : {'symlog', 'logabs', 'none'}, default 'logabs'
         Output nonlinearity. ``'logabs'`` = ``log(|x|+1)`` (standard
         SincNet, half-wave rectified) — sensible default when SincNet is
@@ -94,7 +97,8 @@ class SincNet(nn.Module):
                  f_min: float = 300.0, f_max: float | None = None,
                  init: str = "mel", activation: str = "logabs",
                  envelope: bool = False,
-                 env_window_ms: float | None = None):
+                 env_window_ms: float | None = None,
+                 normalize: bool = True):
         super().__init__()
         if audio_fs <= 0:
             raise ValueError(f"audio_fs must be positive (got {audio_fs})")
@@ -104,6 +108,7 @@ class SincNet(nn.Module):
             raise ValueError(f"init must be 'mel' or 'linear' (got {init!r})")
 
         self.audio_fs = int(audio_fs)
+        self.normalize = bool(normalize)
         self.n_filters = int(n_filters)
         self.out_channels = self.n_filters
         self.kernel_size = int(kernel_size)
@@ -212,6 +217,13 @@ class SincNet(nn.Module):
         # overwrite centre-tap with the analytic limit 2(f2 - f1) / fs
         centre = 2.0 * (f2 - f1) / fs   # (n_filters, 1)
         h = torch.where(mask, centre.expand_as(h), h)
+        if self.normalize:
+            # Peak-normalise each band-pass, as both reference implementations do
+            # (Ravanelli & Bengio 2018: band_pass / max(band_pass); ICNet, Drakopoulos 2025:
+            # band_pass / reduce_max(band_pass)). Without it the passband gain is ~1 and the
+            # peak tap is 2(f2 - f1)/fs, so narrow (low-frequency) bands come out far weaker
+            # than in the references (x 1/400 at 50 Hz bandwidth, 44.1 kHz).
+            h = h / h.max(dim=-1, keepdim=True).values.clamp_min(1e-8)
         # window + reshape for Conv1d
         h = h * self._window
         return h.unsqueeze(1)  # (n_filters, 1, K)

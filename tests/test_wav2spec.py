@@ -279,3 +279,24 @@ def test_gammatonegram_rejects_superhop_window():
     from deepSTRF.models.wav2spec import Gammatonegram
     with pytest.raises(ValueError, match="causality"):
         Gammatonegram(audio_fs=16000, n_filters=24, hop_ms=5.0, window_ms=10.0)
+
+
+def test_sincnet_peak_normalised_filters():
+    """normalize=True (default) scales each band-pass to a peak tap of 1 before the window,
+    as in the reference SincNet / ICNet code; normalize=False keeps the analytic gain."""
+    import torch
+    from deepSTRF.models.wav2spec import SincNet
+
+    a = SincNet(audio_fs=16000, n_filters=8, kernel_size=65, hop_ms=5.0)
+    b = SincNet(audio_fs=16000, n_filters=8, kernel_size=65, hop_ms=5.0, normalize=False)
+    b.load_state_dict(a.state_dict())
+    with torch.no_grad():
+        ha, hb = a._build_filters(), b._build_filters()
+    win = a._window
+    raw_a = ha.squeeze(1) / win.clamp_min(1e-12)
+    centre = raw_a.shape[-1] // 2
+    assert torch.allclose(raw_a.max(dim=-1).values, torch.ones(8), atol=1e-4)
+    # same shape, different gain: normalised = analytic / its own peak
+    ratio = ha.squeeze(1)[:, centre] / hb.squeeze(1)[:, centre]
+    assert torch.allclose(ha.squeeze(1), hb.squeeze(1) * ratio[:, None], atol=1e-5)
+    assert (ratio > 1).all()                     # analytic peak 2(f2 - f1)/fs < 1

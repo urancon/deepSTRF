@@ -1,7 +1,7 @@
 """ICNet — full encoder+decoder model from Drakopoulos et al. (2025)."""
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Union
 
 import torch
 import torch.nn as nn
@@ -9,6 +9,7 @@ import torch.nn.functional as F
 
 from deepSTRF.models.audio.audio_model import AudioEncodingModel
 from deepSTRF.models.wav2spec.sincnet import SincNet
+from deepSTRF.models.layers import CausalLayerNorm
 
 
 def _factor_into_strides(total: int, n_layers: int) -> list[int]:
@@ -65,11 +66,58 @@ def _factor_into_strides(total: int, n_layers: int) -> list[int]:
     return strides
 
 
+# The paper's encoder: 24 414 Hz audio, five stride-2 convs, 65-tap SincConv and 64-tap convs.
+_PAPER_FS = 24414.0625
+
+
+def icnet_kernel_sizes(audio_fs: float, strides: Sequence[int],
+                       receptive_field_ms: float = 250.0) -> tuple[int, list[int], float]:
+    """Kernel lengths that give ICNet the same layer durations at any sample rate.
+
+    Each layer keeps the paper's duration ratios (SincConv 65 taps and convs of 64 taps at
+    24 414 Hz with stride-2 layers, i.e. 2.7 ms for the SincConv, then 2.6, 5.2, 10.5, 21,
+    42 ms and 84 ms for the bottleneck, with 5 layers), scaled by one common factor: the largest one
+    whose total receptive field is at most ``receptive_field_ms``. Each kernel is at least
+    its layer's stride (2 taps for the SincConv, 1 for the bottleneck).
+
+    Returns ``(sincnet_kernel_size, encoder_kernel_sizes, receptive_field_ms_actual)``,
+    where ``encoder_kernel_sizes`` has ``len(strides) + 1`` entries (convs, then bottleneck).
+    The paper's own encoder has a receptive field of about 165 ms.
+    """
+    strides = [int(s) for s in strides]
+    n = len(strides)        # layer l of the paper runs at 24 414 / 2**l Hz
+    durations = ([65 / _PAPER_FS] + [64 / (_PAPER_FS / 2 ** l) for l in range(n)]
+                 + [64 / (_PAPER_FS / 2 ** n)])
+    rates, jumps, r, j = [float(audio_fs)], [1], float(audio_fs), 1   # SincConv: input rate
+    for s in strides:                                          # each conv: its input rate
+        rates.append(r)
+        jumps.append(j)
+        r, j = r / s, j * s
+    rates.append(r)                                            # bottleneck
+    jumps.append(j)
+    mins = [2] + strides + [1]
+
+    def build(c):
+        ks = [max(m, round(c * d * rt)) for d, rt, m in zip(durations, rates, mins)]
+        rf = 1 + sum((k - 1) * jp for k, jp in zip(ks, jumps))
+        return ks, rf / audio_fs * 1000.0
+
+    lo, hi = 0.01, 100.0
+    for _ in range(80):                                        # bisection on the factor
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if build(mid)[1] <= receptive_field_ms else (lo, mid)
+    ks, rf = build(lo)
+    return ks[0], ks[1:], rf
+
+
 class _CausalConv1dBlock(nn.Module):
-    """Conv1d with strict left-padding + PReLU. Output length = T_in // stride."""
+    """Conv1d with strict left-padding (+ optional norm) + PReLU. Output length = T_in // stride.
+
+    ``norm='layer'`` inserts a :class:`CausalLayerNorm` over the channels at every time step
+    between the conv and the PReLU (strictly causal, independent of the batch size)."""
 
     def __init__(self, in_channels: int, out_channels: int,
-                 kernel_size: int, stride: int):
+                 kernel_size: int, stride: int, norm: Optional[str] = None):
         super().__init__()
         self.kernel_size = kernel_size
         self.stride = stride
@@ -77,12 +125,18 @@ class _CausalConv1dBlock(nn.Module):
         self.conv = nn.Conv1d(in_channels, out_channels,
                               kernel_size=kernel_size, stride=stride,
                               padding=0, bias=True)
+        if norm is None:
+            self.norm = nn.Identity()
+        elif norm == "layer":
+            self.norm = CausalLayerNorm(out_channels, dim=1)
+        else:
+            raise ValueError(f"norm must be None or 'layer', got {norm!r}")
         self.activation = nn.PReLU(num_parameters=out_channels)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.left_pad > 0:
             x = F.pad(x, (self.left_pad, 0))
-        return self.activation(self.conv(x))
+        return self.activation(self.norm(self.conv(x)))
 
 
 class _ICNetEncoder(nn.Module):
@@ -93,10 +147,12 @@ class _ICNetEncoder(nn.Module):
     """
 
     def __init__(self, audio_fs: int, dt_ms: float,
-                 n_filters: int, sincnet_kernel_size: int,
-                 encoder_channels: int, encoder_kernel_size: int,
+                 n_filters: int, sincnet_kernel_size: Optional[int],
+                 encoder_channels: int, encoder_kernel_size,
                  n_encoder_layers: int, bottleneck_channels: int,
-                 encoder_strides: Optional[Sequence[int]] = None):
+                 encoder_strides: Optional[Sequence[int]] = None,
+                 norm: Optional[str] = "layer",
+                 receptive_field_ms: Optional[float] = 250.0):
         super().__init__()
         if audio_fs <= 0 or dt_ms <= 0:
             raise ValueError(f"audio_fs ({audio_fs}) and dt_ms ({dt_ms}) must be positive")
@@ -119,22 +175,44 @@ class _ICNetEncoder(nn.Module):
                 )
         self.encoder_strides = strides
 
+        # kernel lengths: explicit ints / lists win; otherwise sized in ms from
+        # receptive_field_ms (deepSTRF default), or the paper's 64 taps when it is None
+        if receptive_field_ms is not None and (sincnet_kernel_size is None
+                                               or encoder_kernel_size is None):
+            k_sinc, k_enc, _ = icnet_kernel_sizes(audio_fs, strides, receptive_field_ms)
+            sincnet_kernel_size = k_sinc if sincnet_kernel_size is None else sincnet_kernel_size
+            encoder_kernel_size = k_enc if encoder_kernel_size is None else encoder_kernel_size
+        sincnet_kernel_size = 64 if sincnet_kernel_size is None else sincnet_kernel_size
+        encoder_kernel_size = 64 if encoder_kernel_size is None else encoder_kernel_size
+        self.sincnet_kernel_size = int(sincnet_kernel_size)
+
         # SincNet front (stride 1, no envelope: ICNet relies on the downstream
         # conv stack to extract envelopes from the signed bandpass).
         self.sincnet = SincNet(
             audio_fs=audio_fs, n_filters=n_filters,
-            kernel_size=sincnet_kernel_size,
+            kernel_size=self.sincnet_kernel_size,
             hop_ms=1000.0 / audio_fs,   # stride 1 in samples
             init="mel", activation="symlog", envelope=False,
         )
 
+        # per-layer kernels: an int (same for every conv, the paper's 64) or a list of
+        # n_encoder_layers + 1 ints (encoder convs, then the bottleneck)
+        if isinstance(encoder_kernel_size, int):
+            ks = [int(encoder_kernel_size)] * (len(strides) + 1)
+        else:
+            ks = [int(k) for k in encoder_kernel_size]
+            if len(ks) != len(strides) + 1:
+                raise ValueError(f"encoder_kernel_size list needs {len(strides) + 1} entries "
+                                 f"(encoder convs + bottleneck), got {len(ks)}")
+        self.encoder_kernel_sizes = ks
+
         # 5 strided conv layers
         in_ch = n_filters
         layers = []
-        for s in strides:
+        for s, k in zip(strides, ks[:-1]):
             layers.append(_CausalConv1dBlock(
                 in_ch, encoder_channels,
-                kernel_size=encoder_kernel_size, stride=s,
+                kernel_size=k, stride=s, norm=norm,
             ))
             in_ch = encoder_channels
         self.encoder = nn.ModuleList(layers)
@@ -142,7 +220,7 @@ class _ICNetEncoder(nn.Module):
         # Bottleneck conv (stride 1)
         self.bottleneck = _CausalConv1dBlock(
             encoder_channels, bottleneck_channels,
-            kernel_size=encoder_kernel_size, stride=1,
+            kernel_size=ks[-1], stride=1, norm=norm,
         )
 
         self.bottleneck_channels = bottleneck_channels
@@ -150,7 +228,9 @@ class _ICNetEncoder(nn.Module):
 
     def extra_repr(self) -> str:
         return (f"audio_fs={self.audio_fs}, dt_ms={self.dt_ms}, "
-                f"strides={self.encoder_strides}, out_channels={self.out_channels}")
+                f"strides={self.encoder_strides}, sinc_kernel={self.sincnet_kernel_size}, "
+                f"kernels={self.encoder_kernel_sizes}, "
+                f"out_channels={self.out_channels}")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() != 3 or x.shape[1] != 1:
@@ -169,28 +249,34 @@ class _ICNetEncoder(nn.Module):
 class ICNet(AudioEncodingModel):
     """End-to-end ICNet (Drakopoulos et al. 2025) ported to deepSTRF.
 
-    Architecture: SincNet (48 filters, K=64, stride 1, symlog) → 5× causal
-    ``Conv1d(128 ch, K=64, PReLU)`` at strides that multiply to
-    ``audio_fs · dt_ms / 1000`` → bottleneck ``Conv1d(64 ch, K=64, stride 1,
+    Architecture: SincNet (48 filters, stride 1, symlog) → 5× causal
+    ``Conv1d(128 ch, PReLU)`` at strides that multiply to
+    ``audio_fs · dt_ms / 1000`` → bottleneck ``Conv1d(64 ch, stride 1,
     PReLU)`` → ``Linear(64 → N)`` → softplus (Poisson head, ``N_c = 1`` in
-    paper notation).
+    paper notation). By default each conv is followed by a
+    :class:`~deepSTRF.models.layers.CausalLayerNorm` and the kernels are sized in
+    milliseconds (see below).
 
     Cross-dataset configuration
     ---------------------------
     The paper trains on 24 414 Hz gerbil-IC audio binned at ~1.31 ms (32
-    samples per bin, 5 stride-2 conv layers). To use the same architecture
-    on a dataset at a different ``(audio_fs, dt_ms)``, the encoder strides
-    are auto-factored (balanced, see :func:`_factor_into_strides`) so they
-    multiply to ``audio_fs · dt_ms / 1000`` (the number of audio samples per
-    neural bin). For NS1 (48 kHz / 5 ms) that's 240 samples / bin and the
-    default factorisation is ``[5, 4, 3, 2, 2]``. Pass an explicit
-    ``encoder_strides`` list to override. The layer
-    structure (kernel sizes, channel counts, activations) stays
-    paper-faithful; only the strides scale with the dataset, per the
-    deepSTRF policy of adapting hyperparameters to each dataset's temporal
-    resolution.
+    samples per bin, 5 stride-2 conv layers, 64-tap kernels, ~165 ms
+    receptive field). To use the architecture on a dataset at a different
+    ``(audio_fs, dt_ms)``:
 
-    The decoder is intentionally simple — paper-faithful (the paper:
+    - the encoder strides are auto-factored (balanced, see
+      :func:`_factor_into_strides`) so they multiply to ``audio_fs · dt_ms / 1000``
+      (the number of audio samples per neural bin). For NS1 (48 kHz / 5 ms)
+      that's 240 samples / bin and the factorisation ``[5, 4, 3, 2, 2]``. Pass
+      an explicit ``encoder_strides`` list to override;
+    - the kernel lengths are set by :func:`icnet_kernel_sizes` so that every
+      layer keeps the paper's duration ratios and the whole encoder sees
+      ``receptive_field_ms`` (250 ms by default) of sound, whatever the sample
+      rate and strides. With fixed 64-tap kernels the receptive field would
+      instead range from tens of ms to over a second across datasets. Pass
+      explicit ``sincnet_kernel_size`` / ``encoder_kernel_size`` to override.
+
+        The decoder is intentionally simple — paper-faithful (the paper:
     *"the simple linear decoders in ICNet … ensure that the latent
     representation in the bottleneck is constrained to directly reflect
     the dynamics that underlie neural activity"*). The expressivity lives
@@ -210,6 +296,14 @@ class ICNet(AudioEncodingModel):
       edge effects. deepSTRF's convention is to keep ``T_neural`` output
       frames matching the dataset's response window; causal convs leave
       the first few frames noisier but downstream losses handle that.
+    - Normalisation layers (``norm='layer'``, default). The paper has none.
+      Without them, training is unstable on datasets whose waveforms come at
+      very different levels (Espejo: test cc_norm 0.18 without, 0.62 with).
+    - Kernels sized in ms (``receptive_field_ms=250``, default) instead of
+      64 taps everywhere.
+
+    ``ICNet(..., norm=None, receptive_field_ms=None)`` gives the paper's
+    layer structure (64-tap kernels, no normalisation).
 
     Parameters
     ----------
@@ -222,14 +316,42 @@ class ICNet(AudioEncodingModel):
         total downsampling matches ``audio_fs · dt_ms / 1000``.
     n_filters : int, default 48
         SincNet filter count.
-    sincnet_kernel_size : int, default 64
+    sincnet_kernel_size : int, optional
+        SincNet kernel length. Default: from ``receptive_field_ms``
+        (64 if that is ``None``).
     encoder_channels : int, default 128
-    encoder_kernel_size : int, default 64
+    encoder_kernel_size : int or sequence of int, optional
+        One kernel length for every encoder conv and the bottleneck, or a list
+        of ``n_encoder_layers + 1`` lengths (encoder convs, then the
+        bottleneck). Default: from ``receptive_field_ms`` (64 everywhere, the
+        paper's, if that is ``None``).
     n_encoder_layers : int, default 5
     bottleneck_channels : int, default 64
         Output channel count of the bottleneck conv.
     encoder_strides : sequence of int, optional
         Per-layer encoder strides. Default: auto-factor.
+    norm : {'layer', None}, default 'layer'
+        ``'layer'`` adds a :class:`~deepSTRF.models.layers.CausalLayerNorm`
+        over the channels after every encoder / bottleneck conv, before the
+        PReLU: strictly causal and independent of the batch size. It keeps every
+        layer's activations at a fixed scale (per time step, across channels),
+        whatever the level of the input waveform. ``None`` = the paper (no
+        normalisation).
+    receptive_field_ms : float or None, default 250.0
+        Total receptive field of the encoder, used to size the kernels that
+        are not given explicitly (:func:`icnet_kernel_sizes`). ``None`` keeps
+        the paper's 64-tap kernels.
+    init_rate : float or None, default 0.05
+        Initial predicted rate: the decoder bias is set so that ``softplus(bias)`` equals
+        it (pass the mean training response, as a prior initialisation). Neural targets
+        are sparse and low; PyTorch's default bias gives ``softplus(0) = 0.69``, and the
+        first epochs are then spent pulling the output down. ``None`` keeps the default.
+
+    .. versionchanged:: 0.1.1
+       ``norm='layer'`` and ``receptive_field_ms=250`` are the new defaults
+       (previously no normalisation and 64-tap kernels), and the decoder bias starts
+       the prediction at ``init_rate`` (0.05). SincNet filters are now peak-normalised
+       as in the reference code.
 
     References
     ----------
@@ -242,12 +364,15 @@ class ICNet(AudioEncodingModel):
     def __init__(self, audio_fs: int, out_neurons: int,
                  dt_ms: float = 5.0,
                  n_filters: int = 48,
-                 sincnet_kernel_size: int = 64,
+                 sincnet_kernel_size: Optional[int] = None,
                  encoder_channels: int = 128,
-                 encoder_kernel_size: int = 64,
+                 encoder_kernel_size: Union[int, Sequence[int], None] = None,
                  n_encoder_layers: int = 5,
                  bottleneck_channels: int = 64,
-                 encoder_strides: Optional[Sequence[int]] = None):
+                 encoder_strides: Optional[Sequence[int]] = None,
+                 norm: Optional[str] = "layer",
+                 receptive_field_ms: Optional[float] = 250.0,
+                 init_rate: Optional[float] = 0.05):
         encoder = _ICNetEncoder(
             audio_fs=audio_fs, dt_ms=dt_ms,
             n_filters=n_filters,
@@ -257,6 +382,8 @@ class ICNet(AudioEncodingModel):
             n_encoder_layers=n_encoder_layers,
             bottleneck_channels=bottleneck_channels,
             encoder_strides=encoder_strides,
+            norm=norm,
+            receptive_field_ms=receptive_field_ms,
         )
         super().__init__(
             n_frequency_bands=bottleneck_channels,
@@ -271,6 +398,14 @@ class ICNet(AudioEncodingModel):
         # readout: per-timestep linear projection from the 64-dim latent
         # to N output neurons + softplus (Poisson head).
         self.decoder = nn.Linear(bottleneck_channels, out_neurons, bias=True)
+        if init_rate is not None:
+            # softplus(bias) = init_rate: the initial prediction sits at the response scale
+            # instead of softplus(0) = 0.69, as for the parametric output activations
+            if init_rate <= 0:
+                raise ValueError(f"init_rate must be positive, got {init_rate}")
+            with torch.no_grad():
+                r = torch.as_tensor(float(init_rate), dtype=torch.float64)
+                self.decoder.bias.fill_(float(r + torch.log(-torch.expm1(-r))))
         self.readout = self.decoder  # base-class compat (validate() looks here)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

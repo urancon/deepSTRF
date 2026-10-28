@@ -206,9 +206,13 @@ leaf = CausalLEAF(audio_fs=48000, n_filters=34, hop_ms=5.0,
 
 [ICNet](https://doi.org/10.1038/s42256-025-01104-9) (Drakopoulos et al.
 Nat. Mach. Intell. 2025) has its own SincNet-and-conv-stack front-end:
-`SincNet(48 filters, K=64, stride 1, symlog)` → 5× causal `Conv1d(128
-ch, K=64, PReLU)` → bottleneck `Conv1d(64 ch, K=64, stride 1, PReLU)`,
-producing a 64-channel bottleneck latent at the neural rate. It slots
+`SincNet(48 filters, stride 1, symlog)` → 5× causal `Conv1d(128 ch,
+CausalLayerNorm, PReLU)` → bottleneck `Conv1d(64 ch, stride 1,
+CausalLayerNorm, PReLU)`, producing a 64-channel bottleneck latent at the
+neural rate. The kernel lengths are set in milliseconds so the encoder
+covers 250 ms of sound at any sample rate (`receptive_field_ms`); the
+paper uses 64-tap kernels and no normalisation (`norm=None,
+receptive_field_ms=None`). It slots
 into ICNet's own `wav2spec` attribute but is not exposed in the public
 `deepSTRF.models.wav2spec` namespace — it's tightly coupled to the
 ICNet model and not particularly useful as a generic front-end. Build
