@@ -78,3 +78,17 @@ def test_logspec_keeps_absolute_level_and_floor(release):
     assert hi[band, 100] - lo[band, 100] == pytest.approx(20.0, abs=0.1)
     floor = gs.spec_floor_db(10.0)                            # window = 2 * dt
     assert lo[:, :30].min() == pytest.approx(floor) and lo[:, :30].max() == pytest.approx(floor)
+
+
+def test_find_gain_copies_on_fake(release):
+    root, _ = release
+    names = [m["name"] for m in gs.build_stim_table(root / "Sound Parameters.csv", root / "Soundset")]
+    groups = gs.find_gain_copies(root / "Soundset", names)
+    assert groups == [["PT_50dB_8kHz", "PT_70dB_8kHz"], ["bird_50dB", "bird_70dB"]]
+
+
+def test_shipped_gain_copies_json():
+    groups = gs.load_gain_copies()
+    assert len(groups) == 44 and all(len(g) == 2 for g in groups)
+    assert ["PT_50dB_2kHz", "PT_70dB_2kHz"] in groups
+    assert ["bird_inverted50dB", "bird_inverted70dB"] in groups

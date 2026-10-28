@@ -5,9 +5,10 @@ Internal to :mod:`deepSTRF.datasets.audio.gosselin2025`.
 from __future__ import annotations
 
 import csv
+import json
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 import soundfile as sf
@@ -171,3 +172,38 @@ def logspec_trial(wav: np.ndarray, n_bins: int, dt_ms: float, fmin: float, fmax:
                              window_ms=window_ms)
     S_db = np.maximum(S_db[:, :n_bins], spec_floor_db(window_ms))
     return S_db.astype(np.float32)
+
+
+_GROUPS_JSON = Path(__file__).with_name("_gosselin2025_stim_groups.json")
+
+
+def find_gain_copies(wav_dir, names: Sequence[str], thresh: float = 0.999) -> List[List[str]]:
+    """Groups of sounds that are the same waveform up to a scalar gain
+    (equal length and |Pearson r| > ``thresh``)."""
+    wavs = {n: load_wav_int16(wav_dir, n).astype(np.float64) for n in names}
+    parent = {n: n for n in names}
+
+    def root(n):
+        while parent[n] != n:
+            n = parent[n]
+        return n
+
+    by_len: Dict[int, List[str]] = {}
+    for n in names:
+        by_len.setdefault(len(wavs[n]), []).append(n)
+    for group in by_len.values():
+        for i, a in enumerate(group):
+            for b in group[i + 1:]:
+                x, y = wavs[a], wavs[b]
+                if x.std() > 0 and y.std() > 0 and abs(np.corrcoef(x, y)[0, 1]) > thresh:
+                    parent[root(b)] = root(a)
+    out: Dict[str, List[str]] = {}
+    for n in names:
+        out.setdefault(root(n), []).append(n)
+    return sorted(sorted(g) for g in out.values() if len(g) > 1)
+
+
+def load_gain_copies() -> List[List[str]]:
+    """The gain-copy groups of the release, shipped with the loader."""
+    with open(_GROUPS_JSON) as f:
+        return json.load(f)["gain_copies"]
