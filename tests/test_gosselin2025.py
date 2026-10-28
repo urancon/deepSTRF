@@ -9,6 +9,7 @@ import pytest
 from tests.gosselin2025_fake import write_fake_release
 from deepSTRF.datasets.audio import _gosselin2025_stims as gs
 from deepSTRF.datasets.audio import _gosselin2025_cochlear as gc
+from deepSTRF.datasets.audio import _gosselin2025_prepare as gp
 
 
 @pytest.fixture(scope="module")
@@ -123,3 +124,47 @@ def test_rebin_integer_and_fractional_with_spont_pad():
 def test_overlap_weights_rows_sum_to_one():
     W = gc.overlap_weights(1044, 43.5, 24)
     np.testing.assert_allclose(W.sum(1), 1.0)
+
+
+def test_prepare_and_load_ephys_reorders_and_rebins(release, tmp_path):
+    root, info = release
+    for area in ("CN", "IC"):
+        gp.prepare_area(root, tmp_path, area)
+        assert gp.is_prepared(tmp_path, area)
+        x = gp.load_ephys(tmp_path, area, 5)
+        n_units = 3 if area == "CN" else 2
+        assert x.shape == (n_units, info["S"], 12, 180)
+        for s in range(info["S"]):
+            for n in range(n_units):
+                reps = range(11) if (area == "CN" and n == 0) else range(12)
+                for r in reps:
+                    assert x[n, s, r].sum() == 1 and x[n, s, r].argmax() == 40 + s
+        if area == "CN":
+            assert x[0, :, 11].sum() == 0
+        x1 = gp.load_ephys(tmp_path, area, 1)
+        assert x1.sum() == x.sum()                         # counts conserved
+
+
+def test_prepare_and_load_ac(release, tmp_path):
+    root, info = release
+    gp.prepare_area(root, tmp_path, "AC")
+    a = gp.load_ac(tmp_path)
+    assert a.shape == (3, info["S"], 12, 24) and a.dtype == np.float32
+    for s in range(info["S"]):
+        assert a[1, s, 0, 6] == pytest.approx(s + 0.01, abs=1e-2)
+    assert np.isnan(a[:, :, 10:]).all() and np.isnan(a[2, 0, 9]).all()
+
+
+def test_prepare_cochlear(release, tmp_path):
+    root, info = release
+    gp.prepare_cochlear(root, tmp_path)
+    ihc, groups = gp.load_cochlear_ihc(tmp_path)
+    assert ihc.shape == (4, 900, info["S"])
+    np.testing.assert_array_equal(groups, np.repeat(np.arange(4), 3))
+    assert ihc[2, 300, 0] == pytest.approx(np.mean([1.0, 5.0, 20.0]) + 300.0)
+
+
+def test_required_files():
+    f = gp.required_files(["IC"], cochlear=False, fibres=False)
+    assert set(f) == {"Sound Parameters.csv", "Soundset.zip", "Info_IC.csv", "Dataset_IC.npy"}
+    assert "Dataset_CC.npy" in gp.required_files(["AC"], cochlear=True, fibres=False)
