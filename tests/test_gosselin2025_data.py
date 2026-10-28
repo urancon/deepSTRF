@@ -66,10 +66,11 @@ def _pop_fr(ds, base_bins, resp_bins):
     return {c: v / norm for c, v in out.items()}
 
 
-@pytest.mark.parametrize("areas, N, T", [(("CN",), 1421, 180), (("IC",), 551, 180),
-                                         (("AC",), 4217, 24)])
-def test_full_load(areas, N, T):
-    ds = Gosselin2025Dataset(ROOT, areas=areas)
+@pytest.mark.parametrize("areas, dt_ms, N, T", [(("CN",), 5, 1421, 180),     # 1 ms CN is ~19 GB
+                                                (("IC",), None, 551, 900),     # default: native 1 ms
+                                                (("AC",), None, 4217, 24)])
+def test_full_load(areas, dt_ms, N, T):
+    ds = Gosselin2025Dataset(ROOT, areas=areas, dt_ms=dt_ms)
     assert ds.N_neurons == N and len(ds.stim_meta) == 307 and ds.stims[0].shape[-1] == T
     assert not any(torch.isnan(r).any() for row in ds.responses for r in row
                    if tuple(r.shape) != (1, 1))
@@ -82,7 +83,7 @@ def test_gain_copy_json_matches_audio():
 
 
 def test_waveform_mode_validates():
-    ds = Gosselin2025Dataset(ROOT, areas=("IC",), return_waveform=True)
+    ds = Gosselin2025Dataset(ROOT, areas=("IC",), dt_ms=5, return_waveform=True)
     assert ds.stims[0].shape == (1, 180 * 960)
 
 

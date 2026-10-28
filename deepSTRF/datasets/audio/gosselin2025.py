@@ -86,6 +86,7 @@ class Gosselin2025Dataset(AudioNeuralDataset):
                  window_ms: Optional[float] = None,
                  cochlear_channels: str = "ihc",
                  cochlear_transform: Optional[str] = None,
+                 smooth: bool = False,
                  cache_dir: Optional[str] = None,
                  prepare: bool = True,
                  download: bool = False):
@@ -101,8 +102,10 @@ class Gosselin2025Dataset(AudioNeuralDataset):
             cortex data has its own time base and cannot be mixed with spikes.
         dt_ms : float, optional
             Response bin width. CN / IC: one of 1, 2, 4, 5, 10, 20, 25, 50,
-            100 ms (default 5), so the 200 ms onset and the 900 ms window fall
-            on bin edges. AC: 43.5 ms only (the imaging bins; the default).
+            100 ms, so the 200 ms onset and the 900 ms window fall on bin
+            edges; default 1 ms, the native resolution (float32 responses:
+            ~19 GB for CN and ~7 GB for IC at 1 ms, ~3.8 / 1.5 GB at 5 ms).
+            AC: 43.5 ms only (the imaging bins; the default).
         return_waveform : bool, default False
             Hand out the raw ``(1, T_audio)`` trial waveform at 192 kHz
             (int16 / 32768, absolute level kept) instead of a spectrogram.
@@ -124,6 +127,10 @@ class Gosselin2025Dataset(AudioNeuralDataset):
         cochlear_transform : {None, "log1p"}, default None
             None keeps the model's linear rates (spikes/s), as the authors
             use them; ``"log1p"`` compresses them.
+        smooth : bool, default False
+            CN / IC: smooth each response with a 21 ms Hanning window
+            (:meth:`smooth_responses`). Not allowed for AC, which the authors
+            already smoothed (Gaussian, sigma = 31 ms).
         cache_dir : str, optional
             Where the slim cache lives. Defaults to ``<path>/_cache``.
         prepare : bool, default True
@@ -138,9 +145,9 @@ class Gosselin2025Dataset(AudioNeuralDataset):
             raise ValueError(f"unknown area(s) {bad}; choose from {AREAS}")
         areas = tuple(a for a in AREAS if a in asked)          # canonical order CN, IC, AC
         self._check_args(areas, dt_ms, return_waveform, audio_fs, spec_backend,
-                         cochlear_channels, cochlear_transform)
+                         cochlear_channels, cochlear_transform, smooth)
         is_ac = areas == ("AC",)
-        dt = (gs.AC_DT_MS if is_ac else 5.0) if dt_ms is None else float(dt_ms)
+        dt = (gs.AC_DT_MS if is_ac else 1.0) if dt_ms is None else float(dt_ms)
 
         root = Path(path).expanduser() if path is not None else default_cache_dir("Gosselin2025")
         super().__init__(str(root), dt)
@@ -184,6 +191,8 @@ class Gosselin2025Dataset(AudioNeuralDataset):
         self._load_responses(root, cache, areas, None if is_ac else int(dt))
         self._build_stims(root, cache, wdir, T, dt, fmin, fmax, bins_per_octave, window_ms,
                           cochlear_channels, cochlear_transform)
+        if smooth:
+            self.smooth_responses(window_ms=21.0)
         units, _ = gsplit.split_units(self.stim_meta, gs.load_gain_copies())
         for m, u in zip(self.stim_meta, units):
             m["split_group"] = u
@@ -192,13 +201,16 @@ class Gosselin2025Dataset(AudioNeuralDataset):
     # ------------------------------------------------------------------ checks
     @staticmethod
     def _check_args(areas, dt_ms, return_waveform, audio_fs, spec_backend,
-                    cochlear_channels, cochlear_transform):
+                    cochlear_channels, cochlear_transform, smooth):
         if not areas:
             raise ValueError(f"unknown area(s); choose from {AREAS}")
         if "AC" in areas and len(areas) > 1:
             raise ValueError("AC (2-photon, 43.5 ms bins) cannot be loaded together with CN/IC "
                              "(1 ms spikes); make one instance per time base.")
         if areas == ("AC",):
+            if smooth:
+                raise ValueError("smooth=True is for CN / IC spikes: AC is already smoothed "
+                                 "by the authors (Gaussian, sigma = 31 ms).")
             if dt_ms is not None and float(dt_ms) != gs.AC_DT_MS:
                 raise ValueError(f"AC is binned at the imaging rate: dt_ms must be "
                                  f"{gs.AC_DT_MS} (got {dt_ms}).")

@@ -176,7 +176,7 @@ def test_required_files():
 @pytest.fixture(scope="module")
 def ds_ephys(release, tmp_path_factory):
     root, _ = release
-    return Gosselin2025Dataset(str(root), cache_dir=str(tmp_path_factory.mktemp("c1")))
+    return Gosselin2025Dataset(str(root), dt_ms=5, cache_dir=str(tmp_path_factory.mktemp("c1")))
 
 
 def test_ephys_shapes_and_order(ds_ephys, release):
@@ -196,7 +196,8 @@ def test_ephys_shapes_and_order(ds_ephys, release):
 
 def test_waveform_mode_levels(release, tmp_path):
     root, _ = release
-    ds = Gosselin2025Dataset(str(root), areas=("IC",), return_waveform=True, cache_dir=str(tmp_path))
+    ds = Gosselin2025Dataset(str(root), areas=("IC",), dt_ms=5, return_waveform=True,
+                             cache_dir=str(tmp_path))
     assert ds.audio_fs == 192000 and ds.hop == 960
     w50, w70 = ds.stims[0], ds.stims[1]                # PT_50dB_8kHz, PT_70dB_8kHz
     assert w50.shape == (1, 180 * 960)
@@ -221,6 +222,7 @@ def test_ac_drops_nan_repeats(release, tmp_path):
     (dict(areas=("AC",), dt_ms=5.0), "43.5"),
     (dict(audio_fs=48000, return_waveform=True), "audio_fs"),
     (dict(spec_backend="mel"), "spec_backend"),
+    (dict(areas=("AC",), smooth=True), "already smoothed"),
 ])
 def test_bad_arguments(release, tmp_path, kw, msg):
     root, _ = release
@@ -242,7 +244,7 @@ def test_derived_neuron_meta(ds_ephys):
 
 def test_cochlear_ihc_mode(release, tmp_path):
     root, info = release
-    ds = Gosselin2025Dataset(str(root), areas=("IC",), spec_backend="cochlear_model",
+    ds = Gosselin2025Dataset(str(root), areas=("IC",), dt_ms=5, spec_backend="cochlear_model",
                              cache_dir=str(tmp_path))
     assert ds.F == 4 and ds.stims[0].shape == (1, 4, 180)
     x = ds.stims[0][0]
@@ -312,3 +314,20 @@ def test_best_freq_none_without_excitatory_tone_response():
     assert _best_freq(np.array([0.0, 0.0, 0.0]), freqs) is None      # silent: no argmax default
     assert _best_freq(np.array([-0.2, -0.1, np.nan]), freqs) is None  # only suppression
     assert _best_freq(np.array([np.nan, 0.3, np.nan]), freqs) == 4.0
+
+
+def test_default_dt_is_native_1ms_for_spikes(release, tmp_path):
+    root, info = release
+    ds = Gosselin2025Dataset(str(root), areas=("IC",), cache_dir=str(tmp_path))
+    assert ds.dt == 1.0 and ds.responses[0][0].shape == (12, 900)
+    assert ds.stims[0].shape == (1, 31, 900)
+    assert int(ds.responses[2][1][0].argmax()) == 200 + 5 * 2 + 1     # the planted spike, in ms
+
+
+def test_smooth_is_opt_in_for_spikes(release, tmp_path):
+    root, _ = release
+    raw = Gosselin2025Dataset(str(root), areas=("IC",), dt_ms=5, cache_dir=str(tmp_path))
+    sm = Gosselin2025Dataset(str(root), areas=("IC",), dt_ms=5, smooth=True, cache_dir=str(tmp_path))
+    r, q = raw.responses[0][0], sm.responses[0][0]
+    assert q.shape == r.shape and not torch.equal(q, r)
+    assert q[0].max() < r[0].max()                         # the single spike is spread out

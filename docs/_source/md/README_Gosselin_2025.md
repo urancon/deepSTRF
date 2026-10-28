@@ -60,11 +60,11 @@ file, so 50 dB and 70 dB versions of a sound differ by exactly 20 dB.
 ```python
 from deepSTRF.datasets.audio import Gosselin2025Dataset
 
-# CN + IC spikes at 5 ms, log-spectrogram stimuli (the defaults)
+# CN + IC spikes at the native 1 ms, log-spectrogram stimuli (the defaults; ~26 GB in RAM)
 ds = Gosselin2025Dataset(path="~/data/gosselin2025", download=True)
 
-# IC only, at 10 ms
-ds = Gosselin2025Dataset(path="~/data/gosselin2025", areas=("IC",), dt_ms=10)
+# IC only, at 5 ms, smoothed with a 21 ms Hanning window
+ds = Gosselin2025Dataset(path="~/data/gosselin2025", areas=("IC",), dt_ms=5, smooth=True)
 
 # Auditory cortex (2-photon): its own instance, at the native 43.5 ms bins
 ds_ac = Gosselin2025Dataset(path="~/data/gosselin2025", areas=("AC",))
@@ -77,12 +77,18 @@ and 1.5 GB for the auditory-nerve model. The first load builds a slim cache in
 `Dataset_*.npy` files can be deleted, except `Dataset_CC.npy` if you use
 `cochlear_channels="fibres"`.
 
-Time bins: CN / IC accept `dt_ms` in 1, 2, 4, 5, 10, 20, 25, 50, 100 (so the
-200 ms onset and the 900 ms window fall on bin edges); AC only its native
-43.5 ms. CN and IC can share an instance; AC cannot be mixed with them.
+Time bins: CN / IC default to their native 1 ms and accept `dt_ms` in 1, 2, 4,
+5, 10, 20, 25, 50, 100 (so the 200 ms onset and the 900 ms window fall on bin
+edges); AC only its native 43.5 ms. CN and IC can share an instance; AC cannot
+be mixed with them.
 
-Memory: responses are float32. CN at `dt_ms=5` is ~3.8 GB; at 1 ms it would be
-~19 GB, so prefer `dt_ms >= 5` for CN.
+Smoothing: off by default, as for every deepSTRF dataset. `smooth=True` applies
+a 21 ms Hanning window to CN / IC; it is refused for AC, which the authors
+already smoothed.
+
+Memory: responses are float32. At the default 1 ms, CN takes ~19 GB and IC
+~7.3 GB (CN + IC ~26 GB); at `dt_ms=5`, ~3.8 GB and ~1.5 GB. AC takes ~1.2 GB.
+On a small machine (or Colab), pass `dt_ms=5` or load IC alone.
 
 
 ## Stimulus representations
