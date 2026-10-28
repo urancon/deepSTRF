@@ -153,6 +153,28 @@ def test_mse_loss_mask_override_replaces_nan_mask():
     assert torch.allclose(per_neuron, torch.tensor([1.0]))
 
 
+@pytest.mark.parametrize("loss_fn", [mse_loss, poisson_loss])
+@pytest.mark.parametrize("reduction", ["mean", "sum"])
+def test_loss_nan_prediction_on_valid_data_is_loud(loss_fn, reduction):
+    """A NaN PREDICTION where the neuron has data (e.g. diverged parameters) must make the
+    scalar loss NaN, not be dropped like a neuron that has no data at all."""
+    pred = torch.full((1, 3, 1, 5), 0.5)
+    gt = torch.full((1, 3, 1, 5), 0.2)
+    pred[0, 1, 0, 2] = math.nan                     # neuron 1 diverged
+    assert torch.isnan(loss_fn(pred, gt, reduction=reduction))
+
+
+@pytest.mark.parametrize("loss_fn", [mse_loss, poisson_loss])
+def test_loss_neuron_without_data_is_still_dropped(loss_fn):
+    """Neurons with no valid data (all-NaN gt) are skipped by the scalar reduction."""
+    pred = torch.full((1, 3, 1, 5), 0.5)
+    gt = torch.full((1, 3, 1, 5), 0.2)
+    gt[0, 2] = math.nan                             # neuron 2 has no data in this batch
+    out = loss_fn(pred, gt, reduction="mean")
+    ref = loss_fn(pred[:, :2], gt[:, :2], reduction="mean")
+    assert torch.isfinite(out) and torch.allclose(out, ref)
+
+
 def test_mse_loss_mask_override_does_not_protect_against_nan():
     """If user passes a mask that includes NaN positions, NaN propagates."""
     pred = torch.zeros(1, 1, 1, 4)

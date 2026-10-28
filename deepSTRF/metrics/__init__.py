@@ -1,4 +1,5 @@
 from deepSTRF.metrics.losses import mse_loss, poisson_loss
+from deepSTRF.metrics.streaming import StreamingCorrcoef
 from deepSTRF.metrics.performance import (
     coherence,
     corrcoef,
@@ -22,4 +23,6 @@ __all__ = [
     "signal_power",
     "noise_power",
     "snr",
+    # batch-by-batch accumulation (Fitter, large sets)
+    "StreamingCorrcoef",
 ]

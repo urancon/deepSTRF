@@ -71,6 +71,28 @@ def reduce_over_neurons(per_neuron: torch.Tensor, reduction: str) -> torch.Tenso
     )
 
 
+def reduce_loss_over_neurons(per_neuron: torch.Tensor, valid: torch.Tensor,
+                             reduction: str) -> torch.Tensor:
+    """Scalar reduction of a per-neuron LOSS, NaN-loud.
+
+    Unlike :func:`reduce_over_neurons`, only neurons with NO valid data (all of
+    ``valid`` False) are skipped. A neuron that has data but a NaN loss (a NaN or
+    diverged prediction) makes the scalar NaN, so a training failure cannot hide
+    inside a finite loss.
+    """
+    if reduction == "none":
+        return per_neuron
+    has_data = valid.sum(dim=(0, 2, 3)) > 0                # (N,)
+    kept = per_neuron[has_data]
+    if reduction == "mean":
+        return kept.mean() if kept.numel() else per_neuron.new_full((), float("nan"))
+    if reduction == "sum":
+        return kept.sum()
+    raise ValueError(
+        f"reduction must be one of {_VALID_REDUCTIONS}, got {reduction!r}"
+    )
+
+
 def per_neuron_mean(values: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
     """Vectorised, NaN-loud per-neuron mean over (B, R, T).
 

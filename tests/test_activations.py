@@ -10,6 +10,7 @@ Covers:
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from deepSTRF.models.activations import (
@@ -165,6 +166,33 @@ def test_parametric_double_exp_is_differentiable():
     assert m._raw_a.grad is not None
     assert m.k.grad is not None
     assert m.s.grad is not None
+
+
+@pytest.mark.parametrize("x", [-200.0, -1e4, 1e4])
+def test_parametric_double_exp_gradient_finite_at_extreme_inputs(x):
+    """The inner exp overflows to inf for very negative drive; the backward pass
+    must give a finite (zero) gradient there, not inf * 0 = NaN."""
+    m = ParametricDoubleExponential(num_features=1)
+    xt = torch.tensor([[x]], requires_grad=True)
+    y = m(xt)
+    y.sum().backward()
+    assert torch.isfinite(y).all()
+    assert torch.isfinite(xt.grad).all()
+    assert all(torch.isfinite(p.grad).all() for p in m.parameters())
+
+
+def test_parametric_double_exp_threshold_starts_at_zero():
+    """The threshold starts at the mean of a normalised drive, so inputs begin on the
+    rising part of the curve, not in its flat floor (dead units on sparse data)."""
+    m = ParametricDoubleExponential(num_features=8)
+    assert torch.equal(m.s.detach(), torch.zeros(8))
+
+
+def test_parametric_double_exp_clamp_does_not_change_ordinary_outputs():
+    m = ParametricDoubleExponential(num_features=4)
+    x = torch.linspace(-20, 20, 400).view(-1, 1).repeat(1, 4)
+    ref = m.a * torch.exp(-torch.exp(-torch.exp(m.k) * (x - m.s))) + m.b
+    assert torch.allclose(m(x), ref)
 
 
 # -------------------------------------------------------------------------

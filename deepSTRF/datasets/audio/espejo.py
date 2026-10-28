@@ -64,6 +64,12 @@ _NAT_WAVEFORM_SUBDIRS = (
 # Published protocol: each 4 s sound is flanked by 0.5 s pre- and post-stim
 # silence, so the cochleagram (and the waveform) begin with 0.5 s of silence.
 _NAT_PRESTIM_S = 0.5
+# Not every sound follows it: the cochleagrams of the 3 s sounds (93 of 686; the ones whose
+# mirror wav is 3 s at 48 kHz) are 5.5 s long, with 2.0 s of pre-stim silence (sound onset
+# at ~2 s; checked by envelope cross-correlation). The post-stim silence is 0.5 s in both
+# layouts, so the inset is derived per sound: cochleagram length - 0.5 s - sound duration
+# (rounded to whole seconds; a few 4 s files on the mirror are 3.6-3.9 s long).
+_NAT_POSTSTIM_S = 0.5
 # Native sample rate of the bitbucket wavs (44.1 kHz mono PCM16, 4 s each).
 _NAT_WAVEFORM_FS = 44100
 
@@ -321,8 +327,8 @@ class EspejoDataset(AudioNeuralDataset):
             with a learnable ``wav2spec`` model front-end. The raw wavs are
             **not** in the Zenodo deposit — they are fetched from the LBHB
             baphy bitbucket mirror (see the README) and cached under
-            ``<path>/nat_waveforms/``. The 4 s sound is inset at the published
-            0.5 s pre-stim silence offset so it grid-locks to the cochleagram
+            ``<path>/nat_waveforms/``. The sound is inset at its pre-stim
+            silence offset (0.5 s, or 2.0 s for the 3 s sounds) so it grid-locks to the cochleagram
             frames (``T_audio = T_neural * hop``, ``hop = audio_fs·dt/1000``).
             Responses are identical to cochleagram mode. **VMN is unsupported**
             (its stimuli are synthesized 2-band envelopes with no raw audio).
@@ -536,9 +542,9 @@ class EspejoDataset(AudioNeuralDataset):
             )
             T = int(coch.shape[1])
             if self.return_waveform:
-                # Grid-locked raw waveform (1, T*hop), the sound inset at the
-                # published 0.5 s pre-stim silence offset (T keeps the
-                # cochleagram frame count so responses stay identical).
+                # Grid-locked raw waveform (1, T*hop), the sound inset at its
+                # pre-stim silence offset (T keeps the cochleagram frame count
+                # so responses stay identical).
                 stim = self._nat_waveform_for_stim(wav_paths[sname], T)
             else:
                 stim = torch.from_numpy(coch).float().unsqueeze(0)  # (1, F, T)
@@ -586,15 +592,17 @@ class EspejoDataset(AudioNeuralDataset):
     def _nat_waveform_for_stim(self, wav_path: str, T_neural: int) -> torch.Tensor:
         """Load a NAT sound and grid-lock it to ``(1, T_neural * hop)``.
 
-        The 4 s sound is inset at the published 0.5 s pre-stim silence offset
-        (``_NAT_PRESTIM_S``) so it aligns with the cochleagram, whose first
-        ~50 bins are that same silence; the trailing 0.5 s is the post-stim
-        silence. Resampled to ``self.audio_fs`` if the source rate differs,
-        then cropped to the exact grid-locked length.
+        The sound is inset at its pre-stim silence offset so it aligns with the
+        cochleagram: 0.5 s for the 4 s sounds (5.0 s cochleagram), 2.0 s for the
+        3 s sounds (5.5 s cochleagram), i.e. cochleagram length - 0.5 s post-stim
+        silence - sound duration in whole seconds. Resampled to ``self.audio_fs``
+        if the source rate differs, then cropped to the exact grid-locked length.
         """
         wav = load_resampled_mono_wav(wav_path, target_fs=self.audio_fs)  # (1, T_wav)
         T_audio = T_neural * self.hop
-        pre = int(round(_NAT_PRESTIM_S * self.audio_fs))
+        sound_s = round(wav.shape[-1] / self.audio_fs)
+        pre_s = T_audio / self.audio_fs - _NAT_POSTSTIM_S - sound_s
+        pre = int(round(max(pre_s, 0.0) * self.audio_fs))
         out = torch.zeros(1, T_audio, dtype=torch.float32)
         end = min(pre + wav.shape[-1], T_audio)
         if end > pre:

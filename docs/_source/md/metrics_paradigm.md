@@ -224,10 +224,16 @@ by the metric's mathematical formula and is never controllable via
 
 Edge case: when one or more neurons have **zero valid positions** under
 the chosen mask (e.g. no val data for a particular cell), the per-neuron
-result is `NaN`. Under `'mean'` and `'sum'` we use `torch.nanmean` /
-`torch.nansum` so the scalar reduction stays well-defined. Under
-`'none'`, the NaN is preserved — the caller can see which cells were
-dropped.
+result is `NaN`. Under `'mean'` and `'sum'` those cells are skipped so the
+scalar reduction stays well-defined. Under `'none'`, the NaN is preserved —
+the caller can see which cells were dropped.
+
+**Losses are NaN-loud.** For `mse_loss` and `poisson_loss`, only cells with no
+valid data are skipped. A cell that has data but a NaN loss (a NaN prediction,
+e.g. diverged parameters) makes the scalar loss NaN, so a training failure
+cannot hide inside a finite loss. The evaluation metrics (`corrcoef`, `fve`,
+...) keep the NaN-tolerant reduction, because a constant prediction legitimately
+gives a NaN correlation.
 
 ## 6. Per-metric definitions
 
@@ -248,8 +254,9 @@ mse_n = mean_{(b,t) ∈ valid_n}  (pred[b, n, 0, t] - gt[b, n, 0, t])²
 ```
 
 - `reduction='none'`: returns `(N,)`.
-- `reduction='mean'`: scalar, `nanmean(mse_n, dim=0)`.
-- `reduction='sum'`: scalar, `nansum(mse_n, dim=0)`.
+- `reduction='mean'`: scalar, mean of `mse_n` over the cells that have valid data
+  (NaN if any of those cells has a NaN loss).
+- `reduction='sum'`: scalar, sum over the same cells.
 
 Differentiable. No `@torch.no_grad`.
 

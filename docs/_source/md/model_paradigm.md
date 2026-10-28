@@ -166,6 +166,7 @@ This is a hard contract, not an aspiration. It matters for:
 | `F.pad(..., (K-1, 0), mode='replicate')` | ✓     | causal extrapolation                        |
 | `CausalLayerNorm(C, dim=1)`            | ✓       | LayerNorm over the channel axis at every (B, F, T) position |
 | `CausalLayerNorm(F, dim=-2)`           | ✓       | LayerNorm over the frequency axis at every (B, C, T) position |
+| `nn.BatchNorm{1,2}d` **in eval mode**  | ✓       | frozen running statistics = a per-channel affine map; used after the STRF layer of L / LN / NRF / DNet |
 | `nn.GRU` / `nn.LSTM` / `nn.RNN`        | ✓       | inherently causal                           |
 | RNN-style SSMs (S4, Mamba)             | ✓       | inherently causal                           |
 | `nn.TransformerEncoder` + causal mask  | ✓       | mask required — without it, attention is bidirectional |
@@ -174,17 +175,22 @@ This is a hard contract, not an aspiration. It matters for:
 
 | Operation                              | Why it breaks causality                     |
 |---                                     |---                                          |
-| `nn.BatchNorm{1,2,3}d`                 | Pools statistics across batch and time      |
+| `nn.BatchNorm{1,2,3}d` in **train** mode | Pools statistics across batch and time (fine for training; eval mode is causal) |
 | `padding=(0, (K-1)//2)` (symmetric)    | Includes future timesteps                   |
 | `nn.AdaptiveAvgPool` along T           | Pools over the full clip                    |
 | `nn.GroupNorm(G, C)` over `(F, T)`     | Pools statistics over time within each sample |
 | `nn.TransformerEncoder` without mask   | Attention sees all positions                |
 
-**Use `CausalLayerNorm` instead of `BatchNorm`** — it normalizes across
-a single axis (channel or frequency, by ``dim`` argument) at each
-position of every other axis, never pooling across time. Defined in
-`deepSTRF.models.layers`; thin wrapper around `nn.LayerNorm` with a
-`movedim` to reach a non-trailing target axis.
+**BatchNorm is causal at inference.** In train mode it pools statistics
+across batch and time, but in eval mode it applies frozen running
+statistics, i.e. a fixed per-channel affine map, so predictions never
+depend on future input. The STRF models (L / LN / NRF / DNet) therefore
+place a BatchNorm right after their affine STRF layer. Where per-sample
+normalisation is wanted at inference too, use `CausalLayerNorm`: it
+normalizes across a single axis (channel or frequency, by ``dim``
+argument) at each position of every other axis, never pooling across
+time. Defined in `deepSTRF.models.layers`; thin wrapper around
+`nn.LayerNorm` with a `movedim` to reach a non-trailing target axis.
 
 ## 5. Where the weights live
 
@@ -347,8 +353,8 @@ readout takes an `activation: nn.Module` kwarg.
 
 | Class                          | Use                                                                | Reference                              |
 |---                             |---                                                                  |---                                     |
-| `nn.Identity`                  | Centered targets (z-scored PSTH)                                    | default for `Linear` / `DNet` / `Transformer` |
-| `nn.Sigmoid`                   | Bounded `[0, 1]` targets                                            | —                                      |
+| `nn.Identity`                  | Centered targets (z-scored PSTH)                                    | default for `Linear` / `Transformer` |
+| `nn.Sigmoid`                   | Bounded `[0, 1]` targets                                            | default for `DNet` (then the output unit's decay) |
 | `nn.Softplus`                  | Non-negative spike-rate targets, smooth                             | —                                      |
 | `ParametricSoftplus`           | 2-param `softplus(β·x)/β + b`, per-neuron, unbounded above          | deepSTRF (default for the rest of the zoo) |
 | `ParametricSigmoid`            | 4-param `b/(1+exp(-(x-c)/d)) + a`, per-neuron, saturating           | Willmore et al. 2016, J. Neurosci.     |
@@ -454,8 +460,9 @@ Subclasses extend `validate()` with modality-specific invariants —
 1. **Forward emits `(B, N, R=1, T)`.** Always. No exceptions for "I only
    have one neuron" or "I'm a deterministic model". The R axis is
    structural.
-2. **Causality is non-negotiable.** No `BatchNorm`, no symmetric padding,
-   no global temporal pooling.
+2. **Causality is non-negotiable.** No symmetric padding, no global
+   temporal pooling, no normalisation that pools over time at inference
+   (BatchNorm is fine: eval mode uses frozen statistics).
 3. **Per-neuron weights live in the readout.** If your model has
    `out_channels = N` somewhere outside the readout, that's a smell.
 4. **Stim-side input is never NaN.** Don't write defensive `nan_to_num`

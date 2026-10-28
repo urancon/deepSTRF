@@ -8,6 +8,45 @@ While the version is `0.x`, the public API may still change between minor releas
 
 ## [Unreleased]
 
+### Changed
+- **DNet output unit is stateful again**, as in Rahman et al. (2019): the
+  output activation (default `nn.Sigmoid`) is followed by a learnable
+  exponential decay per output neuron (`output_decay=True`). The default STRF
+  window is now 5 frames (`temporal_window_size=5`, 25 ms at 5-ms bins), since
+  hidden and output units carry their own memory.
+- **NRF and DNet normalise their hidden units with `nn.BatchNorm2d`** after the
+  STRF layer, instead of a per-timestep `CausalLayerNorm`, consistent with the
+  per-neuron BatchNorm of Linear / LinearNonlinear. In eval mode BatchNorm uses
+  frozen statistics, so the models stay strictly causal. Checkpoints saved
+  with the previous NRF / DNet layout do not load into the new classes.
+
+### Changed
+- **`ParametricDoubleExponential` threshold `s` now starts at 0** (was
+  `U(0.5, 1.5)`), the mean of a normalised drive, so inputs start on the rising
+  part of the curve instead of its flat floor. On sparse data the old init left
+  many neurons stuck in the floor with no gradient (NAT4 StateNet: 282 of 1083
+  cells; cc_norm 0.644 → 0.680 with the new init).
+
+### Fixed
+- **Espejo waveforms of the 3 s sounds are now aligned with their responses**
+  (`EspejoDataset(return_waveform=True)`). 93 of the 686 NAT sounds are 3 s
+  long and their cochleagrams start with 2.0 s of silence, not 0.5 s; their
+  waveforms were inset at 0.5 s, 1.5 s ahead of the responses. The inset is now
+  derived per sound from the cochleagram length. Cochleagram mode was not
+  affected.
+- **NAT4 est and val responses are now in the same units** (spike counts per
+  10-ms bin). The est responses used to be divided by the area's maximum count
+  (7 in A1, 8 in PEG) while the val responses stayed raw counts, so a model
+  trained on est predicted the val responses about 7x too low. Per-cell cc and
+  cc_norm were unaffected; MSE and any absolute response level were not.
+- **`ParametricDoubleExponential` no longer produces NaN gradients** for very
+  negative drive: the inner exponential overflowed (float32) and the backward
+  pass computed inf * 0. The exponent is now clamped where the output is
+  already exactly zero, so forward values are unchanged.
+- **`mse_loss` / `poisson_loss` are NaN-loud**: a neuron that has data but a NaN
+  prediction now makes the scalar loss NaN instead of being silently dropped by
+  `nanmean`. Neurons with no valid data are still skipped.
+
 ### Added
 - **CRCNS-AA5 dataset** (`CRCNSAA5Dataset`) — awake, freely behaving zebra
   finches (Robotka, Gahr & Theunissen; Robotka et al. 2023, *Cell Reports*)
