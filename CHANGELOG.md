@@ -41,6 +41,21 @@ While the version is `0.x`, the public API may still change between minor releas
     stimulus indices these splits return to `Subset` indices.
 
 ### Changed
+- **`SincNet` peak-normalises its band-pass filters** (`normalize=True`, new
+  default), as the reference SincNet (Ravanelli & Bengio 2018) and ICNet
+  (Drakopoulos et al. 2025) code do. Previously the passband gain was ~1 and
+  the peak tap 2(f2 - f1)/fs, so narrow low-frequency bands came out hundreds
+  of times weaker than in the references. `normalize=False` restores the old
+  filters.
+- **`ICNet` defaults: normalisation layers and kernels sized in ms.** Every
+  encoder / bottleneck conv is now followed by a `CausalLayerNorm`
+  (`norm='layer'`), and the kernel lengths follow from a target receptive
+  field (`receptive_field_ms=250`, new helper `icnet_kernel_sizes`) so the
+  encoder covers the same duration at any sample rate and stride
+  factorisation. With fixed 64-tap kernels it spanned from tens of ms to over
+  a second across datasets, and without normalisation training was unstable on
+  datasets recorded at unusual waveform levels. `ICNet(..., norm=None,
+  receptive_field_ms=None)` gives the paper's layer structure.
 - **Responses are no longer smoothed by default.** NS1, CRCNS-AA1, AA2,
   AA4, AA5, Le 2025 and Downer 2025 now default to `smooth=False`. The
   21-ms Hanning window is centred, so a smoothed bin holds spikes from up to
