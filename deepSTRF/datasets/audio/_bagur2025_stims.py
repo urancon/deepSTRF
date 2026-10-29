@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 import soundfile as sf
@@ -174,3 +174,13 @@ def logspec_trial(wav: np.ndarray, n_bins: int, dt_ms: float, fmin: float, fmax:
     """(F, n_bins) absolute-floor log spectrogram of the trial buffer."""
     return _ta.logspec_trial(wav, n_bins, dt_ms, fmin, fmax, bins_per_octave, onset_samples,
                              window_ms, NATIVE_FS)
+
+
+def split_units(stim_meta: Sequence[dict], duplicates: Sequence[Sequence[str]]
+                ) -> Tuple[List[str], List[str]]:
+    """Per sound: the unit it is drawn with (a duplicate group's first name, or
+    the sound itself) and that unit's stratum (its category). Time-reversed
+    ramps and chirps are separate units."""
+    rep = {n: sorted(g)[0] for g in duplicates for n in g}
+    units = [rep.get(m["name"], m["name"]) for m in stim_meta]
+    return units, [m["category"] for m in stim_meta]

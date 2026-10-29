@@ -20,7 +20,7 @@ sounds, exposed here as an alternative stimulus representation.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Sequence, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Union
 
 import numpy as np
 import torch
@@ -186,6 +186,9 @@ class Bagur2025Dataset(AudioNeuralDataset):
         self._build_stims(cache, bp.wav_dir(root), T, fmin, fmax, bins_per_octave, window_ms)
         if smooth:
             self.smooth_responses(window_ms=21.0)
+        units, _ = bs.split_units(self.stim_meta, bs.load_duplicate_groups())
+        for m, u in zip(self.stim_meta, units):
+            m["split_group"] = u
         self.validate()
 
     # ------------------------------------------------------------------ checks
@@ -285,3 +288,38 @@ class Bagur2025Dataset(AudioNeuralDataset):
                                     bpo, window_ms, onset_samples=onset)
             self.stims.append(torch.from_numpy(spec)[None])
         self.F = int(self.stims[0].shape[1])
+
+    # ----------------------------------------------------------------- split
+    def group_split(self, seed: Optional[int] = None,
+                    fractions: Sequence[float] = (0.7, 0.1, 0.2)) -> Dict[str, List[int]]:
+        """Split the 140 sounds into train / val / test without leakage.
+
+        Sounds that are the same waveform up to a gain stay together: the
+        60 / 70 / 80 dB copies of each tone, the 60 / 80 dB copies of each
+        chirp, and the four 500 ms chirps that the release also ships under a
+        second name. Everything else is a separate sound, including the
+        time-reversed (down vs up) ramps and chirps. Units are drawn category
+        by category, each to the set furthest below its target share; the
+        blank (silence) always goes to train. The draw covers all 140 sounds
+        whatever is loaded, so a seed gives the same split for every
+        population.
+
+        Parameters
+        ----------
+        seed : int, optional
+            Seed of the draw. ``None`` draws a new random split at each call.
+        fractions : sequence of 3 floats, default (0.7, 0.1, 0.2)
+            Target train / val / test shares, in sounds.
+
+        Returns
+        -------
+        dict
+            ``{'train', 'val', 'test'}``: absolute stimulus indices. Use
+            :meth:`stim_to_iter_indices` to build a ``Subset``.
+        """
+        units, strata = bs.split_units(self.stim_meta, bs.load_duplicate_groups())
+        keep = [i for i, m in enumerate(self.stim_meta) if m["category"] != "blank"]
+        sp = _ta.draw_split([units[i] for i in keep], [strata[i] for i in keep], seed, fractions)
+        out = {k: sorted(keep[j] for j in v) for k, v in sp.items()}
+        out["train"] = sorted(out["train"] + [i for i in range(len(units)) if i not in keep])
+        return out

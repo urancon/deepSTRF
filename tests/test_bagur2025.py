@@ -296,3 +296,31 @@ def test_waveform_grid_lock_2p(release, tmp_path):
     w = Bagur2025Dataset(str(root), areas="TH", method="2p", return_waveform=True,
                          cache_dir=str(tmp_path))
     assert w.hop == 6086 and w.stims[0].shape == (1, 47 * 6086)
+
+
+# ------------------------------------------------------------ Task 7: splits
+@pytest.mark.parametrize("seed", range(20))
+def test_split_invariants(ds_ephys, seed):
+    ds = ds_ephys
+    sp = ds.group_split(seed=seed)
+    where = {i: k for k in sp for i in sp[k]}
+    assert sorted(where) == list(range(len(ds.stim_meta)))            # every sound exactly once
+    names = [m["name"] for m in ds.stim_meta]
+    for g in bs.load_duplicate_groups():
+        sets = {where[names.index(n)] for n in g if n in names}
+        assert len(sets) <= 1, g
+    assert where[names.index("blank")] == "train"
+    train_cats = {ds.stim_meta[i]["category"] for i in sp["train"]}
+    assert train_cats >= set(bs.CATEGORIES) - {"blank"} or len(ds.stim_meta) < 40
+
+
+def test_split_same_across_populations(ds_ephys, ds_2p):
+    assert ds_ephys.group_split(seed=3) == ds_2p.group_split(seed=3)
+    assert [m["split_group"] for m in ds_ephys.stim_meta] == [m["split_group"] for m in ds_2p.stim_meta]
+
+
+def test_reversals_not_grouped(ds_ephys):
+    g = {m["name"]: m["split_group"] for m in ds_ephys.stim_meta}
+    assert g["Up4+9kHz"] != g["Down4+9kHz"]
+    assert g["tono60dB_4kHz"] == g["tono70dB_4kHz"] == g["tono80dB_4kHz"]
+    assert g["ChirpUp4kHz60dB500ms"] == g["ChirpUpclose4to9kHz80dB"]
