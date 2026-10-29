@@ -22,6 +22,7 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 _SLOW_TEST_MODULES = {
     "test_crcns_aa2",
+    "test_bagur2025_data",
     "test_crcns_aa4_trials",
     "test_crcns_ac1",
     "test_crcns_aa_waveform",
