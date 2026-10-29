@@ -142,3 +142,97 @@ def test_cochlear_mean_and_bf(release, tmp_path):
     np.testing.assert_allclose(bf, [4.0] * 4 + [9.0] * 4 + [24.0] * 4, atol=0.01)
     assert np.all(np.diff(cf) > 0)                                     # tonotopic label
     assert cf[0] == pytest.approx(4.0, rel=0.25) and cf[-1] == pytest.approx(24.0, rel=0.25)
+
+
+# ------------------------------------------------------------- Task 5: class
+import torch                                                            # noqa: E402
+
+from deepSTRF.datasets.audio.bagur2025 import Bagur2025Dataset        # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def ds_ephys(release, tmp_path_factory):
+    root, _ = release
+    return Bagur2025Dataset(str(root), areas=("IC", "TH"), method="ephys",
+                            cache_dir=str(tmp_path_factory.mktemp("ce")))
+
+
+@pytest.fixture(scope="module")
+def ds_2p(release, tmp_path_factory):
+    root, _ = release
+    return Bagur2025Dataset(str(root), areas=("AC", "TH", "IC"), method="2p",
+                            cache_dir=str(tmp_path_factory.mktemp("c2")))
+
+
+def test_ephys_counts_and_shapes(ds_ephys, release, tmp_path):
+    root, info = release
+    ds = ds_ephys
+    assert ds.N_neurons == 5 and ds.dt == 5.0 and len(ds.stim_meta) == info["S"]
+    assert [m["area"] for m in ds.nrn_meta] == ["IC"] * 3 + ["TH"] * 2
+    r = ds.responses[3][1]                                          # IC unit 1, sound 3
+    assert r.shape == (14, 300) and torch.equal(r, r.round())
+    np.testing.assert_array_equal(r.numpy(), info["counts"]["IC"][1, :, 3, :].T)
+    assert ds.responses[0][4].shape == (15, 300)                     # TH: 15 repeats
+    coarse = Bagur2025Dataset(str(root), areas="IC", method="ephys", dt_ms=25,
+                              cache_dir=str(tmp_path))
+    assert coarse.responses[3][1].shape == (14, 60)
+    assert float(coarse.responses[3][1].sum()) == float(r.sum())
+
+
+def test_2p_shapes_and_values(ds_2p, release):
+    root, info = release
+    ds = ds_2p
+    assert ds.N_neurons == 3 + 2 + 4 and ds.responses[0][0].shape == (14, 47)
+    assert ds.responses[0][3].shape == (15, 47) and ds.responses[0][5].shape == (13, 47)
+    assert ds.dt == pytest.approx(6086 / 192) and ds.recording_type == "2p-calcium"
+    import h5py
+    with h5py.File(root / "Data_TH.mat") as h:
+        src = h["Data"][()]                                          # (R, S, T, N)
+    np.testing.assert_allclose(ds.responses[7][4].numpy(), src[:, 7, :, 1], atol=2e-3)
+
+
+def test_metadata_keys_gosselin_lacked(ds_2p, ds_ephys):
+    ac = [m for m in ds_2p.nrn_meta if m["area"] == "AC"]
+    assert [m["subfield"] for m in ac] == ["AI", None, "SRAF"]
+    assert ac[0]["x_um"] == 850.0 and ac[0]["y_um"] == 1150.0 and ac[2]["depth_um"] == 450.0
+    assert {m["unit_type"] for m in ds_2p.nrn_meta if m["area"] == "TH"} == {"axon bouton"}
+    assert {m["unit_type"] for m in ds_2p.nrn_meta if m["area"] != "TH"} == {"soma ROI"}
+    assert all(m["spont_rate"] is None for m in ds_2p.nrn_meta)
+    ic = [m for m in ds_ephys.nrn_meta if m["area"] == "IC"]
+    assert [m["subdivision"] for m in ic] == ["IC-C", None, "outside IC"]
+    assert ic[0]["ap"] == pytest.approx(5.3) and ic[1]["ml"] is None
+    assert {m["unit_type"] for m in ds_ephys.nrn_meta} == {"single unit"}
+    assert ds_ephys.nrn_meta[3]["cell_id"] == "TH-ephys_00000"
+    assert all(isinstance(m["spont_rate"], float) for m in ds_ephys.nrn_meta)
+    assert set(ds_ephys.nrn_meta[0]) >= {"cell_id", "area", "method", "recording_type", "unit_type",
+                                        "index_in_release", "best_freq_khz", "spont_rate"}
+
+
+@pytest.mark.parametrize("kw, err, msg", [
+    (dict(areas="AC", method="ephys"), ValueError, "AC"),
+    (dict(areas="IC", method="calcium"), ValueError, "method"),
+    (dict(areas="XX", method="2p"), ValueError, "unknown area"),
+    (dict(areas="IC", method="ephys", dt_ms=3), ValueError, "dt_ms"),
+    (dict(areas="IC", method="2p", dt_ms=5), ValueError, "dt_ms"),
+    (dict(areas="IC", method="2p", smooth=True), ValueError, "already smoothed"),
+    (dict(method="2p"), TypeError, "areas"),
+    (dict(areas="IC"), TypeError, "method"),
+])
+def test_bad_arguments(release, tmp_path, kw, err, msg):
+    root, _ = release
+    with pytest.raises(err, match=msg):
+        Bagur2025Dataset(str(root), cache_dir=str(tmp_path), **kw)
+
+
+def test_areas_plain_string(release, tmp_path):
+    root, _ = release
+    ds = Bagur2025Dataset(str(root), areas="TH", method="ephys", cache_dir=str(tmp_path))
+    assert ds.areas == ("TH",) and ds.N_neurons == 2 and ds.method == "ephys"
+
+
+def test_smooth_opt_in_ephys(release, ds_ephys, tmp_path):
+    root, _ = release
+    sm = Bagur2025Dataset(str(root), areas=("IC", "TH"), method="ephys", smooth=True,
+                          cache_dir=str(tmp_path))
+    r, q = ds_ephys.responses[3][1], sm.responses[3][1]
+    assert q.shape == r.shape and not torch.equal(q, r) and q.max() < r.max()
