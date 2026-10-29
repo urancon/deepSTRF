@@ -236,3 +236,63 @@ def test_smooth_opt_in_ephys(release, ds_ephys, tmp_path):
                           cache_dir=str(tmp_path))
     r, q = ds_ephys.responses[3][1], sm.responses[3][1]
     assert q.shape == r.shape and not torch.equal(q, r) and q.max() < r.max()
+
+
+# ----------------------------------------------------------- Task 6: stimuli
+def _first_loud_bin(spec, margin_db=10.0):
+    x = spec[0].numpy()
+    return int(np.flatnonzero((x.max(axis=0) - x.min()) > margin_db)[0])
+
+
+def test_ephys_onset_bin_100(ds_ephys):
+    s = [m["name"] for m in ds_ephys.stim_meta].index("tono70dB_9kHz")
+    assert _first_loud_bin(ds_ephys.stims[s]) == 100
+
+
+def test_2p_onset_frame_matches_t(ds_2p):
+    s = [m["name"] for m in ds_2p.stim_meta].index("tono70dB_9kHz")
+    t, dt = ds_2p.twop_frame_times_s * 1000.0, ds_2p.dt
+    expected = int(np.flatnonzero(t + dt / 2 > 0)[0])                 # first frame reaching +0 ms
+    assert _first_loud_bin(ds_2p.stims[s]) == expected
+
+
+def test_levels_kept(release, ds_ephys, tmp_path):
+    names = [m["name"] for m in ds_ephys.stim_meta]
+    a, b = ds_ephys.stims[names.index("ChirpUpclose4to9kHz60dB")], ds_ephys.stims[names.index("ChirpUpclose4to9kHz80dB")]
+    assert float(b.max() - a.max()) == pytest.approx(20.0, abs=0.5)
+    root, _ = release
+    w = Bagur2025Dataset(str(root), areas="IC", method="ephys", return_waveform=True,
+                         cache_dir=str(tmp_path))
+    ra = w.stims[names.index("ChirpUpclose4to9kHz60dB")].pow(2).mean().sqrt()
+    rb = w.stims[names.index("ChirpUpclose4to9kHz80dB")].pow(2).mean().sqrt()
+    assert float(20 * torch.log10(rb / ra)) == pytest.approx(20.0, abs=0.05)
+    assert w.audio_fs == 192000 and w.stims[0].shape == (1, 300 * 960)
+
+
+def test_blank_is_floor(ds_ephys):
+    x = ds_ephys.stims[[m["name"] for m in ds_ephys.stim_meta].index("blank")]
+    assert float(x.max() - x.min()) == 0.0
+
+
+def test_cochlear_input_shapes_both_time_bases(release, tmp_path):
+    root, info = release
+    e = Bagur2025Dataset(str(root), areas="IC", method="ephys", spec_backend="cochlear_model",
+                         cache_dir=str(tmp_path))
+    assert e.stims[0].shape == (1, 12, 300) and e.F == 12
+    np.testing.assert_allclose(e.cochlear_bf_khz, [4.0] * 4 + [9.0] * 4 + [24.0] * 4, atol=0.01)
+    assert np.all(np.diff(e.cochlear_cf_khz) > 0)
+    s = info["names"].index("tono70dB_9kHz")
+    assert float(e.stims[s][0, 5, 110]) > float(e.stims[s][0, 0, 110]) + 100     # BF fibre driven
+    p = Bagur2025Dataset(str(root), areas="IC", method="2p", spec_backend="cochlear_model",
+                         cache_dir=str(tmp_path))
+    assert p.stims[0].shape == (1, 12, 47)
+    with pytest.raises(ValueError, match="exclude"):
+        Bagur2025Dataset(str(root), areas="IC", method="ephys", spec_backend="cochlear_model",
+                         return_waveform=True, cache_dir=str(tmp_path))
+
+
+def test_waveform_grid_lock_2p(release, tmp_path):
+    root, _ = release
+    w = Bagur2025Dataset(str(root), areas="TH", method="2p", return_waveform=True,
+                         cache_dir=str(tmp_path))
+    assert w.hop == 6086 and w.stims[0].shape == (1, 47 * 6086)

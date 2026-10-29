@@ -20,12 +20,14 @@ sounds, exposed here as an alternative stimulus representation.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Union
+from typing import Iterable, Optional, Sequence, Union
 
 import numpy as np
 import torch
 
 from deepSTRF.datasets.audio.audio_dataset import AudioNeuralDataset
+from deepSTRF.datasets.audio._logspectrogram import n_bands_for
+from deepSTRF.datasets.audio import _trial_audio as _ta
 from deepSTRF.datasets.audio import _bagur2025_stims as bs
 from deepSTRF.datasets.audio import _bagur2025_prepare as bp
 from deepSTRF.utils.data_download import default_cache_dir
@@ -261,6 +263,23 @@ class Bagur2025Dataset(AudioNeuralDataset):
     def _build_stims(self, cache, wdir, T, fmin, fmax, bpo, window_ms):
         self.stims = []
         onset = self._onset_samples()
+        if self.spec_backend == "cochlear_model":
+            cc, self.cochlear_bf_khz, self.cochlear_cf_khz = bp.load_cochlear(cache)
+            # model rates on the 5 ms grid from -500 ms, averaged onto this instance's bins
+            W = _ta.overlap_weights(cc.shape[1], bs.EPHYS_DT_MS, self.dt, T,
+                                    offset_ms=self._buffer_start_ms + bs.ONSET_MS)
+            for s in range(len(self.stim_meta)):
+                self.stims.append(torch.from_numpy((cc[:, :, s] @ W.T).astype(np.float32))[None])
+            self.F = int(cc.shape[0])
+            return
+        if self.return_waveform:
+            self.audio_fs = bs.NATIVE_FS
+            self.F = n_bands_for(fmin, fmax, bpo)            # target width for a wav2spec front end
+            hop = int(round(self.dt * bs.NATIVE_FS / 1000.0))
+            for m in self.stim_meta:
+                buf = _ta.trial_waveform(bs.load_wav_int16(wdir, m["name"]), T, hop, onset) / 32768.0
+                self.stims.append(torch.from_numpy(buf.astype(np.float32))[None])
+            return
         for m in self.stim_meta:
             spec = bs.logspec_trial(bs.load_wav_int16(wdir, m["name"]), T, self.dt, fmin, fmax,
                                     bpo, window_ms, onset_samples=onset)
