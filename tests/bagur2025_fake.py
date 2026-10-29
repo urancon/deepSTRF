@@ -8,8 +8,8 @@ trial like the release), and ``Data_CC.mat`` (15 noisy, baseline-subtracted
 repeats of a tonotopic model).
 
 Planted values:
-- 2p: ``Data(n, t, s, r) = 1e5 n + 1e3 s + 50 r + t`` (MATLAB order), so any
-  axis mix-up changes the value read back;
+- 2p: independent random values (within the float16 range of the cache), so
+  any axis mix-up changes the values read back;
 - ephys: integer counts with one spike at bin ``100 + 10 s + n`` in every
   trial, plus sparse background spikes; the file holds counts minus each
   trial's pre-stimulus (bins 0..99) mean;
@@ -115,9 +115,7 @@ def write_fake_release(root) -> dict:
     # 2-photon, MATLAB v7.3: h5py dataset shape (R, S, T, N)
     for area, n in N_2P.items():
         r = R[(area, "2p")]
-        nn, ss, rr, tt = np.meshgrid(np.arange(n), np.arange(S), np.arange(r), np.arange(47),
-                                     indexing="ij")
-        val = (1e5 * nn + 1e3 * ss + 50 * rr + tt).astype(np.float32)        # (N, S, R, T)
+        val = rng.normal(0, 0.3, (n, S, r, 47)).astype(np.float32)          # (N, S, R, T)
         with h5py.File(root / f"Data_{area}.mat", "w") as h:
             h["Data"] = val.transpose(2, 1, 3, 0)                                  # (R, S, T, N)
             h["t"] = T_2P[:, None]

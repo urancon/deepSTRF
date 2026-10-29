@@ -72,3 +72,58 @@ def test_shipped_duplicate_json():
     assert len(groups) == 31 and sizes == [2] * 16 + [3] * 15
     dur = [g for g in groups if any(n.endswith("500ms") for n in g)]
     assert len(dur) == 4 and all(len(g) == 3 for g in dur)
+
+
+# ---------------------------------------------------------------- Task 3: cache
+from deepSTRF.datasets.audio import _bagur2025_prepare as bp   # noqa: E402
+
+
+def test_hdf5_axes_order(release, tmp_path):
+    root, info = release
+    bp.prepare_population(root, tmp_path, "AC", "2p")
+    a = bp.load_population(tmp_path, "AC", "2p")
+    assert a.shape == (3, info["S"], 14, 47) and a.dtype == np.float32
+    import h5py
+    with h5py.File(root / "Data_AC.mat") as h:                     # MATLAB Data(n,t,s,r) = h5[r,s,t,n]
+        src = h["Data"][()]
+    np.testing.assert_allclose(a, src.transpose(3, 1, 0, 2), atol=2e-3)
+    assert a[2, 11, 13, 40] == pytest.approx(src[13, 11, 40, 2], abs=2e-3)
+    np.testing.assert_allclose(bp.load_twop_time(tmp_path), -0.4683 + 0.0317 * np.arange(47))
+
+
+def test_count_recovery_exact(release, tmp_path):
+    root, info = release
+    bp.prepare_population(root, tmp_path, "IC", "ephys")
+    c = bp.load_population(tmp_path, "IC", "ephys")               # (N, S, R, 300)
+    planted = info["counts"]["IC"].transpose(0, 2, 3, 1)          # (N, T, S, R) -> (N, S, R, T)
+    np.testing.assert_array_equal(c, planted)
+
+
+def test_count_recovery_rejects_non_integer():
+    x = np.zeros((1, 300, 2, 3), np.float32)
+    x[0, 150, 1, 2] = 1.0
+    x[0, :, 0, 1] += 0.3 + np.linspace(0, 0.2, 300)                # residuals not integer
+    with pytest.raises(ValueError, match="integer"):
+        bp.recover_counts(x, time_axis=1)
+
+
+def test_anatomy_keys(release):
+    root, _ = release
+    ac = bp.load_anatomy(root, "AC", "2p")
+    assert ac["subfield"] == ["AI", None, "SRAF"]
+    assert ac["x_um"][0] == 850.0 and ac["depth_um"][2] == 450.0
+    ic = bp.load_anatomy(root, "IC", "ephys")
+    assert ic["subdivision"] == ["IC-C", None, "outside IC"]
+    assert ic["ap"][0] == pytest.approx(5.3) and np.isnan(ic["ml"][1])
+    assert bp.load_anatomy(root, "TH", "2p") is None and bp.load_anatomy(root, "TH", "ephys") is None
+
+
+def test_arrays_not_required_after_cache(release, tmp_path):
+    root, _ = release
+    f = bp.required_files(("IC",), "ephys", cochlear=False)
+    assert "Data_ICE.mat" in f and "AnatInfo_ICE.mat" in f and "Sounds.zip" in f
+    g = bp.required_files(("IC",), "ephys", cochlear=False, prepared=("IC-ephys",),
+                          have_wavs=True, have_code=True)
+    assert "Data_ICE.mat" not in g and "Sounds.zip" not in g and "Code.zip" not in g
+    assert "AnatInfo_ICE.mat" in g                                 # metadata read at load time
+    assert "Data_CC.mat" in bp.required_files(("AC",), "2p", cochlear=True)
