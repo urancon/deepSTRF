@@ -1,8 +1,8 @@
 ## Auditory datasets
 
-Currently, **12 response datasets** are available, each with a short name for
-easier reference. They span five species and a range of recording modalities —
-extracellular single-units, multi-unit activity, and scalp EEG — but all share
+Currently, **13 response datasets** are available, each with a short name for
+easier reference. They span six species and a range of recording modalities —
+extracellular single-units, multi-unit activity, two-photon calcium imaging and scalp EEG — but all share
 the same `NeuralDataset` API (NaN-sentinel missing trials, optional
 `download=True`, and the selection / concatenation utilities). Each dataset has
 its own page below with the original paper, licensing, response shape, and
@@ -31,6 +31,9 @@ set `CRCNS_USERNAME` / `CRCNS_PASSWORD`, or pass `username=` / `password=`.
 * [CRCNS AA5](README_CRCNS_AA5.md) — awake, freely behaving birds; chronic recordings; the full vocal repertoire (110 calls, 10 call types), songs and filtered songs.
 * [Le 2025](README_Le_2025.md) — auditory cortex; occluded conspecific song (auditory-restoration paradigm).
 
+### Mouse (*Mus musculus*)
+* [Gosselin 2025](README_Gosselin_2025.md) — cochlear nucleus & inferior colliculus (Neuropixels) and auditory cortex (2-photon); 307 tones, chords, AM, sweeps, noises and natural-like sounds; auditory-nerve model as an optional input.
+
 ### Rat (*Rattus norvegicus*)
 * [CRCNS AC1 (Wehr + Asari)](README_CRCNS_AC1.md) — auditory cortex (A1) & thalamus (MGB); natural & synthetic sounds.
 
@@ -57,6 +60,7 @@ README_CRCNS_AA2.md
 README_CRCNS_AA4.md
 README_CRCNS_AA5.md
 README_Le_2025.md
+README_Gosselin_2025.md
 README_CRCNS_AC1.md
 README_Downer2025.md
 README_Alice_EEG.md

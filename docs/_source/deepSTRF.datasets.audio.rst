@@ -100,6 +100,14 @@ deepSTRF.datasets.audio.le\_2025 module
    :show-inheritance:
    :undoc-members:
 
+deepSTRF.datasets.audio.gosselin2025 module
+-------------------------------------------
+
+.. automodule:: deepSTRF.datasets.audio.gosselin2025
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 Module contents
 ---------------
 
