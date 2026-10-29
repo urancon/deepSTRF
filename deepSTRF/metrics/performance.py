@@ -254,6 +254,49 @@ def _per_stim_sp_np(
     return torch.stack(sp_out), torch.stack(np_out), torch.stack(tv_out)
 
 
+@torch.no_grad()
+def _between_stim_sums(responses: torch.Tensor) -> Tuple[torch.Tensor, ...]:
+    """Per-neuron running sums for the between-stimulus signal power, over a batch.
+
+    ``responses`` ``(B, N, R, T)``, NaN = invalid. For each qualifying ``(stim, neuron)``
+    cell (same rule as :func:`_per_stim_sp_np`: >= 2 valid repeats and >= 2 valid bins),
+    with ``T_b`` valid bins, ``m_b`` the mean of its PSTH and ``v_b`` the noise variance of
+    ``m_b`` (variance of the per-repeat means over the stim's own ``R_b`` repeats, / ``R_b``),
+    returns the float64 ``(N,)`` sums ``(sum T_b, sum T_b m_b, sum T_b m_b^2, sum T_b v_b,
+    sum T_b^2 v_b)``. Repeat counts may differ between stimuli.
+    """
+    v = ~responses.isnan()
+    vr = v.any(dim=-1)                                     # (B, N, R)
+    vt = v.any(dim=-2)                                     # (B, N, T)
+    Rv, Tv = vr.sum(-1).double(), vt.sum(-1).double()      # (B, N)
+    ok = (Rv >= 2) & (Tv >= 2)
+    x = responses.double()
+    m = torch.nanmean(torch.nanmean(x, dim=-2), dim=-1)    # PSTH mean over valid bins
+    mr = torch.nanmean(x, dim=-1)                          # (B, N, R) per-repeat means
+    mr_c = torch.where(vr, mr - torch.nanmean(mr, dim=-1, keepdim=True), torch.zeros_like(mr))
+    var_m = (mr_c ** 2).sum(-1) / (Rv - 1).clamp(min=1) / Rv.clamp(min=1)
+    zero = torch.zeros_like(Tv)
+    T = torch.where(ok, Tv, zero)
+    m = torch.where(ok, m, zero)
+    var_m = torch.where(ok, var_m, zero)
+    return T.sum(0), (T * m).sum(0), (T * m * m).sum(0), (T * var_m).sum(0), (T * T * var_m).sum(0)
+
+
+def _between_stim_sp(W, S1, S2, Sv, Sv2) -> torch.Tensor:
+    """Noise-corrected, length-weighted variance of the per-stimulus means (``(N,)``).
+
+    With ``w_b = T_b / W``: ``sum_b w_b (m_b - m)^2 - sum_b w_b (1 - w_b) v_b``, where ``m``
+    is the length-weighted mean of the ``m_b``. The first term is the between-stimulus part of
+    the PSTH variance over the concatenated stimuli; the second removes its expected noise.
+    Added to the length-weighted per-stimulus SP, it gives the signal power of the
+    concatenated series, the one ``cov(pred, psth)`` and ``var(pred)`` are computed on.
+    """
+    Wc = W.clamp(min=1)
+    mean = S1 / Wc
+    return torch.where(W > 0, S2 / Wc - mean ** 2 - (Sv / Wc - Sv2 / Wc ** 2),
+                       torch.zeros_like(W))
+
+
 def _sahani_linden_per_neuron(
     responses: torch.Tensor,
     valid: torch.Tensor,
@@ -532,7 +575,9 @@ def normalized_corrcoef(
         repeat axis. May contain NaN.
     method : {'schoppe', 'hsu'}, default 'schoppe'
         ``'schoppe'`` divides by ``sqrt(var(pred) · SP)`` (Schoppe et al.
-        2016); ``'hsu'`` divides the raw Pearson by ``CCmax``
+        2016), with SP the signal power of the concatenated stimuli: the
+        length-weighted per-stimulus SP plus the noise-corrected variance of
+        the stimuli's mean responses (``metrics_paradigm.md`` §6.4); ``'hsu'`` divides the raw Pearson by ``CCmax``
         (Hsu/Spearman-Brown).
     mask : torch.Tensor, optional
         Bool tensor broadcastable to the PSTH ``(B, N, 1, T)``. If None,
@@ -598,6 +643,10 @@ def normalized_corrcoef(
 
     if method == "schoppe":
         sp, np_ = _sahani_linden_per_neuron(responses, valid_resp)   # (N,)
+        # cov and var below run over the concatenated stimuli: add the between-stimulus
+        # part of the signal power, which the per-stimulus SP leaves out
+        r = torch.where(valid_resp, responses, responses.new_full((), float("nan")))
+        sp = sp + _between_stim_sp(*_between_stim_sums(r)).to(sp.dtype)
         N = pred.shape[1]
         nan = pred.new_full((), float("nan"))
         out = []

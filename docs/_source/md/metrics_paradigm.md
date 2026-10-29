@@ -358,19 +358,41 @@ information is needed for the noise correction.
 #### `method='schoppe'`
 
 Schoppe et al. 2016, "Measuring the Performance of Neural Models",
-Frontiers in Neuroscience.
+Frontiers in Computational Neuroscience 10:10.
 
 ```text
 CCnorm_n = cov(pred_n, psth_n) / sqrt( var(pred_n) · SP_n )
+SP_n     = sum_b w_b · SP_{b,n}                                  (within stims, §6.5)
+         + sum_b w_b · (m_{b,n} − m_n)²  −  sum_b w_b (1 − w_b) · v_{b,n}   (between stims)
+w_b      = T_b / sum_b T_b
 ```
 
 where `pred_n`, `psth_n` are the 1-D vectors of valid `(b, t)` positions
-for neuron `n` (concatenated across stims via boolean indexing, §3),
-and `SP_n` is the Sahani–Linden signal power for neuron `n` (§6.5,
-length-weighted across stims). The aggregation convention for the
-denominator is chosen to match the natural sample-count weighting that
-the numerator's concatenated `cov` and `var` perform automatically — see
-§11. Replaces the noise-inflated `var(psth)` in the denominator of the
+for neuron `n` (concatenated across stims via boolean indexing, §3).
+`SP_n` is the signal power of that same concatenated series, as in
+Schoppe et al., where all three terms are computed on one response
+vector. It has two parts:
+
+- the Sahani–Linden signal power **within** each stim (§6.5),
+  length-weighted across stims;
+- the noise-corrected variance of the stims' **mean** responses:
+  `m_{b,n}` is the mean of the PSTH on stim `b`, `m_n` their
+  length-weighted mean, and `v_{b,n}` the noise variance of `m_{b,n}`
+  (variance of the per-repeat means over the stim's own `R_b` repeats,
+  divided by `R_b`).
+
+Each part uses each stim's own repeat count, so stims may have different
+numbers of repeats (where Schoppe's formula on the concatenated trials is
+undefined); with equal repeats the result equals Schoppe's up to
+finite-sample terms. Both parts weight a stim by its length `T_b`, like
+the concatenated `cov` and `var` (§11).
+
+Without the between-stims part, `cov` and `var(pred)` see the
+differences in mean response between stims but `SP_n` does not, and a
+perfect prediction scores `1 / sqrt(1 − between-stim share of the PSTH
+variance)` on average: above 1 on sets of short, very different stims
+(fixed 2026-10-29; ~1.5 in `tests/test_metrics.py`). `CCnorm` can still
+exceed 1 by sampling noise in `SP_n`, mostly for low-SNR cells. Replaces the noise-inflated `var(psth)` in the denominator of the
 raw Pearson correlation with the unbiased signal-only variance estimator.
 Cells with `SP_n ≤ 0` (the noise-floor regime where the unbiased
 estimator fails) return NaN. `SP_n` is a difference of two nearly equal
@@ -702,10 +724,17 @@ clear use case emerges.
 A neuron with two clips — a 500 ms validation stim with `SP=10` and a
 50 ms validation stim with `SP=1` — gets `SP_n ≈ (500·10 + 50·1)/550 ≈
 9.18` under length-weighting, vs `5.5` under equal weighting. The
-length-weighted answer matches what `var(psth_n)` over the concatenated
-time series would have given (modulo the `1/(R−1)` Bessel correction);
-the equal-weighted answer would produce an internally inconsistent
-CCnorm.
+length-weighted answer is the **within-stim** part of what the signal
+variance over the concatenated time series would give; the
+equal-weighted answer would produce an internally inconsistent CCnorm.
+
+The concatenated series also varies **between** stims, through their
+mean responses, and that part is not in any per-stim estimate. For
+`normalized_corrcoef(method='schoppe')` it is added as a separate,
+noise-corrected term, length-weighted in the same way (§6.4). The
+per-neuron `signal_power`, `noise_power` and `snr` keep the within-stim
+definition: as reliability scores they should not grow with how
+different the stims of a set are.
 
 ## 12. References
 
