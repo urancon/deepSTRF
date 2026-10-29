@@ -18,8 +18,9 @@ the same sounds, exposed here as an alternative stimulus representation.
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Union
 
 import numpy as np
 import torch
@@ -75,7 +76,7 @@ class Gosselin2025Dataset(AudioNeuralDataset):
     """
 
     def __init__(self, path: Optional[str] = None, *,
-                 areas: Iterable[str] = ("CN", "IC"),
+                 areas: Union[str, Iterable[str]] = ("CN", "IC"),
                  dt_ms: Optional[float] = None,
                  return_waveform: bool = False,
                  audio_fs: int = gs.NATIVE_FS,
@@ -97,9 +98,10 @@ class Gosselin2025Dataset(AudioNeuralDataset):
             Folder holding the release files (``Dataset_*.npy``, ``Info_*.csv``,
             ``Sound Parameters.csv``, ``Soundset.zip``). Defaults to the
             platformdirs cache (``$DEEPSTRF_DATA_DIR`` overrides).
-        areas : iterable of str, default ("CN", "IC")
-            Any of ``"CN"`` and ``"IC"``, or ``("AC",)`` alone: the 2-photon
+        areas : str or iterable of str, default ("CN", "IC")
+            Any of ``"CN"`` and ``"IC"``, or ``"AC"`` alone: the 2-photon
             cortex data has its own time base and cannot be mixed with spikes.
+            A single area can be given as a plain string.
         dt_ms : float, optional
             Response bin width. CN / IC: one of 1, 2, 4, 5, 10, 20, 25, 50,
             100 ms, so the 200 ms onset and the 900 ms window fall on bin
@@ -139,7 +141,7 @@ class Gosselin2025Dataset(AudioNeuralDataset):
             Fetch the files needed for ``areas`` (and the auditory-nerve model
             when ``spec_backend="cochlear_model"``) from Zenodo, md5-checked.
         """
-        asked = tuple(areas)
+        asked = (areas,) if isinstance(areas, str) else tuple(areas)
         bad = [a for a in asked if a not in AREAS]
         if bad:
             raise ValueError(f"unknown area(s) {bad}; choose from {AREAS}")
@@ -153,16 +155,20 @@ class Gosselin2025Dataset(AudioNeuralDataset):
         super().__init__(str(root), dt)
         cochlear = spec_backend == "cochlear_model"
         fibres = cochlear and cochlear_channels == "fibres"
+        cache = Path(cache_dir).expanduser() if cache_dir else root / "_cache"
+        keys = areas + (("CC",) if cochlear else ())
+        prepared = tuple(k for k in keys if gp.is_prepared(cache, k))   # their arrays: not needed
         if download:
-            gp.download_gosselin2025(root, areas, cochlear=cochlear)
-        missing = [f for f in gp.required_files(areas, cochlear, fibres) if not (root / f).exists()]
+            gp.download_gosselin2025(root, areas, cochlear=cochlear, prepared=prepared)
+        have_wavs = (root / "soundset" / "Soundset").is_dir()
+        missing = [f for f in gp.required_files(areas, cochlear, fibres, prepared, have_wavs)
+                   if not (root / f).exists()]
         if missing:
             raise FileNotFoundError(
                 f"Gosselin2025: missing {missing} in {root}. Pass download=True, or fetch them "
                 f"from https://doi.org/10.5281/zenodo.{gs.ZENODO_RECORD}.")
-        cache = Path(cache_dir).expanduser() if cache_dir else root / "_cache"
-        for key in areas + (("CC",) if cochlear else ()):
-            if not gp.is_prepared(cache, key):
+        for key in keys:
+            if key not in prepared:
                 if not prepare:
                     raise FileNotFoundError(f"cache for {key} missing in {cache}; pass prepare=True")
                 if key == "CC":
@@ -258,7 +264,8 @@ class Gosselin2025Dataset(AudioNeuralDataset):
                                           np.maximum(n_valid - 1, 0)] == n_valid
         pre, evoked = self._bin_masks(T)
         if area == "AC":
-            with np.errstate(invalid="ignore"):
+            with warnings.catch_warnings():                              # pairs with no repeat
+                warnings.simplefilter("ignore", RuntimeWarning)
                 psth = np.nanmean(arr, axis=2)                           # (N, S, T)
         else:
             psth = arr.mean(axis=2)          # spikes have no NaN; nanmean would copy arr
@@ -285,7 +292,8 @@ class Gosselin2025Dataset(AudioNeuralDataset):
                 "session_id": f"{area}-s{int(sessions[n])}",
                 "index_in_release": n,
                 "best_freq_khz": bf,
-                "spont_rate": float(np.nanmean(base[n]) * scale),
+                # AC traces are baseline-subtracted per trial: no spontaneous rate
+                "spont_rate": None if area == "AC" else float(base[n].mean() * scale),
             })
 
     # ---------------------------------------------------------------- stimuli
@@ -351,9 +359,10 @@ class Gosselin2025Dataset(AudioNeuralDataset):
         split for CN, IC and AC.
 
         Coarse at the edges: the decomposition stratum has only 4 units, one
-        of 25 sounds (the dolphin call), so the decompositions are rarely in
-        val or test (all in train at ``seed=0``); the smallest categories
-        (5 harmonic chords) may get no validation sound.
+        of 25 sounds (the dolphin call), which always goes to train; the
+        other three decomposed clips reach val or test in 38-48% of seeds
+        each (all in train at ``seed=0``). The 5 harmonic chords never get a
+        validation sound.
 
         Parameters
         ----------

@@ -1,6 +1,8 @@
 """Fast tests for Gosselin2025Dataset on a synthetic mini-release (no real data)."""
 from __future__ import annotations
 
+import shutil
+import warnings
 import zipfile
 
 import numpy as np
@@ -211,8 +213,84 @@ def test_ac_drops_nan_repeats(release, tmp_path):
     assert ds.dt == 43.5 and ds.recording_type == "2p-calcium" and ds.indicator == "GCaMP6s"
     assert ds.responses[3][1].shape == (10, 24)
     assert ds.responses[0][2].shape == (9, 24)
-    assert not any(torch.isnan(r).any() for row in ds.responses for r in row)
+    assert not any(torch.isnan(r).any() for row in ds.responses for r in row
+                   if tuple(r.shape) != (1, 1))                  # real responses carry no NaN
     assert ds.stims[0].shape[-1] == 24
+
+
+def test_ac_sentinel_and_non_prefix_repeats(release, tmp_path):
+    root, _ = release
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)              # no "Mean of empty slice"
+        ds = Gosselin2025Dataset(str(root), areas=("AC",), cache_dir=str(tmp_path))
+    r = ds.responses[1][0]                                         # no valid repeat
+    assert r.shape == (1, 1) and bool(r.isnan().all())
+    r = ds.responses[2][0]                                         # repeat 0 missing
+    assert r.shape == (9, 24)
+    assert torch.allclose(r[:, 6], torch.full((9,), 2.0), atol=1e-2)
+    assert ds[1] is not None                                       # sentinel survives __getitem__
+
+
+def test_ac_spont_rate_is_none(release, tmp_path):
+    """AC traces are baseline-subtracted per trial: their pre-stimulus mean carries no rate."""
+    root, _ = release
+    ds = Gosselin2025Dataset(str(root), areas=("AC",), cache_dir=str(tmp_path))
+    assert all(m["spont_rate"] is None for m in ds.nrn_meta)
+
+
+def test_areas_accepts_a_plain_string(release, tmp_path):
+    root, _ = release
+    ds = Gosselin2025Dataset(str(root), areas="IC", dt_ms=5, cache_dir=str(tmp_path))
+    assert ds.areas == ("IC",) and ds.N_neurons == 2
+
+
+def test_cache_replaces_the_release_arrays(release, tmp_path):
+    """The docs say the original arrays can be deleted once the cache is built."""
+    src, _ = release
+    root = tmp_path / "rel"
+    shutil.copytree(src, root)
+    kw = dict(areas=("IC",), dt_ms=5, cache_dir=str(tmp_path / "c"))
+    a = Gosselin2025Dataset(str(root), spec_backend="cochlear_model", **kw)
+    for f in ("Dataset_IC.npy", "Dataset_CC.npy", "Soundset.zip"):
+        (root / f).unlink()
+    b = Gosselin2025Dataset(str(root), spec_backend="cochlear_model", **kw)
+    assert torch.equal(a.responses[3][1], b.responses[3][1])
+    assert torch.equal(a.stims[3], b.stims[3])
+    with pytest.raises(FileNotFoundError, match="Dataset_CC.npy"):   # fibres still read it
+        Gosselin2025Dataset(str(root), spec_backend="cochlear_model",
+                            cochlear_channels="fibres", **kw)
+
+
+def test_download_skips_cached_and_refetches_corrupt(release, tmp_path, monkeypatch):
+    """Intact files are hashed once (a stamp records it); a corrupt file is fetched again;
+    arrays whose cache is built are not downloaded."""
+    src, _ = release
+    root = tmp_path / "rel"
+    shutil.copytree(src, root)
+    md5 = {f: gp._md5(root / f) for f in gp.MD5 if (root / f).exists()}
+    monkeypatch.setattr(gp, "MD5", md5)
+    good = (root / "Info_IC.csv").read_bytes()
+    fetched, hashed = [], []
+    real_md5 = gp._md5
+
+    def fake_download(record, name, dest):
+        fetched.append(name)
+        dest.write_bytes((src / name).read_bytes())
+
+    monkeypatch.setattr(gp, "zenodo_download", fake_download)
+    monkeypatch.setattr(gp, "_md5", lambda p: hashed.append(p.name) or real_md5(p))
+    gp.download_gosselin2025(root, ("IC",), cochlear=False)
+    assert fetched == []
+    hashed.clear()
+    gp.download_gosselin2025(root, ("IC",), cochlear=False)
+    assert hashed == []                                            # stamped: not re-hashed
+    (root / "Info_IC.csv").write_bytes(b"corrupt")
+    gp.download_gosselin2025(root, ("IC",), cochlear=False)
+    assert fetched == ["Info_IC.csv"] and (root / "Info_IC.csv").read_bytes() == good
+    fetched.clear()
+    (root / "Dataset_IC.npy").unlink()
+    gp.download_gosselin2025(root, ("IC",), cochlear=False, prepared=("IC",))
+    assert fetched == []                                           # cache built: array not needed
 
 
 @pytest.mark.parametrize("kw, msg", [

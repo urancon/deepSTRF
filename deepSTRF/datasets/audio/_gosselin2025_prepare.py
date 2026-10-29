@@ -40,12 +40,20 @@ MD5 = {
 _CHUNK = 64
 
 
-def required_files(areas: Sequence[str], cochlear: bool, fibres: bool) -> List[str]:
-    """Release files needed to load ``areas`` (and the auditory-nerve model)."""
-    files = ["Sound Parameters.csv", "Soundset.zip"]
+def required_files(areas: Sequence[str], cochlear: bool, fibres: bool,
+                   prepared: Sequence[str] = (), have_wavs: bool = False) -> List[str]:
+    """Release files needed to load ``areas`` (and the auditory-nerve model).
+
+    ``prepared`` lists the cache keys (areas, ``"CC"``) already built: their
+    ``Dataset_*.npy`` are no longer needed, except ``Dataset_CC.npy`` for
+    ``fibres`` (read memory-mapped, not cached). ``have_wavs``: the sound set
+    is already unzipped, so ``Soundset.zip`` is not needed."""
+    files = ["Sound Parameters.csv"] + ([] if have_wavs else ["Soundset.zip"])
     for a in areas:
-        files += [f"Info_{a}.csv", f"Dataset_{a}.npy"]
-    if cochlear or fibres:
+        files.append(f"Info_{a}.csv")
+        if a not in prepared:
+            files.append(f"Dataset_{a}.npy")
+    if fibres or (cochlear and "CC" not in prepared):
         files.append("Dataset_CC.npy")
     return files
 
@@ -58,22 +66,46 @@ def _md5(path: Path) -> str:
     return h.hexdigest()
 
 
+_STAMPS = ".md5_checked.json"
+
+
+def _intact(root: Path, name: str) -> bool:
+    """md5 check, remembered by size + mtime so a big file is hashed once."""
+    dest = root / name
+    if not dest.exists():
+        return False
+    st = dest.stat()
+    key = [st.st_size, st.st_mtime_ns, MD5[name]]
+    stamps_path = root / _STAMPS
+    stamps = json.loads(stamps_path.read_text()) if stamps_path.exists() else {}
+    if stamps.get(name) == key:
+        return True
+    if _md5(dest) != MD5[name]:
+        return False
+    stamps[name] = key
+    stamps_path.write_text(json.dumps(stamps))
+    return True
+
+
 def download_gosselin2025(path, areas: Sequence[str] = ("CN", "IC", "AC"),
-                          cochlear: bool = True) -> Path:
+                          cochlear: bool = True, prepared: Sequence[str] = ()) -> Path:
     """Fetch the files needed for ``areas`` (+ the auditory-nerve model) into
-    ``path``, check their md5, unzip the sound set. Files already present and
-    intact are skipped."""
+    ``path``, check their md5, unzip the sound set. Intact files are skipped
+    (hashed once, then remembered); a corrupt one is fetched again. Arrays
+    whose cache is built (``prepared``) are not fetched."""
     root = Path(path).expanduser()
     root.mkdir(parents=True, exist_ok=True)
-    for name in required_files(areas, cochlear, False):
-        dest = root / name
-        if dest.exists() and _md5(dest) == MD5[name]:
+    have_wavs = (root / "soundset" / "Soundset").is_dir()
+    for name in required_files(areas, cochlear, False, prepared, have_wavs):
+        if _intact(root, name):
             continue
+        dest = root / name
+        if dest.exists():
+            dest.unlink()                         # corrupt: stream_download keeps existing files
         zenodo_download(ZENODO_RECORD, name, dest)
-        got = _md5(dest)
-        if got != MD5[name]:
+        if not _intact(root, name):
             dest.unlink()
-            raise IOError(f"{name}: md5 {got} != {MD5[name]}; deleted, retry the download")
+            raise IOError(f"{name}: md5 mismatch after download; deleted, retry the download")
     wav_dir(root)
     return root
 

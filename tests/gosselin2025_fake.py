@@ -85,13 +85,16 @@ def write_fake_release(root: Path) -> dict:
         if area == "CN":
             X[0, :, :, 11] = 0                                       # a faded repeat: zeros, kept
         np.save(root / f"Dataset_{area}.npy", X)
-    # AC: value s_csv + 0.01*n in bin 6; reps 10, 11 NaN; (n=2, csv sound 0) rep 9 NaN too
+    # AC: value s_csv + 0.01*n in bin 6; reps 10, 11 NaN; (n=2, csv sound 0) rep 9 NaN too;
+    # (n=0, csv sound 1) all NaN; (n=0, csv sound 2) rep 0 NaN
     A = np.zeros((N_AC, 24, S, 12))
     for s in range(S):
         for n in range(N_AC):
             A[n, 6, idx_ac[s], :] = s + 0.01 * n
     A[:, :, :, 10:] = np.nan
     A[2, :, idx_ac[0], 9] = np.nan
+    A[0, :, idx_ac[1], :] = np.nan                                   # no valid repeat: sentinel
+    A[0, :, idx_ac[2], 0] = np.nan                                   # gap first: not a prefix
     np.save(root / "Dataset_AC.npy", A)
     # CC: groups of 3 fibres, spont increasing within group; evoked = spont + 100*(g+1) in 200..699
     fib = []
