@@ -1,6 +1,6 @@
 ## Auditory datasets
 
-Currently, **13 response datasets** are available, each with a short name for
+Currently, **14 response datasets** are available, each with a short name for
 easier reference. They span six species and a range of recording modalities —
 extracellular single-units, multi-unit activity, two-photon calcium imaging and scalp EEG — but all share
 the same `NeuralDataset` API (NaN-sentinel missing trials, optional
@@ -33,6 +33,7 @@ set `CRCNS_USERNAME` / `CRCNS_PASSWORD`, or pass `username=` / `password=`.
 
 ### Mouse (*Mus musculus*)
 * [Gosselin 2025](README_Gosselin_2025.md) — cochlear nucleus & inferior colliculus (Neuropixels) and auditory cortex (2-photon); 307 tones, chords, AM, sweeps, noises and natural-like sounds; auditory-nerve model as an optional input.
+* [Bagur 2025](README_Bagur_2025.md) — inferior colliculus, auditory thalamus and auditory cortex, 2-photon and silicon probes (~30,000 units); 140 tones, intensity ramps, AM and sweeps; cochlear model as an optional input; AC ROI positions.
 
 ### Rat (*Rattus norvegicus*)
 * [CRCNS AC1 (Wehr + Asari)](README_CRCNS_AC1.md) — auditory cortex (A1) & thalamus (MGB); natural & synthetic sounds.
@@ -61,6 +62,7 @@ README_CRCNS_AA4.md
 README_CRCNS_AA5.md
 README_Le_2025.md
 README_Gosselin_2025.md
+README_Bagur_2025.md
 README_CRCNS_AC1.md
 README_Downer2025.md
 README_Alice_EEG.md
