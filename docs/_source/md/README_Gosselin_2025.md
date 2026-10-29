@@ -60,14 +60,17 @@ file, so 50 dB and 70 dB versions of a sound differ by exactly 20 dB.
 ```python
 from deepSTRF.datasets.audio import Gosselin2025Dataset
 
-# CN + IC spikes at the native 1 ms, log-spectrogram stimuli (the defaults; ~26 GB in RAM)
-ds = Gosselin2025Dataset(path="~/data/gosselin2025", download=True)
+# IC at 5 ms, log-spectrogram stimuli (~1.5 GB in RAM; 3.7 GB download)
+ds = Gosselin2025Dataset(path="~/data/gosselin2025", areas="IC", dt_ms=5, download=True)
 
-# IC only, at 5 ms, smoothed with a 21 ms Hanning window
-ds = Gosselin2025Dataset(path="~/data/gosselin2025", areas=("IC",), dt_ms=5, smooth=True)
+# CN + IC spikes at the native 1 ms (the default dt_ms; ~26 GB in RAM)
+ds = Gosselin2025Dataset(path="~/data/gosselin2025", areas=("CN", "IC"), download=True)
+
+# IC at 5 ms, smoothed with a 21 ms Hanning window
+ds = Gosselin2025Dataset(path="~/data/gosselin2025", areas="IC", dt_ms=5, smooth=True)
 
 # Auditory cortex (2-photon): its own instance, at the native 43.5 ms bins
-ds_ac = Gosselin2025Dataset(path="~/data/gosselin2025", areas=("AC",))
+ds_ac = Gosselin2025Dataset(path="~/data/gosselin2025", areas="AC")
 ```
 
 `download=True` fetches only the files the call needs (md5-checked): the sound
@@ -79,7 +82,7 @@ and 1.5 GB for the auditory-nerve model. The first load builds a slim cache in
 `download=True` calls skip what the cache replaces, and hash each file only
 once.
 
-Time bins: CN / IC default to their native 1 ms and accept `dt_ms` in 1, 2, 4,
+`areas` is required (no default). Time bins: CN / IC default to their native 1 ms and accept `dt_ms` in 1, 2, 4,
 5, 10, 20, 25, 50, 100 (so the 200 ms onset and the 900 ms window fall on bin
 edges); AC only its native 43.5 ms. CN and IC can share an instance; AC cannot
 be mixed with them.

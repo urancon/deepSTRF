@@ -76,7 +76,7 @@ class Gosselin2025Dataset(AudioNeuralDataset):
     """
 
     def __init__(self, path: Optional[str] = None, *,
-                 areas: Union[str, Iterable[str]] = ("CN", "IC"),
+                 areas: Union[str, Iterable[str]],
                  dt_ms: Optional[float] = None,
                  return_waveform: bool = False,
                  audio_fs: int = gs.NATIVE_FS,
@@ -98,10 +98,11 @@ class Gosselin2025Dataset(AudioNeuralDataset):
             Folder holding the release files (``Dataset_*.npy``, ``Info_*.csv``,
             ``Sound Parameters.csv``, ``Soundset.zip``). Defaults to the
             platformdirs cache (``$DEEPSTRF_DATA_DIR`` overrides).
-        areas : str or iterable of str, default ("CN", "IC")
-            Any of ``"CN"`` and ``"IC"``, or ``"AC"`` alone: the 2-photon
-            cortex data has its own time base and cannot be mixed with spikes.
-            A single area can be given as a plain string.
+        areas : str or iterable of str
+            Required. Any of ``"CN"`` and ``"IC"``, or ``"AC"`` alone: the
+            2-photon cortex data has its own time base and cannot be mixed
+            with spikes. A single area can be given as a plain string. There
+            is no default: CN + IC at the native 1 ms take ~26 GB of RAM.
         dt_ms : float, optional
             Response bin width. CN / IC: one of 1, 2, 4, 5, 10, 20, 25, 50,
             100 ms, so the 200 ms onset and the 900 ms window fall on bin

@@ -178,7 +178,8 @@ def test_required_files():
 @pytest.fixture(scope="module")
 def ds_ephys(release, tmp_path_factory):
     root, _ = release
-    return Gosselin2025Dataset(str(root), dt_ms=5, cache_dir=str(tmp_path_factory.mktemp("c1")))
+    return Gosselin2025Dataset(str(root), areas=("CN", "IC"), dt_ms=5,
+                               cache_dir=str(tmp_path_factory.mktemp("c1")))
 
 
 def test_ephys_shapes_and_order(ds_ephys, release):
@@ -296,16 +297,23 @@ def test_download_skips_cached_and_refetches_corrupt(release, tmp_path, monkeypa
 @pytest.mark.parametrize("kw, msg", [
     (dict(areas=("CN", "AC")), "AC"),
     (dict(areas=("XX",)), "unknown area"),
-    (dict(dt_ms=3), "dt_ms"),
+    (dict(areas="CN", dt_ms=3), "dt_ms"),
     (dict(areas=("AC",), dt_ms=5.0), "43.5"),
-    (dict(audio_fs=48000, return_waveform=True), "audio_fs"),
-    (dict(spec_backend="mel"), "spec_backend"),
+    (dict(areas="IC", audio_fs=48000, return_waveform=True), "audio_fs"),
+    (dict(areas="IC", spec_backend="mel"), "spec_backend"),
     (dict(areas=("AC",), smooth=True), "already smoothed"),
 ])
 def test_bad_arguments(release, tmp_path, kw, msg):
     root, _ = release
     with pytest.raises(ValueError, match=msg):
         Gosselin2025Dataset(str(root), cache_dir=str(tmp_path), **kw)
+
+
+def test_areas_is_required(release, tmp_path):
+    """No default: CN + IC at 1 ms would need ~26 GB; the area also picks the time base."""
+    root, _ = release
+    with pytest.raises(TypeError, match="areas"):
+        Gosselin2025Dataset(str(root), cache_dir=str(tmp_path))
 
 
 def test_missing_files_message(tmp_path):
@@ -344,8 +352,8 @@ def test_cochlear_fibres_log1p_and_ac_padding(release, tmp_path):
 def test_cochlear_rejects_waveform(release, tmp_path):
     root, _ = release
     with pytest.raises(ValueError, match="exclude"):
-        Gosselin2025Dataset(str(root), spec_backend="cochlear_model", return_waveform=True,
-                            cache_dir=str(tmp_path))
+        Gosselin2025Dataset(str(root), areas="IC", spec_backend="cochlear_model",
+                            return_waveform=True, cache_dir=str(tmp_path))
 
 
 def test_split_units_on_fake(release):
