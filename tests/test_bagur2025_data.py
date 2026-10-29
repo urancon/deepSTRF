@@ -61,3 +61,24 @@ def test_wav_levels():
         assert db(f"tono70dB_{f}kHz") - db(f"tono60dB_{f}kHz") == pytest.approx(10.0, abs=0.1)
         assert db(f"tono80dB_{f}kHz") - db(f"tono70dB_{f}kHz") == pytest.approx(10.0, abs=0.1)
     assert db("tono70dB_4kHz") - db("tono60dB_4kHz") == pytest.approx(21.1, abs=0.2)  # documented
+
+
+def test_sweep_and_am_frequencies_measured():
+    """Sweep endpoints and AM carriers on the measured tone grid, like the tones."""
+    st = {m["name"]: m for m in bs.build_stim_table(bp.code_dir(ROOT), bp.wav_dir(ROOT))}
+    assert st["ChirpUpclose4to9kHz60dB"]["frequency_khz"] == pytest.approx([4.0, 9.798], abs=0.01)
+    assert st["ChirpDown24kHz60dB500ms"]["frequency_khz"] == pytest.approx([24.0, 9.798], abs=0.01)
+    assert st["ChirpUpclose4to9kHz60dB"]["frequency_label_khz"] == [4.0, 9.0]
+    assert st["Sin7Hz9kHz"]["carrier"] == pytest.approx(9.798, abs=0.01)
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_split_covers_every_category(seed):
+    """On the real 140 sounds every non-blank category reaches train, val and test."""
+    ds_meta = bs.build_stim_table(bp.code_dir(ROOT), bp.wav_dir(ROOT))
+    from deepSTRF.datasets.audio import _trial_audio as ta
+    units, strata = bs.split_units(ds_meta, bs.load_duplicate_groups())
+    keep = [i for i, m in enumerate(ds_meta) if m["category"] != "blank"]
+    sp = ta.draw_split([units[i] for i in keep], [strata[i] for i in keep], seed, (0.7, 0.1, 0.2))
+    for k, idx in sp.items():
+        assert {ds_meta[keep[j]]["category"] for j in idx} == set(bs.CATEGORIES) - {"blank"}, k

@@ -251,8 +251,8 @@ def test_ephys_onset_bin_100(ds_ephys):
 
 def test_2p_onset_frame_matches_t(ds_2p):
     s = [m["name"] for m in ds_2p.stim_meta].index("tono70dB_9kHz")
-    t, dt = ds_2p.twop_frame_times_s * 1000.0, ds_2p.dt
-    expected = int(np.flatnonzero(t + dt / 2 > 0)[0])                 # first frame reaching +0 ms
+    t = ds_2p.twop_frame_times_s * 1000.0                            # frame right edges
+    expected = int(np.flatnonzero(t > 0)[0])                          # first frame past onset
     assert _first_loud_bin(ds_2p.stims[s]) == expected
 
 
@@ -324,3 +324,33 @@ def test_reversals_not_grouped(ds_ephys):
     assert g["Up4+9kHz"] != g["Down4+9kHz"]
     assert g["tono60dB_4kHz"] == g["tono70dB_4kHz"] == g["tono80dB_4kHz"]
     assert g["ChirpUp4kHz60dB500ms"] == g["ChirpUpclose4to9kHz80dB"]
+
+
+# ------------------------------------------------- final-review fixes (2026-10-29)
+def test_twop_grid_right_edges_and_drift():
+    """Released frame times are right edges (t[0] - period = -500 ms, like the 5 ms axis)."""
+    t = -0.5 + 0.0317 * np.arange(1, 48)
+    dt, start = bs.twop_grid(t)
+    assert dt == pytest.approx(6086 / 192) and start == pytest.approx(-500.0, abs=1e-6)
+    with pytest.raises(ValueError, match="drift"):
+        bs.twop_grid(-0.5 + 0.0317 * np.arange(1, 1001))           # 1000 frames: > 1 ms drift
+
+
+def test_2p_waveform_onset_at_500ms(release, tmp_path):
+    root, _ = release
+    w = Bagur2025Dataset(str(root), areas="TH", method="2p", return_waveform=True,
+                         cache_dir=str(tmp_path))
+    s = [m["name"] for m in w.stim_meta].index("tono70dB_9kHz")
+    assert int(torch.nonzero(w.stims[s][0])[0]) in (96000, 96001)   # same onset as the 5 ms grid
+                                                                    # (the tone starts at sin(0) = 0)
+
+
+def test_download_accepts_string_areas(tmp_path, monkeypatch):
+    got = []
+    monkeypatch.setattr(bp._ta, "fetch_checked", lambda rec, name, root, md5, **kw: got.append(name))
+    monkeypatch.setattr(bp, "code_dir", lambda root: None)
+    monkeypatch.setattr(bp, "wav_dir", lambda root: None)
+    bp.download_bagur2025(tmp_path, areas="IC", method="ephys")
+    assert "Data_ICE.mat" in got and "AnatInfo_ICE.mat" in got
+    with pytest.raises(ValueError, match="AC"):
+        bp.download_bagur2025(tmp_path, areas="AC", method="ephys")

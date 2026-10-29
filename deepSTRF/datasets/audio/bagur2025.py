@@ -159,10 +159,8 @@ class Bagur2025Dataset(AudioNeuralDataset):
             bp.prepare_cochlear(root, cache, stim_meta)
 
         if method == "2p":
-            self.twop_frame_times_s = bp.load_twop_time(cache)
-            period = float(np.diff(self.twop_frame_times_s).mean()) * 1000.0
-            dt = round(period * bs.NATIVE_FS / 1000.0) * 1000.0 / bs.NATIVE_FS
-            self._buffer_start_ms = float(self.twop_frame_times_s[0]) * 1000.0 - dt / 2.0
+            self.twop_frame_times_s = bp.load_twop_time(cache)       # frame right edges
+            dt, self._buffer_start_ms = bs.twop_grid(self.twop_frame_times_s)
             T = len(self.twop_frame_times_s)
         else:
             dt = float(bs.EPHYS_DT_MS if dt_ms is None else dt_ms)

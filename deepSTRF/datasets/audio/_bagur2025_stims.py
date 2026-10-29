@@ -3,7 +3,8 @@
 The release's ``Code/Utilities/SoundInfo.mat`` lists the 140 sounds in data
 order (``StimName``, ``SoundDur``, ``StartFreq``, ``StopFreq``, ``MeanFreq``).
 Categories, levels, AM rates and carriers are parsed from the names. Tone
-frequencies are measured from the audio: the names give rounded labels (the
+frequencies are measured from the audio (sweep endpoints and AM carriers are
+mapped onto these measured values): the names give rounded labels (the
 ramp tones "6, 9, 15 kHz" are 6.26, 9.80 and 15.34 kHz, log-spaced 4-24 kHz),
 and the authors' tables disagree for one ramp (``Up/Down4+6+9+24kHz``:
 ``SoundNom.RampFreq`` and ``MeanFreq`` give all five tones; the audio has the
@@ -142,10 +143,34 @@ def build_stim_table(code_dir, wav_dir) -> List[dict]:
                 m["category"] == "am" and m["carrier"] != "white_noise"):
             m["frequency_khz"] = tone_frequencies_khz(wav)        # measured; labels are rounded
         elif m["category"] in ("chirps", "chirp_durations"):
-            m["frequency_khz"] = [info["start_freq_khz"], info["stop_freq_khz"]]
-            m["frequency_label_khz"] = list(m["frequency_khz"])
+            m["frequency_label_khz"] = [info["start_freq_khz"], info["stop_freq_khz"]]
         rows.append(m)
+    # sweep endpoints and AM carriers on the measured tone grid (labels are rounded)
+    grid = {}
+    for m in rows:
+        if len(m["frequency_khz"]) == len(m["frequency_label_khz"]):
+            grid.update(zip(m["frequency_label_khz"], m["frequency_khz"]))
+    for m in rows:
+        if m["category"] in ("chirps", "chirp_durations"):
+            m["frequency_khz"] = [grid.get(f, f) for f in m["frequency_label_khz"]]
+        elif m["category"] == "am" and m["carrier"] != "white_noise":
+            m["carrier"] = m["frequency_khz"][0]
     return rows
+
+
+def twop_grid(t_s: np.ndarray) -> Tuple[float, float]:
+    """(dt_ms, buffer_start_ms) of the 2-photon frames from the released frame
+    times ``t_s`` (s from onset). The times are frame RIGHT edges, like the 5 ms
+    axis (``t[0]`` minus the period is -500 ms exactly). The period (~31.70 ms)
+    is rounded to whole 192 kHz samples (6086 = 31.698 ms) so the waveform grid
+    locks; ``ValueError`` if that drifts by >= 1 ms over the trial."""
+    period = float(np.diff(np.asarray(t_s, np.float64)).mean()) * 1000.0
+    dt = round(period * NATIVE_FS / 1000.0) * 1000.0 / NATIVE_FS
+    drift = len(t_s) * abs(period - dt)
+    if drift >= 1.0:
+        raise ValueError(f"2p frame period {period:.4f} ms vs grid-locked {dt:.4f} ms: "
+                         f"{drift:.2f} ms drift over the trial")
+    return dt, float(t_s[0]) * 1000.0 - period
 
 
 _GROUPS_JSON = Path(__file__).with_name("_bagur2025_stim_groups.json")

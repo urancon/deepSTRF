@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Union
 
 import numpy as np
 
@@ -89,12 +89,16 @@ def wav_dir(root) -> Path:
     return d
 
 
-def download_bagur2025(path, areas: Sequence[str] = ("AC", "TH", "IC"), method: str = "2p",
+def download_bagur2025(path, areas: Union[str, Sequence[str]] = ("AC", "TH", "IC"), method: str = "2p",
                        cochlear: bool = False, prepared: Sequence[str] = ()) -> Path:
     """Fetch the files needed for ``areas`` x ``method`` (+ the cochlear model)
     into ``path``, md5-checked (each file hashed once, then remembered; a
     corrupt one is fetched again), and unzip the code and sound archives.
     Data files whose cache is built (``prepared``) are not fetched."""
+    areas = (areas,) if isinstance(areas, str) else tuple(areas)
+    bad = [a for a in areas if (a, method) not in DATA_FILES]
+    if bad:
+        raise ValueError(f"no {method!r} recording for area(s) {bad} (2p: AC, TH, IC; ephys: IC, TH)")
     root = Path(path).expanduser()
     root.mkdir(parents=True, exist_ok=True)
     have_wavs = (root / "sounds" / "Sounds").is_dir()
