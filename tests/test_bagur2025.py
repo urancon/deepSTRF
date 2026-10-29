@@ -127,3 +127,18 @@ def test_arrays_not_required_after_cache(release, tmp_path):
     assert "Data_ICE.mat" not in g and "Sounds.zip" not in g and "Code.zip" not in g
     assert "AnatInfo_ICE.mat" in g                                 # metadata read at load time
     assert "Data_CC.mat" in bp.required_files(("AC",), "2p", cochlear=True)
+
+
+# ------------------------------------------------------------- Task 4: cochlea
+def test_cochlear_mean_and_bf(release, tmp_path):
+    root, info = release
+    from scipy.io import loadmat
+    st = _table(root)
+    bp.prepare_cochlear(root, tmp_path, st)
+    cc, bf, cf = bp.load_cochlear(tmp_path)
+    raw = loadmat(root / "Data_CC.mat")["Data"]                        # (F, T, S, 15)
+    assert cc.shape == (12, 300, info["S"]) and cc.dtype == np.float32
+    np.testing.assert_allclose(cc, raw.mean(-1), rtol=1e-5, atol=1e-3)
+    np.testing.assert_allclose(bf, [4.0] * 4 + [9.0] * 4 + [24.0] * 4, atol=0.01)
+    assert np.all(np.diff(cf) > 0)                                     # tonotopic label
+    assert cf[0] == pytest.approx(4.0, rel=0.25) and cf[-1] == pytest.approx(24.0, rel=0.25)

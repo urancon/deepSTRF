@@ -217,3 +217,61 @@ def load_anatomy(root, area: str, method: str) -> Optional[dict]:
     sub = [None if k == 0 else (names[k - 1] if k <= len(names) else "outside IC") for k in st]
     return {"subdivision": sub, **{k: np.where(none, np.nan, np.asarray(getattr(a, v), float))
                                    for k, v in (("ap", "AP"), ("ml", "ML"), ("dv", "DV"))}}
+
+
+# ----------------------------------------------------------- cochlear model
+# Established on the release (2026-10-29): 657 fibres (the paper's methods say
+# 590), 15 stochastic repeats, each trial baseline-subtracted, so spontaneous
+# rates (and with them any hair-cell grouping) are lost. Fibres 0..~580 are
+# ordered tonotopically (best frequency on the 70 dB tones rising from 5 to
+# 37.4 kHz); the last ~75 respond weakly with an erratic tone best frequency,
+# consistent with characteristic frequencies above the highest tone (the
+# model spans 5-50 kHz). ``cochlear_cf_khz`` is therefore a smooth fit of best
+# frequency on fibre index (robust, strongly driven fibres only), extrapolated
+# over the tail: an APPROXIMATE label. The paper's fibres-per-hair-cell rule
+# gives 590 fibres for its 40 hair cells; no hair-cell count on the same grid
+# gives 657, so the grouping is not reconstructed.
+
+def _approx_cf(bf: np.ndarray, peak: np.ndarray) -> np.ndarray:
+    """Quadratic fit of log2(best frequency) on fibre index (fibre density
+    varies along the cochlea), on strongly driven fibres, dropping > 0.5 octave
+    outliers; linear if the quadratic is not monotonic. Release: 5.1-51 kHz,
+    94.5% of fibres 0-579 within 0.25 octave of their tone best frequency."""
+    k = np.arange(len(bf), dtype=np.float64)
+    y = np.log2(bf)
+    for deg in (2, 1):
+        use = peak >= 0.5 * np.median(peak)
+        for _ in range(3):
+            p = np.polyfit(k[use], y[use], deg)
+            use &= np.abs(y - np.polyval(p, k)) <= 0.5
+        cf = 2.0 ** np.polyval(p, k)
+        if np.all(np.diff(cf) > 0):
+            return cf
+    return cf
+
+
+def prepare_cochlear(root, cache, stim_meta) -> None:
+    """Cache the cochlear model averaged over its 15 repeats (float32
+    (F, 300, S)), each fibre's best frequency on the 70 dB tones and the
+    approximate characteristic frequency (see the notes above)."""
+    from scipy.io import loadmat
+    root, cache = Path(root), Path(cache)
+    cache.mkdir(parents=True, exist_ok=True)
+    cc = loadmat(root / "Data_CC.mat", variable_names=["Data"])["Data"].mean(axis=-1)
+    cc = cc.astype(np.float32)                           # (F, 300, S)
+    tones = [s for s, m in enumerate(stim_meta) if m.get("group") == "pure_70dB"]
+    khz = np.array([stim_meta[s]["frequency_khz"][0] for s in tones])
+    ev = cc[:, 100:200][:, :, tones].mean(axis=1)        # 0..500 ms after onset, (F, n_tones)
+    bf = khz[ev.argmax(axis=1)]
+    np.save(cache / "CC_mean.npy", cc)
+    np.save(cache / "CC_bf_khz.npy", bf)
+    np.save(cache / "CC_cf_khz.npy", _approx_cf(bf, ev.max(axis=1)))
+    _write_manifest(cache, "CC", n_fibres=int(cc.shape[0]))
+
+
+def load_cochlear(cache):
+    """((F, 300, S) mean rates, (F,) best frequency on 70 dB tones, (F,)
+    approximate characteristic frequency), kHz."""
+    cache = Path(cache)
+    return (np.load(cache / "CC_mean.npy"), np.load(cache / "CC_bf_khz.npy"),
+            np.load(cache / "CC_cf_khz.npy"))
