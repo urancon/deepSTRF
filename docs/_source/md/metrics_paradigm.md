@@ -410,27 +410,34 @@ Hsu, Borst & Theunissen 2004, with the `CCmax` formulation popularized
 by Schoppe et al. 2016.
 
 ```text
-CCnorm_n     = corr(pred_n, psth_n) / CCmax_n
-CCmax_{b,n}  = sqrt( 2 · ρ_half_{b,n} / (1 + ρ_half_{b,n}) )           (Spearman–Brown, per stim)
-ρ_half_{b,n} = E_{i,j}[ corr( psth_half_{i,b,n}, psth_half_{j,b,n} ) ] (over disjoint half-trial splits)
-CCmax_n      = sum_b ( T_b · CCmax_{b,n} ) / sum_b T_b                 (length-weighted, §11)
+CCnorm_n = corr(pred_n, psth_n) / CCmax_n
+CCmax_n  = sqrt( 2 · ρ_half_n / (1 + ρ_half_n) )                       (Spearman–Brown)
+ρ_half_n = mean over splits of corr( psth_half1_n, psth_half2_n )       (over the concatenated stims)
 ```
 
-Computed per-stim by sampling up to `ccmax_iters=126` disjoint
-half-trial pairs, then length-weighted across stims with `T_b` as the
-weight. Same robustness convention as `signal_power` (§6.5). Per-stim
-cells with `ρ_half ≤ 0` (worse-than-chance ceiling — too noisy to
-estimate) are dropped from the weighted average rather than
-contaminating it. Silent responses need two more rules, since a
-correlation with a constant vector is undefined:
+Each of `ccmax_iters=126` random splits divides every stim's own valid
+repeats into two halves of `R_b // 2` repeats; the two half PSTHs are
+then strung together across stims and correlated over all valid
+`(b, t)` bins — the same series `corr(pred_n, psth_n)` runs over, so the
+differences in mean response between stims enter both (as for
+`'schoppe'`, §6.4; a per-stim CCmax averaged across stims scored a
+perfect prediction ~1.1, fixed 2026-10-29). Every half holds half of its
+stim's repeats, so the Spearman–Brown step holds with unequal (even)
+repeat counts. With an odd `R_b`, one repeat is left out of each split:
+the ceiling then describes a PSTH of `R_b − 1` repeats and `CCnorm` is
+slightly overestimated (~+1% in the tests with `R_b` = 3 and 5).
+Splits are drawn with a fixed seed. Stims with fewer than 2 valid
+repeats are left out of `CCmax`. Silent responses:
 
-- a stim to which the cell gave a constant response on every trial
-  (typically: it never fired) carries no reliability information and is
-  dropped from the average, like a `ρ_half ≤ 0` stim;
-- a half-split whose half-average is constant while the other half is not
-  (one half fired, the other never did) counts as `ρ = 0`. It is evidence
-  of unreliability; leaving such splits out would overestimate `CCmax`
-  for sparse cells.
+- a split whose half PSTH is constant while the other is not (one half
+  fired, the other never did) counts as `ρ = 0` — evidence of
+  unreliability;
+- a neuron whose two halves are constant on every split (it never fired)
+  gets NaN, as does `ρ_half_n ≤ 0`.
+
+`compute_neuron_quality()` keeps a per-stim, length-weighted `CCmax`
+in `nrn_meta['ccmax']` as a reliability score (§11); it is not the
+denominator of `normalized_corrcoef`.
 
 #### Single-trial degenerate case
 
@@ -658,7 +665,9 @@ re-open this doc.
 ## 11. Why length-weighting? (BLUE derivation)
 
 Several v1 metrics combine per-stim estimates into a per-neuron number:
-`signal_power`, `noise_power`, `snr`, and `normalized_corrcoef(method='hsu')`.
+`signal_power`, `noise_power`, `snr`, the within-stim part of the
+`normalized_corrcoef(method='schoppe')` signal power, and the
+`nrn_meta['ccmax']` reliability score of `compute_neuron_quality()`.
 The *aggregation* across stims is length-weighted:
 
 ```text

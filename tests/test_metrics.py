@@ -613,6 +613,17 @@ def test_normalized_corrcoef_schoppe_unbiased_across_stimuli(reps, streaming):
     assert abs(out.mean().item() - 1.0) < 0.02
 
 
+@pytest.mark.parametrize("reps", [(10, 10, 10, 10, 10, 10), (2, 12, 4, 8, 2, 20)],
+                         ids=["equal-reps", "unequal-reps"])
+def test_normalized_corrcoef_hsu_unbiased_across_stimuli(reps):
+    """Same as the Schoppe test for the split-half CCmax: the halves must be correlated over
+    the concatenated stimuli, as the raw cc is (per-stimulus CCmax gives ~1.1 here). Even
+    repeat counts: each half holds half of its stimulus's repeats, so Spearman-Brown is exact."""
+    rate, resp = _multi_stim_poisson(reps, N=150)
+    out = normalized_corrcoef(rate, resp, method="hsu", reduction="none")
+    assert abs(out.mean().item() - 1.0) < 0.02
+
+
 def test_normalized_corrcoef_schoppe_matches_concatenated_formula():
     """With equal repeats on every stimulus, the metric is Schoppe's on the concatenated
     responses (up to finite-sample terms), noisy prediction included."""

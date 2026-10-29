@@ -551,6 +551,63 @@ def _ccmax_per_neuron(
 
 
 @torch.no_grad()
+def _pooled_ccmax_per_neuron(
+    responses: torch.Tensor,
+    max_iters: int,
+    seed: int = 0,
+) -> torch.Tensor:
+    """Per-neuron CCmax (Hsu / Spearman-Brown) over the concatenated stimuli, ``(N,)``.
+
+    Each iteration splits every stimulus's own valid repeats at random into two halves of
+    ``R_b // 2`` repeats (one repeat left out when ``R_b`` is odd), builds the two half
+    PSTHs, and correlates them over all valid ``(stim, time)`` bins, as ``corrcoef`` does
+    for the prediction. ``CCmax = sqrt(2 rho / (1 + rho))`` with ``rho`` the mean over
+    iterations. Every half holds half of its stimulus's repeats, so Spearman-Brown holds
+    with unequal (even) repeat counts. Stimuli with fewer than 2 valid repeats or bins are
+    left out. A split with one constant half counts as ``rho = 0``; a neuron whose halves
+    are always both constant (silent), or with ``rho <= 0``, gets NaN.
+
+    ``responses`` ``(B, N, R, T)``, NaN = invalid. Deterministic (``seed``).
+    """
+    B, N, R, T = responses.shape
+    g = torch.Generator().manual_seed(seed)
+    x = responses.double()
+    v = ~x.isnan()
+    vr = v.any(dim=-1)                                                # (B, N, R)
+    Rv = vr.sum(-1)                                                   # (B, N)
+    ok_bt = (Rv >= 2) & (v.any(dim=-2).sum(-1) >= 2)                  # (B, N)
+    xz = torch.nan_to_num(x, nan=0.0)
+    half = (Rv // 2).unsqueeze(-1)                                    # (B, N, 1)
+    acc = torch.zeros(max_iters, 6, N, dtype=torch.float64)          # n, a, b, aa, bb, ab
+    for i in range(max_iters):
+        keys = torch.rand(B, N, R, generator=g, dtype=torch.float64) + 2.0 * (~vr)
+        rank = keys.argsort(dim=-1).argsort(dim=-1)                   # valid repeats first
+        m1 = (rank < half).unsqueeze(-1) & v
+        m2 = ((rank >= half) & (rank < 2 * half)).unsqueeze(-1) & v
+        c1, c2 = m1.sum(-2), m2.sum(-2)                               # (B, N, T)
+        a = (xz * m1).sum(-2) / c1.clamp(min=1)
+        b = (xz * m2).sum(-2) / c2.clamp(min=1)
+        use = (c1 > 0) & (c2 > 0) & ok_bt.unsqueeze(-1)
+        a, b, u = a * use, b * use, use.double()
+        for k, s in enumerate((u, a, b, a * a, b * b, a * b)):
+            acc[i, k] = s.sum(dim=(0, 2))
+    n, sa, sb, saa, sbb, sab = acc.unbind(1)                         # (iters, N)
+    n1 = n.clamp(min=1)
+    va, vb = saa - sa ** 2 / n1, sbb - sb ** 2 / n1
+    cov = sab - sa * sb / n1
+    const_a, const_b = va <= _EPS * n1, vb <= _EPS * n1
+    rho_i = torch.where(const_a | const_b, torch.zeros_like(cov),
+                        cov / torch.sqrt((va * vb).clamp(min=_EPS)))
+    informative = (n >= 2) & ~(const_a & const_b)
+    k = informative.sum(0)
+    rho = torch.where(k > 0, (rho_i * informative).sum(0) / k.clamp(min=1),
+                      torch.full((N,), float("nan"), dtype=torch.float64))
+    ccmax = torch.where(rho > 0, torch.sqrt(2 * rho / (1 + rho).clamp(min=_EPS)),
+                        torch.full_like(rho, float("nan")))
+    return ccmax.to(responses.dtype)
+
+
+@torch.no_grad()
 def normalized_corrcoef(
     pred: torch.Tensor,
     responses: torch.Tensor,
@@ -586,11 +643,11 @@ def normalized_corrcoef(
     reduction : {'none', 'mean', 'sum'}, default 'mean'
         Reduction over the neuron axis.
     ccmax_iters : int, default 126
-        Cap on random half-splits per ``(stim, neuron)`` for the ``'hsu'``
-        CCmax estimate. A stimulus to which the neuron gave a constant
-        response (e.g. never fired) is left out of CCmax; a half-split whose
-        half-average is constant while the other half is not counts as
-        ``rho = 0``.
+        Number of random half-splits for the ``'hsu'`` CCmax. Each split
+        halves every stimulus's own repeats, and the half PSTHs are
+        correlated over the concatenated stimuli, like the raw cc. A split
+        whose half-average is constant while the other half is not counts
+        as ``rho = 0``; a neuron that never fired gets NaN.
     sp_rel_threshold : float, default 1e-6
         ``'schoppe'`` only. The signal power is a difference of two nearly
         equal terms, so for a (nearly) silent neuron rounding can leave a
@@ -670,7 +727,9 @@ def normalized_corrcoef(
         return reduce_over_neurons(torch.stack(out), reduction)
 
     if method == "hsu":
-        ccmax = _ccmax_per_neuron(responses, valid_resp, ccmax_iters)  # (N,)
+        # split halves correlated over the concatenated stimuli, like cc_raw below
+        r = torch.where(valid_resp, responses, responses.new_full((), float("nan")))
+        ccmax = _pooled_ccmax_per_neuron(r, ccmax_iters)                # (N,)
         cc_raw = corrcoef(pred, psth, mask=mask, reduction="none")     # (N,)
         cc_norm = cc_raw / ccmax
         return reduce_over_neurons(cc_norm, reduction)
