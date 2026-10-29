@@ -50,7 +50,7 @@ file, so 50 dB and 70 dB versions of a sound differ by exactly 20 dB.
   changes), Gaussian-smoothed (σ = 31 ms) and baseline-subtracted per trial.
   They are **signed**, and they lag firing by about 100 ms (GCaMP6s rise time).
 - About 10 repeats are available per AC neuron; missing repeats are dropped,
-  so `responses[s][n]` has 9–12 rows.
+  so `responses[s][n]` has 7–11 rows (10 for 91% of the neuron–sound pairs).
 - CN and IC are raw spike counts (not baseline-subtracted).
 - AC was imaged in different mice from CN / IC.
 
@@ -74,8 +74,10 @@ ds_ac = Gosselin2025Dataset(path="~/data/gosselin2025", areas=("AC",))
 set and stimulus table (31 MB), then 9.4 GB for CN, 3.7 GB for IC, 3.0 GB for AC
 and 1.5 GB for the auditory-nerve model. The first load builds a slim cache in
 `<path>/_cache` (~1 GB for everything, ~40 s); after that the original
-`Dataset_*.npy` files can be deleted, except `Dataset_CC.npy` if you use
-`cochlear_channels="fibres"`.
+`Dataset_*.npy` files and `Soundset.zip` can be deleted, except
+`Dataset_CC.npy` if you use `cochlear_channels="fibres"`. Later
+`download=True` calls skip what the cache replaces, and hash each file only
+once.
 
 Time bins: CN / IC default to their native 1 ms and accept `dt_ms` in 1, 2, 4,
 5, 10, 20, 25, 50, 100 (so the 200 ms onset and the 900 ms window fall on bin
@@ -87,7 +89,7 @@ a 21 ms Hanning window to CN / IC; it is refused for AC, which the authors
 already smoothed.
 
 Memory: responses are float32. At the default 1 ms, CN takes ~19 GB and IC
-~7.3 GB (CN + IC ~26 GB); at `dt_ms=5`, ~3.8 GB and ~1.5 GB. AC takes ~1.2 GB.
+~7.3 GB (CN + IC ~26 GB); at `dt_ms=5`, ~3.8 GB and ~1.5 GB. AC takes ~1.5 GB.
 On a small machine (or Colab), pass `dt_ms=5` or load IC alone.
 
 
@@ -99,8 +101,11 @@ at its true onset (+200 ms) and silence elsewhere.
 **Log spectrogram (default).** Log-spaced Hamming spectrogram computed directly
 at `dt_ms` (`fmin=2000`, `fmax=64000`, `bins_per_octave=6` → 31 bands;
 `window_ms` defaults to `2 * dt_ms`). Values are dB relative to one int16 step,
-floored at the level of 16-bit quantisation noise (18 dB at a 10 ms window).
-The floor is the same for every sound, so level differences are kept.
+floored at the level of 16-bit quantisation noise (11 dB at the 2 ms window of
+the default 1 ms bins, 18 dB at a 10 ms window). The floor is the same for
+every sound, so level differences are kept. A 2 ms window has a bandwidth of
+~0.65 kHz, wider than the band spacing below ~5 kHz: pass a longer
+`window_ms` if the low bands must be resolved.
 
 **Waveform.** `return_waveform=True` gives the `(1, T_audio)` trial waveform at
 192 kHz (960 samples per 5 ms bin, 8352 per 43.5 ms bin), as int16 / 32768
@@ -157,7 +162,7 @@ spectrogram `(1, F, T)` so every model works unchanged.
 | `session`, `session_id` | recording session as released, and `"CN-s3"` (unique across areas) |
 | `index_in_release` | row in the original `Dataset_*.npy` |
 | `best_freq_khz` | *derived by the loader*: the 70-dB pure tone with the largest evoked response (`None` if no tone evokes a response above baseline) |
-| `spont_rate` | *derived by the loader*: mean pre-stimulus activity (spikes/s for CN / IC) |
+| `spont_rate` | *derived by the loader*: mean pre-stimulus activity in spikes/s (CN / IC); `None` for AC, whose traces are baseline-subtracted per trial |
 
 Dataset-level attributes: `species`, `hearing_range_hz`, `recording_type`
 (`"extracellular-neuropixels"` or `"2p-calcium"`), `onset_ms`, and for AC
@@ -189,8 +194,13 @@ its reconstruction (similar, but no shared audio).
 Sounds are drawn category by category, so every split holds tones, chords, AM,
 sweeps, noises and complex sounds. The draw covers all 307 sounds whatever
 `areas` you load, so a seed gives the same split for CN, IC and AC. At
-`seed=0`: 230 / 25 / 52 sounds. The 4 decomposed clips form one stratum with a
-25-sound unit (the dolphin call), so they are rarely in val or test.
+`seed=0`: 230 / 25 / 52 sounds. Coarse at the edges:
+
+- the 4 decomposed clips form one stratum with a 25-sound unit (the dolphin
+  call), which always goes to train; the other three clips reach val or test
+  in 38–48% of seeds;
+- the 5 harmonic chords never get a validation sound (other chord categories
+  do).
 
 
 ## Caveats
