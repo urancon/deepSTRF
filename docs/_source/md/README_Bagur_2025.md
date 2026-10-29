@@ -52,7 +52,9 @@ as sound-responsive.
   minimum is minus its baseline) and checks they are integer.
 - **2-photon** values are linearly deconvolved fluorescence (an estimate of
   firing-rate changes), Gaussian-smoothed (σ = 31 ms) and baseline-subtracted
-  per trial: **signed**, and lagging firing by about 100 ms (GCaMP6s).
+  per trial: **signed**, and lagging firing by about 100 ms (GCaMP6s). The
+  smoothing is not causal (it spreads the signal one or two frames back in
+  time), but the calcium lag is much larger.
 - No trial is missing.
 
 
@@ -80,9 +82,11 @@ that the `Data_*.mat` files and the zip archives can be deleted.
 
 Time bins: electrophysiology defaults to the native 5 ms and accepts `dt_ms` in
 5, 10, 20, 25, 50, 100 (so the onset and the 1.5 s window fall on bin edges);
-imaging only its frame period. The 31.70 ms frame period is not a whole number
-of 192 kHz samples, so `ds.dt` is 6086 / 192 = 31.698 ms (a 0.1 ms drift over a
-trial), and frame k is taken as centred on the released frame time.
+imaging only its frame period. The released frame times are the frames' right
+edges, like the 5 ms bins (the first frame time minus the 31.70 ms period is
+exactly −500 ms), so both time bases start at −500 ms and the onset falls in
+frame 15. The period is not a whole number of 192 kHz samples, so `ds.dt` is
+6086 / 192 = 31.698 ms (a 0.1 ms drift over a trial).
 
 Smoothing: off by default. `smooth=True` applies a 21 ms Hanning window to
 spike counts; it is refused for imaging, which the authors already smoothed.
@@ -131,12 +135,12 @@ in spikes/s, averaged onto the instance's bins.
 | `name` | wav name (`blank` for the silence) |
 | `category`, `group` | category above; finer group (`pure_60dB`, `up_chirps_80dB`, ...) |
 | `level_db` | 60, 70 or 80 (None for the blank) |
-| `frequency_khz` | tone frequencies **measured from the audio** (tones, ramp tone sets, AM carriers); start and end for sweeps |
+| `frequency_khz` | tone frequencies **measured from the audio** (tones, ramp tone sets, AM carriers), and sweep start / end on the same measured grid |
 | `frequency_label_khz` | the rounded frequencies of the names (the "9 kHz" tone is 9.798 kHz) |
-| `start_freq_khz`, `stop_freq_khz` | from the release's `SoundInfo.mat` |
+| `start_freq_khz`, `stop_freq_khz` | as in the release's `SoundInfo.mat` (rounded) |
 | `duration_ms` | from the wav file |
 | `direction` | `"up"` / `"down"` for ramps (intensity) and sweeps (frequency) |
-| `am_rate_hz`, `carrier` | AM rate and carrier (tone in kHz, or `"white_noise"`) |
+| `am_rate_hz`, `carrier` | AM rate and carrier (measured tone frequency in kHz, or `"white_noise"`) |
 | `chirp_duration_ms` | for `chirp_durations` |
 | `split_group` | the unit `group_split` keeps together |
 | `index_in_release` | the sound's index in the release arrays |
@@ -192,8 +196,8 @@ load, so a seed gives the same split for every population. At `seed=0`:
 - **The authors' unit selection cannot be reproduced from the released
   traces.** The paper keeps units whose mean inter-trial correlation is at
   least 0.12, and the release ships only those, yet no reading we tried brings
-  more than a fraction of them above 0.12 (spikes: up to 54–67% with per-sound
-  mean responses; imaging: 7–31%). The selection was probably computed at
+  more than a fraction of them above 0.12 (spikes: at most 66–67%, with
+  per-sound mean responses; imaging: 7–31%). The selection was probably computed at
   another stage of processing. For model evaluation, gate units by
   `compute_neuron_quality()` and an SNR threshold.
 - **Tone frequencies differ from their names.** The names are rounded: the
