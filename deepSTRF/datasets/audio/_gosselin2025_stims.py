@@ -8,12 +8,12 @@ import csv
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 import numpy as np
 import soundfile as sf
 
-from deepSTRF.datasets.audio._logspectrogram import logspectrogram
+from deepSTRF.datasets.audio import _trial_audio as _ta
 
 ZENODO_RECORD = 17271813
 NATIVE_FS = 192000
@@ -139,39 +139,23 @@ def build_stim_table(csv_path, wav_dir) -> List[dict]:
 
 
 def trial_waveform(wav: np.ndarray, n_bins: int, hop: int) -> np.ndarray:
-    """Zero buffer of ``n_bins * hop`` samples with the sound at +200 ms.
-
-    Samples stay in int16 units (absolute level kept). A sound that would
-    overrun the buffer is cropped (none does in the release).
-    """
-    buf = np.zeros(n_bins * hop, dtype=np.float64)
-    n = min(len(wav), len(buf) - ONSET_SAMPLES)
-    buf[ONSET_SAMPLES:ONSET_SAMPLES + n] = wav[:n]
-    return buf
+    """Zero buffer of ``n_bins * hop`` samples with the sound at +200 ms
+    (int16 units, absolute level kept)."""
+    return _ta.trial_waveform(wav, n_bins, hop, ONSET_SAMPLES)
 
 
 def spec_floor_db(window_ms: float, fs: int = NATIVE_FS) -> float:
-    """dB level of int16 quantisation noise (variance 1/12) through the
-    Hamming window used by :func:`logspectrogram`: ``10 log10(sum(w^2) / 12)``.
-
-    Silence and anything quieter than the 16-bit quantisation noise of the
-    files sit at this floor, for every sound alike.
-    """
-    win = np.hamming(max(int(round(window_ms * fs / 1000.0)), 4))
-    return float(10.0 * np.log10(np.sum(win ** 2) / 12.0))
+    """dB level of int16 quantisation noise through the analysis window
+    (:func:`deepSTRF.datasets.audio._trial_audio.spec_floor_db`)."""
+    return _ta.spec_floor_db(window_ms, fs)
 
 
 def logspec_trial(wav: np.ndarray, n_bins: int, dt_ms: float, fmin: float, fmax: float,
                   bins_per_octave: int, window_ms: Optional[float] = None) -> np.ndarray:
     """(F, n_bins) log-spaced spectrogram (dB re 1 int16 step) of the trial
     buffer, clipped below at :func:`spec_floor_db`."""
-    hop = int(round(dt_ms * NATIVE_FS / 1000.0))
-    window_ms = 2.0 * dt_ms if window_ms is None else window_ms
-    S_db, _ = logspectrogram(trial_waveform(wav, n_bins, hop), NATIVE_FS, dt_ms=dt_ms,
-                             fmin=fmin, fmax=fmax, bins_per_octave=bins_per_octave,
-                             window_ms=window_ms)
-    S_db = np.maximum(S_db[:, :n_bins], spec_floor_db(window_ms))
-    return S_db.astype(np.float32)
+    return _ta.logspec_trial(wav, n_bins, dt_ms, fmin, fmax, bins_per_octave, ONSET_SAMPLES,
+                             window_ms, NATIVE_FS)
 
 
 _GROUPS_JSON = Path(__file__).with_name("_gosselin2025_stim_groups.json")
@@ -180,27 +164,7 @@ _GROUPS_JSON = Path(__file__).with_name("_gosselin2025_stim_groups.json")
 def find_gain_copies(wav_dir, names: Sequence[str], thresh: float = 0.999) -> List[List[str]]:
     """Groups of sounds that are the same waveform up to a scalar gain
     (equal length and |Pearson r| > ``thresh``)."""
-    wavs = {n: load_wav_int16(wav_dir, n).astype(np.float64) for n in names}
-    parent = {n: n for n in names}
-
-    def root(n):
-        while parent[n] != n:
-            n = parent[n]
-        return n
-
-    by_len: Dict[int, List[str]] = {}
-    for n in names:
-        by_len.setdefault(len(wavs[n]), []).append(n)
-    for group in by_len.values():
-        for i, a in enumerate(group):
-            for b in group[i + 1:]:
-                x, y = wavs[a], wavs[b]
-                if x.std() > 0 and y.std() > 0 and abs(np.corrcoef(x, y)[0, 1]) > thresh:
-                    parent[root(b)] = root(a)
-    out: Dict[str, List[str]] = {}
-    for n in names:
-        out.setdefault(root(n), []).append(n)
-    return sorted(sorted(g) for g in out.values() if len(g) > 1)
+    return _ta.find_gain_copies({n: load_wav_int16(wav_dir, n) for n in names}, thresh)
 
 
 def load_gain_copies() -> List[List[str]]:

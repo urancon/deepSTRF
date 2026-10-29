@@ -12,7 +12,6 @@ Cache layout (``<path>/_cache`` by default):
 from __future__ import annotations
 
 import csv
-import hashlib
 import json
 from pathlib import Path
 from typing import List, Sequence
@@ -21,6 +20,7 @@ import numpy as np
 
 from deepSTRF.datasets.audio._gosselin2025_stims import ZENODO_RECORD, read_sound_table
 from deepSTRF.datasets.audio._gosselin2025_cochlear import ihc_groups_from_spont, ihc_means
+from deepSTRF.datasets.audio import _trial_audio as _ta
 from deepSTRF.utils.data_download import unzip, zenodo_download
 
 CACHE_VERSION = 1
@@ -59,32 +59,12 @@ def required_files(areas: Sequence[str], cochlear: bool, fibres: bool,
 
 
 def _md5(path: Path) -> str:
-    h = hashlib.md5()
-    with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1 << 24), b""):
-            h.update(block)
-    return h.hexdigest()
-
-
-_STAMPS = ".md5_checked.json"
+    return _ta.md5_of(path)
 
 
 def _intact(root: Path, name: str) -> bool:
     """md5 check, remembered by size + mtime so a big file is hashed once."""
-    dest = root / name
-    if not dest.exists():
-        return False
-    st = dest.stat()
-    key = [st.st_size, st.st_mtime_ns, MD5[name]]
-    stamps_path = root / _STAMPS
-    stamps = json.loads(stamps_path.read_text()) if stamps_path.exists() else {}
-    if stamps.get(name) == key:
-        return True
-    if _md5(dest) != MD5[name]:
-        return False
-    stamps[name] = key
-    stamps_path.write_text(json.dumps(stamps))
-    return True
+    return _ta.md5_intact(root, name, MD5[name], hasher=_md5)
 
 
 def download_gosselin2025(path, areas: Sequence[str] = ("CN", "IC", "AC"),
@@ -97,15 +77,8 @@ def download_gosselin2025(path, areas: Sequence[str] = ("CN", "IC", "AC"),
     root.mkdir(parents=True, exist_ok=True)
     have_wavs = (root / "soundset" / "Soundset").is_dir()
     for name in required_files(areas, cochlear, False, prepared, have_wavs):
-        if _intact(root, name):
-            continue
-        dest = root / name
-        if dest.exists():
-            dest.unlink()                         # corrupt: stream_download keeps existing files
-        zenodo_download(ZENODO_RECORD, name, dest)
-        if not _intact(root, name):
-            dest.unlink()
-            raise IOError(f"{name}: md5 mismatch after download; deleted, retry the download")
+        _ta.fetch_checked(ZENODO_RECORD, name, root, MD5[name], download=zenodo_download,
+                          hasher=_md5)
     wav_dir(root)
     return root
 

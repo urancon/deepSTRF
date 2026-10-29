@@ -11,10 +11,9 @@ category, or ``decomposition``) to the set furthest below its target share.
 """
 from __future__ import annotations
 
-import random
-from typing import Dict, List, Sequence, Tuple
+from typing import List, Sequence, Tuple
 
-KEYS = ("train", "val", "test")
+from deepSTRF.datasets.audio._trial_audio import KEYS, draw_split  # noqa: F401 (re-exported)
 
 
 def split_units(stim_meta: Sequence[dict], gain_copies: Sequence[Sequence[str]]
@@ -33,31 +32,3 @@ def split_units(stim_meta: Sequence[dict], gain_copies: Sequence[Sequence[str]]
             units.append(rep.get(m["name"], m["name"]))
             strata.append(m["category"])
     return units, strata
-
-
-def draw_split(units: Sequence[str], strata: Sequence[str], seed, fractions: Sequence[float]
-               ) -> Dict[str, List[int]]:
-    """Assign whole units to train / val / test, stratum by stratum; each unit,
-    in a seeded shuffle, goes to the set furthest below its target share."""
-    if len(fractions) != 3 or abs(sum(fractions) - 1.0) > 1e-6:
-        raise ValueError(f"fractions must be 3 shares summing to 1, got {fractions}")
-    rng = random.Random(seed)
-    size: Dict[str, int] = {}
-    stratum_of: Dict[str, str] = {}
-    for u, st in zip(units, strata):
-        size[u] = size.get(u, 0) + 1
-        stratum_of[u] = st
-    assign: Dict[str, str] = {}
-    for st in sorted(set(strata)):
-        todo = sorted(u for u in size if stratum_of[u] == st)
-        rng.shuffle(todo)
-        total = sum(size[u] for u in todo)
-        count = dict.fromkeys(KEYS, 0)
-        for u in todo:
-            k = max(KEYS, key=lambda k: fractions[KEYS.index(k)] * total - count[k])
-            assign[u] = k
-            count[k] += size[u]
-    out = {k: [] for k in KEYS}
-    for i, u in enumerate(units):
-        out[assign[u]].append(i)
-    return out
