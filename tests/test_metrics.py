@@ -559,6 +559,82 @@ def test_normalized_corrcoef_schoppe_perfect_pred():
     assert torch.isclose(out[0], torch.tensor(1.0), atol=1e-3)
 
 
+def _multi_stim_poisson(reps, seed=0, N=300):
+    """Poisson trials around a known rate on several stimuli whose MEAN rates differ a lot
+    (most of the rate variance is between stimuli), with unequal lengths and, when ``reps``
+    differ, unequal repeat counts. Returns ``(rate, responses)`` as (S, N, 1, T_max) and
+    (S, N, R_max, T_max), NaN-padded; the rate is the perfect prediction."""
+    g = torch.Generator().manual_seed(seed)
+    S, T_max, R_max = len(reps), 40 + 20 * (len(reps) - 1), max(reps)
+    rate = torch.full((S, N, 1, T_max), float("nan"))
+    resp = torch.full((S, N, R_max, T_max), float("nan"))
+    for s, R in enumerate(reps):
+        T = 40 + 20 * s
+        level = 0.5 + 4.5 * torch.rand(1, N, 1, 1, generator=g)            # per stim and neuron
+        shape = 1 + 0.5 * torch.sin(torch.linspace(0, 6.28, T) * (1 + s) +
+                                    6.28 * torch.rand(1, N, 1, 1, generator=g))
+        r = level * shape                                                  # (1, N, 1, T)
+        rate[s:s + 1, :, :, :T] = r
+        resp[s:s + 1, :, :R, :T] = torch.poisson(r.expand(1, N, R, T).contiguous(), generator=g)
+    return rate, resp
+
+
+def _schoppe_concatenated(pred, resp):
+    """Schoppe et al. 2016 Eq. 28-29 on the stimuli concatenated in time (equal R only)."""
+    out = []
+    for n in range(pred.shape[1]):
+        v = ~pred[:, n, 0].isnan()                                         # (S, T)
+        p = pred[:, n, 0][v]
+        R = resp[:, n].transpose(0, 1)[:, v]                               # (R, sum T)
+        N_tr = R.shape[0]
+        sp = (R.sum(0).var() - R.var(dim=1).sum()) / (N_tr * (N_tr - 1))
+        y = R.mean(0)
+        cov = ((p - p.mean()) * (y - y.mean())).sum() / (p.numel() - 1)
+        out.append(cov / torch.sqrt(p.var() * sp))
+    return torch.stack(out)
+
+
+@pytest.mark.parametrize("reps", [(10, 10, 10, 10, 10, 10), (3, 12, 5, 8, 2, 20)],
+                         ids=["equal-reps", "unequal-reps"])
+@pytest.mark.parametrize("streaming", [False, True], ids=["full-set", "streaming"])
+def test_normalized_corrcoef_schoppe_unbiased_across_stimuli(reps, streaming):
+    """A perfect prediction scores ~1 on average when the stimuli differ in mean response.
+    Signal power must include the between-stimulus variance that cov(pred, psth) and
+    var(pred) see over the concatenated stimuli (per-stimulus SP alone gives ~1.3 here)."""
+    rate, resp = _multi_stim_poisson(reps)
+    if streaming:
+        from deepSTRF.metrics import StreamingCorrcoef
+        m = StreamingCorrcoef("schoppe")
+        for s in range(0, rate.shape[0], 2):                               # 2 stimuli per batch
+            m.update(rate[s:s + 2], resp[s:s + 2])
+        out = m.compute()
+    else:
+        out = normalized_corrcoef(rate, resp, method="schoppe", reduction="none")
+    assert abs(out.mean().item() - 1.0) < 0.02
+
+
+@pytest.mark.parametrize("reps", [(10, 10, 10, 10, 10, 10), (2, 12, 4, 8, 2, 20)],
+                         ids=["equal-reps", "unequal-reps"])
+def test_normalized_corrcoef_hsu_unbiased_across_stimuli(reps):
+    """Same as the Schoppe test for the split-half CCmax: the halves must be correlated over
+    the concatenated stimuli, as the raw cc is (per-stimulus CCmax gives ~1.1 here). Even
+    repeat counts: each half holds half of its stimulus's repeats, so Spearman-Brown is exact."""
+    rate, resp = _multi_stim_poisson(reps, N=150)
+    out = normalized_corrcoef(rate, resp, method="hsu", reduction="none")
+    assert abs(out.mean().item() - 1.0) < 0.02
+
+
+def test_normalized_corrcoef_schoppe_matches_concatenated_formula():
+    """With equal repeats on every stimulus, the metric is Schoppe's on the concatenated
+    responses (up to finite-sample terms), noisy prediction included."""
+    rate, resp = _multi_stim_poisson((10,) * 6, seed=1, N=100)
+    g = torch.Generator().manual_seed(2)
+    pred = rate + 0.8 * torch.randn(rate.shape, generator=g)
+    ours = normalized_corrcoef(pred, resp, method="schoppe", reduction="none")
+    ref = _schoppe_concatenated(pred, resp)
+    assert (ours - ref).abs().max().item() < 0.01
+
+
 def test_normalized_corrcoef_hsu_perfect_pred():
     g = torch.Generator().manual_seed(0)
     signal = torch.randn(1, 1, 1, 500, generator=g)

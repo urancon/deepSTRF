@@ -8,9 +8,11 @@ exact functions of per-neuron running sums, so they can be accumulated one batch
 
 - Pearson ``cc``: count, sum p, sum g, sum p^2, sum g^2, sum p*g over the valid PSTH bins
   (accumulated in float64);
-- Schoppe ``cc_norm``: the same sums, plus the signal / noise power, which the library already
+- Schoppe ``cc_norm``: the same sums, plus the signal / noise power, which the library
   computes per stimulus and averages with length weights (same definition as
-  :func:`~deepSTRF.metrics.performance._per_stim_sp_np`, vectorised over neurons).
+  :func:`~deepSTRF.metrics.performance._per_stim_sp_np`, vectorised over neurons), plus five
+  sums for the between-stimulus part of the signal power
+  (:func:`~deepSTRF.metrics.performance._between_stim_sums`).
 
 Memory is one batch plus a few ``(N,)`` vectors, whatever the size of the set. Results equal
 the full-set functions up to float rounding (tested in ``tests/test_streaming_metrics.py``).
@@ -24,7 +26,7 @@ from typing import Optional
 
 import torch
 
-from deepSTRF.metrics.performance import _EPS
+from deepSTRF.metrics.performance import _EPS, _between_stim_sp, _between_stim_sums
 
 __all__ = ["StreamingCorrcoef"]
 
@@ -115,6 +117,7 @@ class StreamingCorrcoef:
             z = lambda: torch.zeros(N, dtype=torch.float64, device=pred.device)
             self._n, self._sp, self._sg, self._spp, self._sgg, self._spg = (z() for _ in range(6))
             self._w, self._wsp, self._wnp = z(), z(), z()
+            self._btw = [z() for _ in range(5)]   # between-stimulus SP sums
         for acc, s in zip((self._n, self._sp, self._sg, self._spp, self._sgg, self._spg), sums):
             acc += s
         self._r_max = max(self._r_max, responses.shape[2])
@@ -131,6 +134,8 @@ class StreamingCorrcoef:
                     self._w[sl] += tv_b.sum(0)
                     self._wsp[sl] += torch.where(ok, tv_b * sp_b, zero).sum(0)
                     self._wnp[sl] += torch.where(ok, tv_b * np_b, zero).sum(0)
+                    for acc, v in zip(self._btw, _between_stim_sums(responses[b:b + 1, sl])):
+                        acc[sl] += v
 
     @torch.no_grad()
     def compute(self) -> torch.Tensor:
@@ -151,7 +156,8 @@ class StreamingCorrcoef:
             return torch.where(ok, cov / den.clamp(min=_EPS), nan).float()
         # Schoppe: cov / sqrt(var_p * SP), Bessel-corrected cov and var (n - 1)
         q = self._w > 0
-        sp = torch.where(q, self._wsp / self._w.clamp(min=1), nan)
+        # per-stimulus SP + the between-stimulus part (cov and var run over all stimuli)
+        sp = torch.where(q, self._wsp / self._w.clamp(min=1) + _between_stim_sp(*self._btw), nan)
         np_ = torch.where(q, self._wnp / self._w.clamp(min=1), nan)
         nb = (n - 1).clamp(min=1)
         var_p = vp / nb
