@@ -140,7 +140,8 @@ exclude = ["tests*", "docs*", "scripts*"]
 [tool.setuptools.package-data]
 deepSTRF = ["py.typed", "datasets/audio/_crcns_aa4_stim_groups.json",
             "datasets/audio/_crcns_ac1_asari_fragments.json",
-            "datasets/audio/_gosselin2025_stim_groups.json"]
+            "datasets/audio/_gosselin2025_stim_groups.json",
+            "datasets/audio/_bagur2025_stim_groups.json"]
 
 # -----------------------------------------------------------------------------
 # pytest
