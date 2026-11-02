@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from deepSTRF.datasets.audio import _trial_audio as _ta
+
 CF_RANGE_KHZ = (5.0, 50.0)
 PRE_ONSET_MS = 200
 
@@ -38,12 +40,7 @@ def ihc_means(cc: np.ndarray, groups: np.ndarray) -> np.ndarray:
 def overlap_weights(n_in: int, bin_ms: float, n_out: int) -> np.ndarray:
     """(n_out, n_in) weights averaging 1 ms samples into ``bin_ms`` bins by
     their overlap (bins need not be whole milliseconds)."""
-    W = np.zeros((n_out, n_in))
-    j = np.arange(n_in, dtype=np.float64)
-    for k in range(n_out):
-        b, e = k * bin_ms, (k + 1) * bin_ms
-        W[k] = np.clip(np.minimum(j + 1, e) - np.maximum(j, b), 0.0, None)
-    return W / W.sum(axis=1, keepdims=True)
+    return _ta.overlap_weights(n_in, 1.0, bin_ms, n_out)
 
 
 def rebin_cochlear(x: np.ndarray, dt_ms: float, n_out: int) -> np.ndarray:
