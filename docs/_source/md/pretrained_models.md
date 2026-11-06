@@ -51,12 +51,25 @@ Same shape as loading, in reverse. After training:
 ```python
 model.push_to_hub(
     "your-username/your-model-name",
-    metadata={"dataset": "...", "test_cc_norm": ...},
+    metadata={
+        "dataset": "...",            # these four keys fill the model card's
+        "dataset_url": "...",        # "Training data" section
+        "dataset_license": "...",
+        "dataset_citation": "...",
+        "test_cc_norm": ...,
+    },
 )
 ```
 
 You need to be authenticated with write access — run `hf auth login` once.
 The repo is created automatically on first push.
+
+Trained weights are derived from their training data, so check the dataset's
+license before you publish them (see
+{ref}`Licenses and terms of use <licenses-and-terms-of-use>`).
+The CC BY datasets allow it, provided the card credits the data. The CRCNS
+terms forbid redistributing the data and say nothing about trained models, so
+ask the data contributors before publishing weights trained on a CRCNS dataset.
 
 The library is happy to host community checkpoints; we just don't list
 them on this page (which is the curated set we trained ourselves and
@@ -90,7 +103,10 @@ and a one-liner about the training recipe.
 - **Trainable params:** ~39k.
 - **Dataset:** NS1 (`deepSTRF.datasets.audio.ns1.NS1Dataset`),
   `dt_ms=5.0`, `smooth=True`, auto-downloaded from OSF + the DNet
-  companion repo on first instantiation.
+  companion repo on first instantiation. The NS1 data are released on
+  [OSF](https://osf.io/ayw2p/) under
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); see the
+  [NS1 page](README_NS1.md) for what to cite.
 - **Split (by stim index, 0-indexed, 20 stims total):**
     - train: `[0..13]`  (14 stims)
     - val:   `[14, 15, 16]`

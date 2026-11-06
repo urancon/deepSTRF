@@ -1,9 +1,15 @@
 # Alice EEG Dataset
 
-**Dataset Source:** [The Alice Datasets — Deep Blue Data (UMich)](https://deepblue.lib.umich.edu/data/concern/data_sets/bg257f92t),
-re-released by Brodbeck et al. as a preprocessed MNE-Python deposit at the
+**Dataset Source:** the preprocessed MNE-Python release by Brodbeck et al. at the
 University of Maryland DRUM repository
-([DOI 10.13016/pulf-lndn](https://doi.org/10.13016/pulf-lndn)).
+([DOI 10.13016/pulf-lndn](https://doi.org/10.13016/pulf-lndn)), which is what
+deepSTRF downloads. It is derived from
+[The Alice Datasets](https://deepblue.lib.umich.edu/data/concern/data_sets/bg257f92t)
+(Deep Blue Data, UMich).
+
+**License:** the DRUM record states no license of its own; it describes itself as a
+derivative of the Alice datasets, which are licensed
+[CC BY](https://creativecommons.org/licenses/by/4.0/).
 
 **Citation:**
 ```text
@@ -11,6 +17,11 @@ Bhattasali, S., Brennan, J. R., Luh, W.-M., Franzluebbers, B., & Hale, J. T.
 (2020). The Alice Datasets: fMRI & EEG Observations of Natural Language
 Comprehension. Proceedings of the 12th Conference on Language Resources and
 Evaluation (LREC), 120–125.
+
+Brodbeck, C., Bhattasali, S., & Das, P. (2021). Data for: Eelbrain: A Python
+toolkit for time-continuous analysis with temporal response functions.
+Digital Repository at the University of Maryland (DRUM).
+https://doi.org/10.13016/pulf-lndn
 ```
 
 **Papers using the dataset:**

@@ -2,6 +2,8 @@
 
 **Dataset Source:** [AA5 Dataset](https://crcns.org/data-sets/aa/aa-5)
 
+**Terms of use:** [CRCNS terms](https://crcns.org/terms). Scientific use only; no redistribution (except to direct collaborators or to students in your class). Publications must name the data contributors and CRCNS.org as the source, and cite the paper(s) that first described the data. The AA5 page asks that publications cite both Robotka et al. (2023) and the dataset (below).
+
 **Citation:**
 ```text
 Robotka H, Gahr M and Theunissen F E (2022), Simultaneous extracellular recordings of avian auditory neurons in freely behaving zebra finches presented with all the repertoire of vocalizations used by this species for vocal communication. CRCNS.org.

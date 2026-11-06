@@ -2,6 +2,8 @@
 
 **Dataset Source:** [NS1 Dataset](https://osf.io/ayw2p/)
 
+**License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The precomputed 5 ms spectrogram is downloaded from the [DNet repository](https://github.com/monzilur/DNet), which states no license.
+
 **Original Paper:** ["Network receptive field modeling reveals extensive integration and multi-feature selectivity in auditory cortical neurons"](https://doi.org/10.1371/journal.pcbi.1005113) by Nicol S. Harper, Oliver Schoppe, Ben D. B. Willmore, Zhanfeng F. Cui, Jan W. H. Schnupp, Andrew J. King.
 
 **Papers Using the Dataset:**

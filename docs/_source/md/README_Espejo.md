@@ -2,6 +2,8 @@
 
 **Dataset Source:** [Zenodo deposit 3445557](https://doi.org/10.5281/zenodo.3445557)
 
+**License:** CC BY (Zenodo gives no version). The raw NAT waveforms used by `return_waveform=True` are downloaded from the LBHB baphy repository, which states no license.
+
 **Original Paper:**
 - ["Spectral tuning of adaptation supports coding of sensory context in auditory cortex"](https://doi.org/10.1371/journal.pcbi.1007430) — Lopez Espejo M., Schwartz Z.P., David S.V. (2019), *PLoS Computational Biology* 15(10): e1007430.
 

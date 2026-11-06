@@ -1,6 +1,8 @@
 # Squirrel-monkey auditory cortex MUA with TIMIT & monkey vocalizations (Downer 2025)
 
-**Dataset Source:** [Zenodo deposit 16175377](https://doi.org/10.5281/zenodo.16175377) — Multi-channel auditory cortex electrophysiology in squirrel monkey (CC BY 4.0, ~29 GB).
+**Dataset Source:** [Zenodo deposit 16175377](https://doi.org/10.5281/zenodo.16175377) — Multi-channel auditory cortex electrophysiology in squirrel monkey (~29 GB).
+
+**License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The authors ask that you cite the dataset itself (DOI 10.5281/zenodo.16175377).
 
 **Original Papers:**
 - ["Deep neural networks explain spiking activity in auditory cortex"](https://doi.org/10.1371/journal.pcbi.1013334) — Ahmed B., Downer J.D., Malone B.J., Makin J.G. (2025), *PLoS Computational Biology* 21(8): e1013334.

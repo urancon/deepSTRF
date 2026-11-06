@@ -73,10 +73,12 @@ def save_pretrained_to_dir(
         overwritten.
     metadata : dict, optional
         Free-form, JSON-serialisable user metadata (test metrics, dataset
-        name, …). Written to ``metadata.json``.
+        name, …). Written to ``metadata.json``. The keys ``dataset``,
+        ``dataset_url``, ``dataset_license`` and ``dataset_citation`` also
+        fill a "Training data" section of the default model card.
     model_card : str, optional
         Markdown content for ``README.md``. If ``None``, a minimal default
-        card is generated from the class name and config.
+        card is generated from the class name, config and metadata.
 
     Returns
     -------
@@ -308,6 +310,37 @@ def upload_pretrained(
 # Internals
 # ---------------------------------------------------------------------------
 
+_TRAINING_DATA_FIELDS = (
+    ("dataset", "Dataset"),
+    ("dataset_url", "Source"),
+    ("dataset_license", "License / terms of use"),
+    ("dataset_citation", "Cite"),
+)
+
+
+def _training_data_section(metadata: Optional[dict]) -> list:
+    """Model-card lines crediting the training data, from the ``dataset*`` metadata keys.
+
+    Trained weights are derived from their training data, so the card names
+    the dataset, where it comes from and its license. Returns no lines when
+    the metadata has none of these keys.
+    """
+    if not metadata:
+        return []
+    rows = [(label, metadata[key]) for key, label in _TRAINING_DATA_FIELDS
+            if metadata.get(key)]
+    if not rows:
+        return []
+    lines = ["", "## Training data", ""]
+    lines += [f"- **{label}:** {value}" for label, value in rows]
+    lines += [
+        "",
+        "These weights are derived from the data above. Credit its authors and "
+        "follow its license or terms of use when you reuse or share them.",
+    ]
+    return lines
+
+
 def _default_model_card(model: nn.Module, config: dict, metadata: Optional[dict]) -> str:
     """Generate a minimal model card so the Hub repo isn't blank."""
     cls_name = type(model).__name__
@@ -340,6 +373,7 @@ def _default_model_card(model: nn.Module, config: dict, metadata: Optional[dict]
         json.dumps(config_view, indent=2, sort_keys=True),
         "```",
     ]
+    lines += _training_data_section(metadata)
     if metadata:
         lines += [
             "",

@@ -102,6 +102,27 @@ def test_metadata_round_trip(tmp_path, statenet_pop):
     assert loaded_meta == metadata
 
 
+def test_model_card_credits_training_data(tmp_path, statenet_pop):
+    """The dataset* metadata keys fill a Training data section of the card."""
+    save_dir = tmp_path / "ckpt"
+    statenet_pop.save_pretrained(save_dir, metadata={
+        "dataset": "NS1",
+        "dataset_url": "https://osf.io/ayw2p/",
+        "dataset_license": "CC BY 4.0",
+    })
+    card = (save_dir / MODEL_CARD_FILE).read_text()
+    assert "## Training data" in card
+    assert "- **Source:** https://osf.io/ayw2p/" in card
+    assert "- **License / terms of use:** CC BY 4.0" in card
+    assert "**Cite:**" not in card          # absent keys give no row
+
+
+def test_model_card_without_dataset_has_no_training_data(tmp_path, statenet_pop):
+    save_dir = tmp_path / "ckpt"
+    statenet_pop.save_pretrained(save_dir, metadata={"test_cc_norm": 0.77})
+    assert "## Training data" not in (save_dir / MODEL_CARD_FILE).read_text()
+
+
 def test_no_metadata_round_trip(tmp_path, statenet_pop):
     """metadata.json is optional — load returns None when absent."""
     save_dir = tmp_path / "ckpt"
