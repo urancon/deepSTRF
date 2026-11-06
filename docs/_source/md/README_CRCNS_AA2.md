@@ -5,7 +5,7 @@
 **Citation:**
 ```text
 Theunissen, Frederic E.; Gill, Patrick; Noopur, Amin; Zhang, Junli; Woolley, Sarah M. N.; Fremouw, Thane (2011): Single-unit recordings from multiple auditory areas in male zebra finches. CRCNS.org.
-http://dx.doi.org/10.6080/10.6080/K0JW8BSC
+https://doi.org/10.6080/K0JW8BSC
 ```
 
 **Papers Using the Dataset:**
