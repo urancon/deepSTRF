@@ -1,6 +1,8 @@
 # Gosselin 2025 Dataset
 
-**Dataset Source:** [Zenodo 17271813](https://doi.org/10.5281/zenodo.17271813) (CC-BY-4.0)
+**Dataset Source:** [Zenodo 17271813](https://doi.org/10.5281/zenodo.17271813)
+
+**License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 **Citation:**
 ```text

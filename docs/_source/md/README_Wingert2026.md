@@ -2,6 +2,8 @@
 
 **Dataset Source:** [Wingert et al. 2026 — Zenodo 18331549](https://doi.org/10.5281/zenodo.18331549)
 
+**License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 **Original paper:**
 - ["Convolutional neural network models describe the encoding subspace of local circuits in auditory cortex"](https://doi.org/10.1038/s41593-026-02216-0)
   by Jereme C. Wingert, Satyabrata Parida, Sam V. Norman-Haignere &

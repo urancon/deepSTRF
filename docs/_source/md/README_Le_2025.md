@@ -2,6 +2,8 @@
 
 **Dataset Source:** [figshare 29203457](https://doi.org/10.6084/m9.figshare.29203457)
 
+**License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 **Companion code (paper analyses):** [melizalab/auditory-restoration](https://github.com/melizalab/auditory-restoration)
 (also archived at [Zenodo 15864044](https://doi.org/10.5281/zenodo.15864044)).
 

@@ -2,6 +2,8 @@
 
 **Dataset Source:** [AC1 Dataset](https://crcns.org/data-sets/ac/ac-1/about)
 
+**Terms of use:** [CRCNS terms](https://crcns.org/terms). Scientific use only; no redistribution (except to direct collaborators or to students in your class). Publications must name the data contributors and CRCNS.org as the source, and cite the paper(s) that first described the data. The AC1 page asks that publications cite the dataset in the format below.
+
 **Citation:**
 ```text
 Asari, H; Wehr, M; Machens, C; Zador, A. (2009).

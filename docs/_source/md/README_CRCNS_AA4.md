@@ -2,6 +2,8 @@
 
 **Dataset Source:** [AA4 Dataset](https://crcns.org/data-sets/aa/aa-4/about-aa-4)
 
+**Terms of use:** [CRCNS terms](https://crcns.org/terms). Scientific use only; no redistribution (except to direct collaborators or to students in your class). Publications must name the data contributors and CRCNS.org as the source, and cite the paper(s) that first described the data. The AA4 page asks that publications cite both Elie & Theunissen (2015) and the dataset (below).
+
 **Citation:**
 ```text
  Elie J E and Theunissen F E (2019), Simultaneous extracellular recordings of avian auditory neurons in zebra finches presented with all the repertoire of vocalizations used by this species for vocal communication. CRCNS.org.

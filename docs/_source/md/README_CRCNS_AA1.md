@@ -2,6 +2,8 @@
 
 **Dataset Source:** [AA1 Dataset](https://crcns.org/data-sets/aa/aa-1/about)
 
+**Terms of use:** [CRCNS terms](https://crcns.org/terms). Scientific use only; no redistribution (except to direct collaborators or to students in your class). Publications must name the data contributors and CRCNS.org as the source, and cite the paper(s) that first described the data. The AA1 conditions (`CONDITIONS.txt` in the download) also ask that the Theunissen lab at UC Berkeley be acknowledged in all publications that analyse the data, including abstracts, posters and talks.
+
 **Citation:**
 ```text
 Theunissen, FE; Hauber, ME; Woolley, SMN; Gill, P; Shaevitz, SS; Amin, Noopur; Hsu, A; Singh, NC; Grace, GA; Fremouw, T; Zhang, Junli; Cassey, P; Doupe, AJ; David, SV (2009): Single-unit recordings from two auditory areas in male zebra finches. CRCNS.org.

@@ -2,6 +2,8 @@
 
 **Dataset Source:** [AA2 Dataset](https://crcns.org/data-sets/aa/aa-2/about)
 
+**Terms of use:** [CRCNS terms](https://crcns.org/terms). Scientific use only; no redistribution (except to direct collaborators or to students in your class). Publications must name the data contributors and CRCNS.org as the source, and cite the paper(s) that first described the data. The AA2 README (`crcns-aa2-README.txt` in the download) also asks that work derived from the data be attributed to the experimenters, Sarah M. N. Woolley and Thane Fremouw, and recommends contacting them before publishing.
+
 **Citation:**
 ```text
 Theunissen, Frederic E.; Gill, Patrick; Noopur, Amin; Zhang, Junli; Woolley, Sarah M. N.; Fremouw, Thane (2011): Single-unit recordings from multiple auditory areas in male zebra finches. CRCNS.org.

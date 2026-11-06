@@ -2,6 +2,8 @@
 
 **Dataset Source:** [Zenodo 13941450](https://doi.org/10.5281/zenodo.13941450)
 
+**License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 **Citation:**
 ```text
 Bagur, S.; Bourg, J.; Kempf, A.; Tarpin, T.; Bergaoui, K.; Guo, Y.; Ceballo, S.;

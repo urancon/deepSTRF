@@ -18,6 +18,34 @@ affected. CRCNS datasets need a free [CRCNS account](https://crcns.org/register)
 set `CRCNS_USERNAME` / `CRCNS_PASSWORD`, or pass `username=` / `password=`.
 ```
 
+(licenses-and-terms-of-use)=
+### Licenses and terms of use
+
+deepSTRF does not redistribute any of these datasets. Each loader downloads the
+data from its original host into your local cache, and the data stay under
+their own license, separate from deepSTRF's GPLv3 code license. When you
+publish results obtained with a dataset, cite it as its page asks.
+
+| Dataset | Host | License / terms |
+|---|---|---|
+| NS1 | OSF | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| NAT4, Wingert 2026, Downer 2025, Gosselin 2025, Bagur 2025 | Zenodo | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| Espejo 2019 | Zenodo | CC BY |
+| Le 2025 | figshare | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| Alice EEG | UMD DRUM | derived from the CC BY Alice datasets |
+| CRCNS AA1, AA2, AA4, AA5, AC1 | CRCNS.org | [CRCNS terms](https://crcns.org/terms) |
+
+The CRCNS terms are stricter than CC BY. The data may be used for scientific
+purposes only, and may not be redistributed (except to direct collaborators or
+to students in your class). Publications must name the data contributors and
+CRCNS.org as the source, and cite the paper(s) that first described the data.
+Some CRCNS datasets add their own conditions, listed on their pages.
+
+Two downloads come from repositories that state no license: the precomputed
+NS1 5 ms spectrogram (the DNet GitHub repository) and the raw Espejo NAT
+waveforms (the LBHB baphy repository). deepSTRF only fetches them to your
+machine.
+
 ### Ferret (*Mustela putorius furo*)
 * [NS1](README_NS1.md) — primary auditory cortex (A1); 20 clips of natural sounds (speech, ferret & other animal vocalizations, environmental).
 * [NAT4](README_NAT4.md) — A1 & PEG (849 + 398 units); natural sounds.

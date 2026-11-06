@@ -2,6 +2,8 @@
 
 **Dataset Source:** [NAT4 Dataset](https://doi.org/10.5281/zenodo.8044773)
 
+**License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The authors ask that any publication using the data cite Pennington & David (the bioRxiv preprint below).
+
 **Original Papers:**
 - ["Can deep learning provide a generalizable model for dynamic sound encoding in auditory cortex?"](https://doi.org/10.1101/2022.06.10.495698) by Jacob R. Pennington, Stephen V. David.
 - ["A convolutional neural network provides a generalizable model of natural sound coding by neural populations in auditory cortex"](https://doi.org/10.1371/journal.pcbi.1011110) by Pennington JR, David SV.
