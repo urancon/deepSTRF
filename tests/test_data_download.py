@@ -11,6 +11,7 @@ import os
 import zipfile
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 
@@ -339,3 +340,96 @@ def test_stream_download_skips_existing(tmp_path):
     out = stream_download("https://nonexistent.invalid/X", dest)
     assert out == dest.resolve()
     assert dest.read_bytes() == b"x" * 64
+
+
+# --------------------------------------------------------------------------
+# zip_members_download: selected members of a remote zip via range requests
+# --------------------------------------------------------------------------
+
+def _serve_local_zip(monkeypatch, zip_path, calls, corrupt_at=None):
+    """Route the module's range-request seam to a local file."""
+    import deepSTRF.utils.data_download as dd
+
+    data = bytearray(Path(zip_path).read_bytes())
+    if corrupt_at is not None:
+        data[corrupt_at] ^= 0xFF
+
+    def fake_range_get(url, start, end, chunk_size=1 << 20):
+        calls.append((start, end))
+        blob = bytes(data[start:end + 1])
+        for i in range(0, len(blob), 1000):
+            yield blob[i:i + 1000]
+
+    monkeypatch.setattr(dd, "_range_get", fake_range_get)
+    monkeypatch.setattr(dd, "_remote_size", lambda url: len(data))
+
+
+def _make_zip(path):
+    rng = np.random.default_rng(0)
+    files = {"a/x.bin": rng.bytes(3000), "a/y.txt": b"hello " * 500, "b/z.bin": rng.bytes(2000)}
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(zipfile.ZipInfo("a/x.bin"), files["a/x.bin"], compress_type=zipfile.ZIP_STORED)
+        zf.writestr(zipfile.ZipInfo("a/y.txt"), files["a/y.txt"], compress_type=zipfile.ZIP_DEFLATED)
+        zf.writestr(zipfile.ZipInfo("b/z.bin"), files["b/z.bin"], compress_type=zipfile.ZIP_STORED)
+    return files
+
+
+def test_zip_members_download_extracts_selected(tmp_path, monkeypatch):
+    from deepSTRF.utils.data_download import zip_members_download
+
+    files = _make_zip(tmp_path / "remote.zip")
+    _serve_local_zip(monkeypatch, tmp_path / "remote.zip", [])
+    out = zip_members_download("https://example.org/remote.zip", ["x.bin", "y.txt"],
+                               tmp_path / "out", progress=False)
+    assert sorted(p.relative_to(tmp_path / "out").as_posix() for p in out) == ["a/x.bin", "a/y.txt"]
+    assert (tmp_path / "out/a/x.bin").read_bytes() == files["a/x.bin"]
+    assert (tmp_path / "out/a/y.txt").read_bytes() == files["a/y.txt"]
+    assert not (tmp_path / "out/b/z.bin").exists()
+
+
+def test_zip_members_download_skips_complete(tmp_path, monkeypatch):
+    from deepSTRF.utils.data_download import zip_members_download
+
+    _make_zip(tmp_path / "remote.zip")
+    with zipfile.ZipFile(tmp_path / "remote.zip") as zf:
+        offsets = {i.header_offset for i in zf.infolist() if i.filename.startswith("a/")}
+    _serve_local_zip(monkeypatch, tmp_path / "remote.zip", [])
+    zip_members_download("u", ["x.bin", "y.txt"], tmp_path / "out", progress=False)
+    calls = []
+    _serve_local_zip(monkeypatch, tmp_path / "remote.zip", calls)
+    zip_members_download("u", ["x.bin", "y.txt"], tmp_path / "out", progress=False)
+    assert not any(start in offsets for start, _ in calls)
+
+
+def test_zip_members_download_crc_mismatch(tmp_path, monkeypatch):
+    from deepSTRF.utils.data_download import zip_members_download
+
+    files = _make_zip(tmp_path / "remote.zip")
+    with zipfile.ZipFile(tmp_path / "remote.zip") as zf:
+        info = zf.getinfo("a/x.bin")
+    # a byte inside x.bin's (stored) payload
+    data_start = info.header_offset + 30 + len(info.filename) + len(info.extra)
+    _serve_local_zip(monkeypatch, tmp_path / "remote.zip", [], corrupt_at=data_start + 100)
+    with pytest.raises(IOError):
+        zip_members_download("u", ["x.bin"], tmp_path / "out", progress=False)
+    assert not (tmp_path / "out/a/x.bin").exists()
+
+
+def test_zip_members_download_missing_member_raises(tmp_path, monkeypatch):
+    from deepSTRF.utils.data_download import zip_members_download
+
+    _make_zip(tmp_path / "remote.zip")
+    _serve_local_zip(monkeypatch, tmp_path / "remote.zip", [])
+    with pytest.raises(FileNotFoundError, match="nope.bin"):
+        zip_members_download("u", ["x.bin", "nope.bin"], tmp_path / "out", progress=False)
+
+
+def test_zip_members_download_suffix_respects_path_boundary(tmp_path, monkeypatch):
+    from deepSTRF.utils.data_download import zip_members_download
+
+    with zipfile.ZipFile(tmp_path / "remote.zip", "w") as zf:
+        zf.writestr("a/sua.mat", b"right")
+        zf.writestr("b/xsua.mat", b"wrong")
+    _serve_local_zip(monkeypatch, tmp_path / "remote.zip", [])
+    out = zip_members_download("u", ["sua.mat"], tmp_path / "out", progress=False)
+    assert [p.relative_to(tmp_path / "out").as_posix() for p in out] == ["a/sua.mat"]

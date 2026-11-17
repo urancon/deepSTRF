@@ -10,6 +10,24 @@
 
 ----
 
+## 📣 New: decoding — reconstruct the sound from neural activity
+
+deepSTRF now works in both directions. Besides **encoding** models (sound → neural responses), it ships a **decoding** API (neural responses → sound spectrogram) built on the same datasets, metrics and `Fitter`:
+
+- `AudioDecodingModel`, the base class for any decoder (implement one `decode()` method), with two references: `WienerFilter` (causal linear decoder, closed-form ridge fit) and `MeanTargetBaseline` (a control that ignores the neural input);
+- decoding metrics: per-band spectrogram correlation and mel-cepstral distortion;
+- `Fitter` detects a decoder and swaps input and target by itself;
+- a first decoding dataset, **[Yang 2025](docs/_source/md/README_Yang_2025.md)**: single units in the vocal-motor cortex (AAC) of four budgerigars, recorded while the birds sing, with each bird's own voice picked up by a skull microphone (Yang & Long, *Nature* 2025; data CC BY 4.0).
+
+![Decoded budgerigar warble](https://raw.githubusercontent.com/urancon/deepSTRF/develop/docs/_source/img/decoding_yang2025_reconstructions.png)
+*Held-out budgerigar warble (top) reconstructed from the birds' vocal-motor cortex by a Wiener filter (middle) and a small GRU (bottom); one column per bird.*
+
+👉 [Decoding docs](https://deepstrf.readthedocs.io/en/latest/_source/md/decoding.html) · [Tutorial notebook](examples/decoding_tutorial_yang2025.ipynb) ([open in Colab](https://colab.research.google.com/github/urancon/deepSTRF/blob/develop/examples/decoding_tutorial_yang2025.ipynb)) · [Yang 2025 dataset page](https://deepstrf.readthedocs.io/en/latest/_source/md/README_Yang_2025.html)
+
+Available on `develop` (`pip install git+https://github.com/urancon/deepSTRF.git@develop`); it will ship in the next release.
+
+----
+
 ## 🧠 Overview
 
 deepSTRF is a community-oriented library for **system identification of sensory neurons** — predicting trial-resolved neural responses (spikes, calcium fluorescence, EEG, intracellular potential, ...) from naturalistic stimuli with PyTorch models. It bundles:
@@ -19,10 +37,11 @@ deepSTRF is a community-oriented library for **system identification of sensory 
 - **Pretrained checkpoints** published on the [Hugging Face Hub](https://huggingface.co/urancon).
 - **Metrics.** NaN-aware Pearson, FVE, Schoppe-normalized correlation, signal/noise power, coherence — all functional and `torch.compile`-friendly.
 - **Training utility.** A thin opt-in `Fitter` (~150 lines) for early-stopping + best-checkpoint training, on top of the canonical PyTorch loop.
+- **Decoding.** The reverse direction — reconstructing the sound from neural activity — with decoder models, decoding metrics and the same `Fitter` (see [above](#-new-decoding--reconstruct-the-sound-from-neural-activity)).
 
 📖 **Full documentation: [deepstrf.readthedocs.io](https://deepstrf.readthedocs.io/)**
 
-![placeholder.png](docs/_source/img/homepage_illustration.png)
+![placeholder.png](https://raw.githubusercontent.com/urancon/deepSTRF/develop/docs/_source/img/homepage_illustration.png)
 
 ----
 
@@ -121,6 +140,7 @@ Runnable notebooks live under [`examples/`](examples/) — each opens in Colab i
 | `strf_gradmap_aa2.ipynb` | Gradient-attribution receptive fields on AA2. |
 | `adaptrans_transformer_aa1.ipynb` | AdapTrans + Transformer on AA1 Field L. |
 | `espejo_nat_nrf.ipynb` | Network Receptive Field model on Espejo ferret A1. |
+| `decoding_tutorial_yang2025.ipynb` | **Decoding:** reconstruct budgerigar song from vocal-motor cortex (Wiener filter, custom GRU, control). |
 
 ----
 
@@ -146,7 +166,8 @@ Current top model on each dataset. Want to claim the podium? Open a PR with a re
 
 deepSTRF wraps publicly available recordings — please cite the original authors when you use them. See each dataset page on the [docs](https://deepstrf.readthedocs.io/) for details and download instructions.
 
-- **Auditory:** [NS1](docs/_source/md/README_NS1.md), [NAT4](docs/_source/md/README_NAT4.md), [CRCNS AA1](docs/_source/md/README_CRCNS_AA1.md), [CRCNS AA2](docs/_source/md/README_CRCNS_AA2.md), [CRCNS AA4](docs/_source/md/README_CRCNS_AA4.md), [CRCNS AA5](docs/_source/md/README_CRCNS_AA5.md), [CRCNS AC1 (Wehr + Asari)](docs/_source/md/README_CRCNS_AC1.md), [Espejo 2019](docs/_source/md/README_Espejo.md), [Alice EEG (Brodbeck 2023)](docs/_source/md/README_Alice_EEG.md), [Le 2025](docs/_source/md/README_Le_2025.md), [Wingert 2026](docs/_source/md/README_Wingert2026.md).
+- **Auditory:** [NS1](docs/_source/md/README_NS1.md), [NAT4](docs/_source/md/README_NAT4.md), [CRCNS AA1](docs/_source/md/README_CRCNS_AA1.md), [CRCNS AA2](docs/_source/md/README_CRCNS_AA2.md), [CRCNS AA4](docs/_source/md/README_CRCNS_AA4.md), [CRCNS AA5](docs/_source/md/README_CRCNS_AA5.md), [CRCNS AC1 (Wehr + Asari)](docs/_source/md/README_CRCNS_AC1.md), [Espejo 2019](docs/_source/md/README_Espejo.md), [Alice EEG (Brodbeck 2023)](docs/_source/md/README_Alice_EEG.md), [Le 2025](docs/_source/md/README_Le_2025.md), [Wingert 2026](docs/_source/md/README_Wingert2026.md), [Downer 2025](docs/_source/md/README_Downer2025.md), [Gosselin 2025](docs/_source/md/README_Gosselin_2025.md), [Bagur 2025](docs/_source/md/README_Bagur_2025.md).
+- **Decoding:** [Yang 2025](docs/_source/md/README_Yang_2025.md) (budgerigar vocal-motor cortex and the bird's own voice).
 - **Visual:** under construction — see [Status](#-status--audio-first) below.
 
 ----

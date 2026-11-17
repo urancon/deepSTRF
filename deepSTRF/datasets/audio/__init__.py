@@ -26,6 +26,8 @@ from .gosselin2025 import Gosselin2025Dataset
 from ._gosselin2025_prepare import download_gosselin2025
 from .bagur2025 import Bagur2025Dataset
 from ._bagur2025_prepare import download_bagur2025
+from .yang2025 import Yang2025Dataset
+from ._yang2025_prepare import prepare_yang2025, download_yang2025
 
 __all__ = ['AudioNeuralDataset',
            'NS1Dataset',
@@ -42,4 +44,6 @@ __all__ = ['AudioNeuralDataset',
            'Downer2025Dataset', 'download_downer2025',
            'Wingert2026Dataset', 'download_wingert2026',
            'Gosselin2025Dataset', 'download_gosselin2025',
-           'Bagur2025Dataset', 'download_bagur2025']
+           'Bagur2025Dataset', 'download_bagur2025',
+           'Yang2025Dataset', 'prepare_yang2025', 'download_yang2025',
+]

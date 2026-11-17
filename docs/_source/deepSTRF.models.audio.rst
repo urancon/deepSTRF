@@ -20,6 +20,14 @@ deepSTRF.models.audio.audio\_zoo module
    :show-inheritance:
    :undoc-members:
 
+deepSTRF.models.audio.decoding module
+-------------------------------------
+
+.. automodule:: deepSTRF.models.audio.decoding
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 Module contents
 ---------------
 

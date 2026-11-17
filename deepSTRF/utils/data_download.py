@@ -8,6 +8,8 @@ Public surface:
     - ``osf_download(guid, dest)``                      — public OSF storage files
     - ``github_raw_download(repo, path, dest, ref=)``   — public GitHub raw files
     - ``zenodo_download(record_id, filename, dest)``    — public Zenodo records
+    - ``zip_members_download(url, members, dest_dir)``  — selected members of a remote zip
+    - ``zenodo_zip_members_download(record_id, zip_name, members, dest_dir)``
     - ``figshare_download(article_id, dest_dir, filename=)`` — public figshare articles
     - ``crcns_download(file_path, dest, username=, password=)`` — CRCNS (free account)
     - ``crcns_file_list(dataset)``                       — CRCNS dataset file paths + sizes
@@ -16,13 +18,16 @@ Public surface:
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import shutil
+import struct
 import tarfile
 import zipfile
+import zlib
 from pathlib import Path
-from typing import Optional, Union
+from typing import Iterable, Iterator, List, Optional, Union
 
 # requests + platformdirs are runtime deps (cf. pyproject.toml). Imported here
 # so this module can be used standalone outside dataset constructors too.
@@ -354,6 +359,180 @@ def zenodo_download(
     """
     url = f"https://zenodo.org/api/records/{record_id}/files/{filename}/content"
     return stream_download(url, dest_path, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# selected members of a remote zip, via HTTP range requests
+# ---------------------------------------------------------------------------
+
+def _remote_size(url: str) -> int:
+    """Total size in bytes of the resource at ``url`` (from a 1-byte range request)."""
+    with requests.get(url, headers={"Range": "bytes=0-0"}, timeout=(30, 600),
+                      allow_redirects=True) as r:
+        r.raise_for_status()
+        cr = r.headers.get("Content-Range")
+        if r.status_code != 206 or not cr:
+            raise IOError(f"{url} does not support HTTP range requests")
+        return int(cr.split("/")[-1])
+
+
+def _range_get(url: str, start: int, end: int, chunk_size: int = 1 << 20) -> Iterator[bytes]:
+    """Yield the bytes ``[start, end]`` (inclusive) of ``url`` in chunks."""
+    with requests.get(url, headers={"Range": f"bytes={start}-{end}"}, stream=True,
+                      timeout=(30, 600), allow_redirects=True) as r:
+        r.raise_for_status()
+        if r.status_code != 206:
+            raise IOError(f"{url} ignored the range request (HTTP {r.status_code})")
+        for chunk in r.iter_content(chunk_size=chunk_size):
+            if chunk:
+                yield chunk
+
+
+class _RangeFile(io.RawIOBase):
+    """Seekable read-only file over range requests (enough for ``zipfile`` to
+    read the central directory without downloading the archive)."""
+
+    def __init__(self, url: str):
+        self.url = url
+        self.size = _remote_size(url)
+        self.pos = 0
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self.pos
+
+    def seek(self, offset, whence=io.SEEK_SET):
+        base = {io.SEEK_SET: 0, io.SEEK_CUR: self.pos, io.SEEK_END: self.size}[whence]
+        self.pos = base + offset
+        return self.pos
+
+    def readinto(self, b):
+        n = min(len(b), self.size - self.pos)
+        if n <= 0:
+            return 0
+        data = b"".join(_range_get(self.url, self.pos, self.pos + n - 1))
+        b[:len(data)] = data
+        self.pos += len(data)
+        return len(data)
+
+
+def _file_crc32(path: Path, chunk: int = 1 << 22) -> int:
+    crc = 0
+    with open(path, "rb") as f:
+        while blk := f.read(chunk):
+            crc = zlib.crc32(blk, crc)
+    return crc
+
+
+def _extract_member(url: str, info: zipfile.ZipInfo, dest: Path, progress: bool) -> None:
+    head = b"".join(_range_get(url, info.header_offset, info.header_offset + 29))
+    if struct.unpack("<I", head[:4])[0] != 0x04034B50:
+        raise IOError(f"bad local header for {info.filename}")
+    name_len, extra_len = struct.unpack("<HH", head[26:30])
+    start = info.header_offset + 30 + name_len + extra_len
+    if info.compress_type == zipfile.ZIP_DEFLATED:
+        dec = zlib.decompressobj(-15)
+    elif info.compress_type == zipfile.ZIP_STORED:
+        dec = None
+    else:
+        raise ValueError(f"unsupported compression {info.compress_type} for {info.filename}")
+
+    bar = None
+    if progress:
+        try:
+            from tqdm.auto import tqdm
+            bar = tqdm(total=info.compress_size, unit="B", unit_scale=True,
+                       desc=f"extract {Path(info.filename).name}")
+        except ImportError:
+            bar = None
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    crc = 0
+    try:
+        with open(tmp, "wb") as f:
+            if info.compress_size > 0:
+                for chunk in _range_get(url, start, start + info.compress_size - 1):
+                    data = dec.decompress(chunk) if dec else chunk
+                    f.write(data)
+                    crc = zlib.crc32(data, crc)
+                    if bar is not None:
+                        bar.update(len(chunk))
+            if dec:
+                tail = dec.flush()
+                f.write(tail)
+                crc = zlib.crc32(tail, crc)
+    finally:
+        if bar is not None:
+            bar.close()
+    if crc != info.CRC:
+        raise IOError(f"CRC mismatch for {info.filename}; partial file kept at {tmp}")
+    tmp.replace(dest)
+
+
+def zip_members_download(
+    url: str,
+    members: Iterable[str],
+    dest_dir: Union[str, Path],
+    *,
+    match: str = "suffix",
+    progress: bool = True,
+) -> List[Path]:
+    """Extract selected members of a remote zip without downloading the whole archive.
+
+    Reads the zip's central directory with HTTP range requests, then streams
+    each wanted member with one range request, decompressing on the fly and
+    checking its CRC32. Members keep their archive path under ``dest_dir``.
+    Members already present with the right size and CRC are skipped, so the
+    call can be repeated after an interruption. The server must support range
+    requests (Zenodo does).
+
+    ``members`` are matched against archive paths by ``match='suffix'``
+    (default; ``"sua.mat"`` matches ``sua.mat`` and every ``*/sua.mat``) or
+    ``'exact'``. Raises ``FileNotFoundError`` if a wanted member matches nothing.
+    Supports stored and deflated members (ZIP64 included). Returns the
+    extracted (or already present) paths.
+    """
+    if match not in ("suffix", "exact"):
+        raise ValueError(f"match must be 'suffix' or 'exact', got {match!r}")
+    wanted = tuple(members)
+    dest_dir = Path(dest_dir).expanduser().resolve()
+    zf = zipfile.ZipFile(io.BufferedReader(_RangeFile(url), buffer_size=1 << 20))
+    def matches(name: str, w: str) -> bool:
+        return name == w or (match == "suffix" and name.endswith("/" + w.lstrip("/")))
+
+    files = [i for i in zf.infolist() if not i.is_dir()]
+    infos = [i for i in files if any(matches(i.filename, w) for w in wanted)]
+    missing = [w for w in wanted if not any(matches(i.filename, w) for i in files)]
+    if missing:
+        raise FileNotFoundError(f"no member of {url} matches {missing}")
+    out = []
+    for info in infos:
+        rel = Path(info.filename)
+        if rel.is_absolute() or ".." in rel.parts:
+            raise ValueError(f"unsafe member path in archive: {info.filename!r}")
+        dest = dest_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if not (dest.exists() and dest.stat().st_size == info.file_size
+                and _file_crc32(dest) == info.CRC):
+            _extract_member(url, info, dest, progress)
+        out.append(dest)
+    return out
+
+
+def zenodo_zip_members_download(
+    record_id: Union[int, str],
+    zip_name: str,
+    members: Iterable[str],
+    dest_dir: Union[str, Path],
+    **kwargs,
+) -> List[Path]:
+    """:func:`zip_members_download` on a zip file of a public Zenodo record."""
+    url = f"https://zenodo.org/api/records/{record_id}/files/{zip_name}/content"
+    return zip_members_download(url, members, dest_dir, **kwargs)
 
 
 def figshare_download(

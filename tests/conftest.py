@@ -37,6 +37,7 @@ _SLOW_TEST_MODULES = {
     "test_audio_spec_pipeline",
     "test_alice_eeg_spec_pipeline",
     "test_gosselin2025_data",
+    "test_yang2025_real",
 }
 
 

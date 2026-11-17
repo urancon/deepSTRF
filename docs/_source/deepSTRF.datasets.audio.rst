@@ -116,6 +116,14 @@ deepSTRF.datasets.audio.bagur2025 module
    :show-inheritance:
    :undoc-members:
 
+deepSTRF.datasets.audio.yang2025 module
+---------------------------------------
+
+.. automodule:: deepSTRF.datasets.audio.yang2025
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 Module contents
 ---------------
 
