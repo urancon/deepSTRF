@@ -413,3 +413,23 @@ def test_zip_members_download_crc_mismatch(tmp_path, monkeypatch):
     with pytest.raises(IOError):
         zip_members_download("u", ["x.bin"], tmp_path / "out", progress=False)
     assert not (tmp_path / "out/a/x.bin").exists()
+
+
+def test_zip_members_download_missing_member_raises(tmp_path, monkeypatch):
+    from deepSTRF.utils.data_download import zip_members_download
+
+    _make_zip(tmp_path / "remote.zip")
+    _serve_local_zip(monkeypatch, tmp_path / "remote.zip", [])
+    with pytest.raises(FileNotFoundError, match="nope.bin"):
+        zip_members_download("u", ["x.bin", "nope.bin"], tmp_path / "out", progress=False)
+
+
+def test_zip_members_download_suffix_respects_path_boundary(tmp_path, monkeypatch):
+    from deepSTRF.utils.data_download import zip_members_download
+
+    with zipfile.ZipFile(tmp_path / "remote.zip", "w") as zf:
+        zf.writestr("a/sua.mat", b"right")
+        zf.writestr("b/xsua.mat", b"wrong")
+    _serve_local_zip(monkeypatch, tmp_path / "remote.zip", [])
+    out = zip_members_download("u", ["sua.mat"], tmp_path / "out", progress=False)
+    assert [p.relative_to(tmp_path / "out").as_posix() for p in out] == ["a/sua.mat"]

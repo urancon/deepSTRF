@@ -491,7 +491,8 @@ def zip_members_download(
     requests (Zenodo does).
 
     ``members`` are matched against archive paths by ``match='suffix'``
-    (default; ``"sua.mat"`` matches every ``*/sua.mat``) or ``'exact'``.
+    (default; ``"sua.mat"`` matches ``sua.mat`` and every ``*/sua.mat``) or
+    ``'exact'``. Raises ``FileNotFoundError`` if a wanted member matches nothing.
     Supports stored and deflated members (ZIP64 included). Returns the
     extracted (or already present) paths.
     """
@@ -500,8 +501,14 @@ def zip_members_download(
     wanted = tuple(members)
     dest_dir = Path(dest_dir).expanduser().resolve()
     zf = zipfile.ZipFile(io.BufferedReader(_RangeFile(url), buffer_size=1 << 20))
-    infos = [i for i in zf.infolist() if not i.is_dir() and (
-        i.filename.endswith(wanted) if match == "suffix" else i.filename in wanted)]
+    def matches(name: str, w: str) -> bool:
+        return name == w or (match == "suffix" and name.endswith("/" + w.lstrip("/")))
+
+    files = [i for i in zf.infolist() if not i.is_dir()]
+    infos = [i for i in files if any(matches(i.filename, w) for w in wanted)]
+    missing = [w for w in wanted if not any(matches(i.filename, w) for i in files)]
+    if missing:
+        raise FileNotFoundError(f"no member of {url} matches {missing}")
     out = []
     for info in infos:
         rel = Path(info.filename)
