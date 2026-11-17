@@ -176,6 +176,7 @@ welcome to add yours.
    _source/ipynb/strf_gradmap_aa2.ipynb
    _source/ipynb/adaptrans_transformer_aa1.ipynb
    _source/ipynb/learnable_frontend_ns1.ipynb
+   _source/ipynb/explore_yang2025_decoding.ipynb
 
 .. toctree::
    :maxdepth: 3
