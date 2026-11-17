@@ -96,7 +96,19 @@ class Yang2025Dataset(AudioNeuralDataset):
                  raw_path: Optional[Union[str, Path]] = None,
                  download: bool = False):
         path = Path(path).expanduser() if path is not None else default_cache_dir("Yang2025")
+        if compression not in ("log", "cubic", "none"):
+            raise ValueError(f"compression must be 'log', 'cubic' or 'none', got {compression!r}")
+        if max_episode_s is not None and max_episode_s <= 0:
+            raise ValueError(f"max_episode_s must be positive or None, got {max_episode_s}")
+        if isinstance(birds, str):
+            birds = None if birds == "all" else [birds]
+        else:
+            birds = [str(b) for b in birds]
+
         if not (path / "index.json").exists():
+            unknown = sorted(set(birds or ()) - set(BIRDS))
+            if unknown:                                   # fail before any download
+                raise ValueError(f"Unknown bird(s) {unknown}; choose from {list(BIRDS)}")
             if raw_path is None and download:
                 raw_path = download_yang2025(default_cache_dir("Yang2025_raw"))
             elif raw_path is not None and download:
@@ -106,17 +118,13 @@ class Yang2025Dataset(AudioNeuralDataset):
                     f"No Yang2025 cache at {path}. Pass download=True, or raw_path= to the "
                     "raw Zenodo release (prepare_yang2025(raw, path)).")
             prepare_yang2025(raw_path, path)
-        if compression not in ("log", "cubic", "none"):
-            raise ValueError(f"compression must be 'log', 'cubic' or 'none', got {compression!r}")
-        if max_episode_s is not None and max_episode_s <= 0:
-            raise ValueError(f"max_episode_s must be positive or None, got {max_episode_s}")
 
         index = json.loads((path / "index.json").read_text())
         if index.get("version") != CACHE_VERSION:
             raise ValueError(f"cache at {path} has version {index.get('version')}, expected "
                              f"{CACHE_VERSION}; delete it and prepare it again")
         available = list(index["birds"])
-        birds = available if birds == "all" else ([birds] if isinstance(birds, str) else list(birds))
+        birds = available if birds is None else birds
         unknown = sorted(set(birds) - set(available))
         if unknown:
             raise ValueError(f"Unknown bird(s) {unknown}; choose from {available}")

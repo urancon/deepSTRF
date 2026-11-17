@@ -143,3 +143,20 @@ def test_decoding_smoke(ds, tmp_path):
     f = Fitter(model, loader, loader, max_epochs=1, ckpt_path=tmp_path / "best.pt",
                log_fn=lambda d: None)
     f.fit()
+
+
+def test_bad_arguments_fail_before_download(tmp_path, monkeypatch):
+    import deepSTRF.datasets.audio.yang2025 as y
+
+    def no_download(*a, **k):
+        raise AssertionError("download attempted before argument validation")
+
+    monkeypatch.setattr(y, "download_yang2025", no_download)
+    for kw in (dict(compression="Log"), dict(max_episode_s=0), dict(birds=["Zz9"])):
+        with pytest.raises(ValueError):
+            Yang2025Dataset(path=tmp_path / "empty", download=True, **kw)
+
+
+def test_birds_accepts_array(cache):
+    d = Yang2025Dataset(path=cache, birds=np.array(["B1", "B2"]))
+    assert d.birds == ("B1", "B2")
