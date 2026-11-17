@@ -8,6 +8,27 @@ While the version is `0.x`, the public API may still change between minor releas
 
 ## [Unreleased]
 
+### Added
+- **Decoding API: reconstruct the sound from neural activity.**
+  `AudioDecodingModel` (base class: implement `decode()`, mapping `(B, N, T)`
+  activity to a `(B, 1, F, T)` spectrogram), `WienerFilter` (lagged linear
+  decoder, causal by default, closed-form ridge fit) and `MeanTargetBaseline`
+  (a control that ignores the neural input), in `deepSTRF.models.audio.decoding`.
+  Decoding metrics `spectrogram_corrcoef` (per-band Pearson r) and
+  `mel_cepstral_distortion` in `deepSTRF.metrics`. `Fitter` reads
+  `model.direction` and, for a decoder, feeds the responses to the model and
+  scores it against the spectrogram (`direction=` overrides it).
+- **`Yang2025Dataset`**, the first decoding dataset: single units in the
+  vocal-motor anterior arcopallium of four budgerigars and each bird's own
+  voice from a piezo skull microphone (Yang & Long, Nature 2025; Zenodo,
+  CC BY 4.0). One item per warble bout or call, a fixed per-bird
+  train / val / test split, `download=True` (fetches ~3.3 GB of the 15.7 GB
+  archive, keeps a ~100 MB cache). New tutorial
+  `examples/decoding_tutorial_yang2025.ipynb` and a Decoding docs page.
+- **`zip_members_download` / `zenodo_zip_members_download`** in
+  `deepSTRF.utils.data_download`: extract selected files of a remote zip over
+  HTTP range requests, CRC-checked and resumable.
+
 ### Changed
 - **DNet output unit is stateful again**, as in Rahman et al. (2019): the
   output activation (default `nn.Sigmoid`) is followed by a learnable
