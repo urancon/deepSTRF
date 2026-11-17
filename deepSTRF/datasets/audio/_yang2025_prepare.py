@@ -29,7 +29,7 @@ PathLike = Union[str, Path]
 BIRDS = ("Ti81", "Li145", "Bl122", "Or61")
 ZENODO_RECORD = 14057061
 AUDIO_FS = 30000
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 RAW_MEMBERS = (
     "bgI.mat",
     *(f"{b}_ChronicLeftAAC/{f}" for b in BIRDS for f in ("sua.mat", "audioCh3_HP.flac")),
@@ -65,21 +65,65 @@ def build_episodes(sy_time_win: np.ndarray, warble_flag: np.ndarray,
     return eps
 
 
+def _split_units(episodes: List[dict], min_gap_s: float) -> List[str]:
+    """Split-unit key of each episode: episodes of one bird that share a
+    ``bout_id`` or lie less than ``min_gap_s`` apart form one unit (keyed by
+    its first ``bout_id``), so that no item's pre-roll reaches into an episode
+    of another split."""
+    parent = list(range(len(episodes)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i, j):
+        parent[find(j)] = find(i)
+
+    first_of = {}
+    for i, e in enumerate(episodes):
+        union(first_of.setdefault((e["bird"], e["bout_id"]), i), i)
+    by_bird: Dict[str, List[int]] = {}
+    for i, e in enumerate(episodes):
+        by_bird.setdefault(e["bird"], []).append(i)
+    for idx in by_bird.values():
+        idx.sort(key=lambda i: episodes[i]["onset_s"])
+        reach, last = -np.inf, None
+        for i in idx:
+            if last is not None and episodes[i]["onset_s"] - reach < min_gap_s:
+                union(last, i)
+            if episodes[i]["offset_s"] >= reach:
+                reach, last = episodes[i]["offset_s"], i
+    roots = [find(i) for i in range(len(episodes))]
+    key_of = {}
+    for i in sorted(range(len(episodes)), key=lambda i: (episodes[i]["bird"], episodes[i]["onset_s"])):
+        key_of.setdefault(roots[i], episodes[i]["bout_id"])
+    return [key_of[r] for r in roots]
+
+
 def assign_splits(episodes: List[dict], fractions: Sequence[float] = (0.70, 0.15, 0.15),
-                  seed: int = 0) -> None:
+                  seed: int = 0, min_gap_s: float = 1.0) -> None:
     """Write a ``'split'`` (train / val / test) into every episode dict, in place.
 
-    Per bird x episode type, whole bouts (episodes sharing a ``bout_id``) are
-    dealt out: in a seeded random order, test then val are filled up to their
-    share of the stratum's duration, skipping any bout that would push the
-    split above 1.25 x its share — so an outsized bout always falls to train.
-    A stratum with at least 3 bouts gets at least one in every split.
+    Split units are whole bouts, merged with every episode of the same bird
+    less than ``min_gap_s`` away (default 1 s: the authors' bout criterion, and
+    longer than any pre-roll). Per bird x unit type (``warble`` if the unit
+    holds any warble, else ``call``), units are dealt out: in a seeded random
+    order, test then val are filled up to their share of the stratum's
+    duration, skipping any unit that would push the split above 1.25 x its
+    share — so an outsized bout always falls to train. A stratum with at least
+    3 units gets at least one in every split.
     """
     rng = np.random.default_rng(seed)
+    unit_of = _split_units(episodes, min_gap_s)
+    is_warble: Dict[str, bool] = {}
+    for e, u in zip(episodes, unit_of):
+        is_warble[u] = is_warble.get(u, False) or e["episode_type"] == "warble"
     strata: Dict[Tuple[str, str], Dict[str, float]] = {}
-    for e in episodes:
-        dur = strata.setdefault((e["bird"], e["episode_type"]), {})
-        dur[e["bout_id"]] = dur.get(e["bout_id"], 0.0) + e["offset_s"] - e["onset_s"]
+    for e, u in zip(episodes, unit_of):
+        dur = strata.setdefault((e["bird"], "warble" if is_warble[u] else "call"), {})
+        dur[u] = dur.get(u, 0.0) + e["offset_s"] - e["onset_s"]
     split_of: Dict[str, str] = {}
     for key in sorted(strata):
         dur = strata[key]
@@ -102,8 +146,8 @@ def assign_splits(episodes: List[dict], fractions: Sequence[float] = (0.70, 0.15
                 split_of[u] = split
         for u in free:
             split_of[u] = "train"
-    for e in episodes:
-        e["split"] = split_of[e["bout_id"]]
+    for e, u in zip(episodes, unit_of):
+        e["split"] = split_of[u]
 
 
 # --------------------------------------------------------------------------- raw files

@@ -83,3 +83,31 @@ def test_splits_deterministic():
     assign_splits(c, seed=1)
     assert [e["split"] for e in a] == [e["split"] for e in b]
     assert [e["split"] for e in a] != [e["split"] for e in c]
+
+
+def test_close_episodes_share_split():
+    # calls a few ms apart (2-element runs are "calls" in the release) must not
+    # straddle splits: the later one's pre-roll would contain the earlier one
+    eps = []
+    for k in range(30):
+        on = 20.0 * k
+        eps.append(dict(bird="B", episode_type="call", bout_id=f"B_c{2 * k:03d}",
+                        onset_s=on, offset_s=on + 0.1))
+        eps.append(dict(bird="B", episode_type="call", bout_id=f"B_c{2 * k + 1:03d}",
+                        onset_s=on + 0.108, offset_s=on + 0.2))
+    for seed in range(5):
+        assign_splits(eps, seed=seed)
+        for a, b in zip(eps[::2], eps[1::2]):
+            assert a["split"] == b["split"]
+
+
+def test_no_close_pair_across_splits_random():
+    rng = np.random.default_rng(3)
+    on = np.cumsum(rng.uniform(0.0, 3.0, size=300))
+    eps = [dict(bird="B", episode_type="call" if k % 2 else "warble", bout_id=f"B_x{k:03d}",
+                onset_s=float(o), offset_s=float(o) + 0.05) for k, o in enumerate(on)]
+    assign_splits(eps, min_gap_s=1.0)
+    for a, b in zip(eps[:-1], eps[1:]):
+        if b["onset_s"] - a["offset_s"] < 1.0:
+            assert a["split"] == b["split"]
+    assert {e["split"] for e in eps} == {"train", "val", "test"}

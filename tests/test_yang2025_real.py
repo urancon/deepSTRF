@@ -27,6 +27,11 @@ def test_prepare_real(cache):
         eps = [e for e in index["episodes"] if e["bird"] == bird]
         # min-duration drop removes at most 2; the Or61 splice may add one piece
         assert n - 2 <= len(eps) <= n + 1, (bird, len(eps))
+    for bird in EXPECTED_UNITS:      # no pre-roll reaches into another split
+        eps = sorted((e for e in index["episodes"] if e["bird"] == bird), key=lambda e: e["onset_s"])
+        for a, b in zip(eps[:-1], eps[1:]):
+            if b["onset_s"] - a["offset_s"] < 1.0:
+                assert a["split"] == b["split"], (a["bout_id"], b["bout_id"])
     for e in index["episodes"]:
         info = sf.info(str(cache / e["audio_file"]))
         assert abs(info.frames / info.samplerate - (e["audio_t1_s"] - e["audio_t0_s"])) < 1e-3

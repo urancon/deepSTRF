@@ -8,6 +8,7 @@ import soundfile as sf
 import torch
 from torch.utils.data import DataLoader
 
+from deepSTRF.datasets.audio._yang2025_prepare import CACHE_VERSION
 from deepSTRF.datasets.audio.yang2025 import Yang2025Dataset
 from deepSTRF.utils import neural_collate
 
@@ -48,7 +49,7 @@ def cache(tmp_path_factory):
         units[bird] = [dict(cluster_id=10 + n, shank=1, max_channel=n, coordinates=[0.0, 20.0 * n],
                             fr=60.0) for n in range(n_units)]
     (cache / "index.json").write_text(json.dumps(dict(
-        version=1, audio_fs=FS, birds=["B1", "B2"], source="synthetic", episodes=eps, units=units)))
+        version=CACHE_VERSION, audio_fs=FS, birds=["B1", "B2"], source="synthetic", episodes=eps, units=units)))
     return cache
 
 
