@@ -116,6 +116,14 @@ Torch class: [`ICNet`](https://deepstrf.readthedocs.io/en/latest/_source/deepSTR
 
 ---
 
+## Decoding models
+
+The models above are **encoders** (sound → neural responses). For the reverse
+direction — reconstructing the sound's spectrogram from neural activity — deepSTRF
+provides `AudioDecodingModel` (the base class to subclass), `WienerFilter` (the
+linear baseline) and `MeanTargetBaseline` (a control that ignores the neural input).
+See [Decoding](decoding.md).
+
 ## Waveform front-ends (`wav2spec`)
 
 Every audio model defaults to consuming a precomputed spectrogram, but can

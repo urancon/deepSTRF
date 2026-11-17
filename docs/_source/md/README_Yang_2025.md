@@ -2,7 +2,10 @@
 
 **Dataset Source:** [Zenodo 14057061](https://doi.org/10.5281/zenodo.14057061)
 
-**License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+**License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (see
+{ref}`License and citation <yang2025-license>`).
+
+**Tutorial:** {doc}`decoding tutorial </_source/ipynb/decoding_tutorial_yang2025>`.
 
 **Citation:**
 ```text
@@ -115,6 +118,30 @@ and unit type (warble / call), units are dealt out in a seeded random order to
 test then val, up to about 15 % of the vocal time each, skipping any unit that
 would overshoot by more than 25 %; the rest goes to train. Outsized bouts
 (Bl122's 126 s bout) therefore always land in train.
+
+
+(yang2025-license)=
+## License and citation
+
+The data are released by Zetian Yang and Michael A. Long on Zenodo under the
+[Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/)
+license (CC BY 4.0): you may share and adapt them, including commercially, provided
+you give appropriate credit. deepSTRF does not redistribute the data: `download=True`
+fetches them from Zenodo into your local cache. The authors' analysis code in the
+same record is MIT-licensed; deepSTRF does not use it (the loader is a Python
+re-implementation).
+
+When you use this dataset, cite the paper and the data record:
+
+```text
+Yang, Z.; Long, M. A. (2025). Convergent vocal representations in parrot and
+human forebrain motor networks. Nature, 640(8058): 427–434.
+https://doi.org/10.1038/s41586-025-08695-8
+
+Yang, Z.; Long, M. A. (2025). Data and code for 'Convergent vocal representations
+in parrot and human forebrain motor networks' [Data set]. Zenodo.
+https://doi.org/10.5281/zenodo.14057061
+```
 
 
 ## Caveats

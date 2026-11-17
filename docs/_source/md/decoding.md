@@ -6,6 +6,19 @@ from the neural activity. It is the natural direction for vocal-motor areas,
 whose activity precedes the sound, and the classic stimulus-reconstruction
 analysis for sensory areas.
 
+```{figure} ../img/decoding_yang2025_reconstructions.png
+:width: 100%
+
+Reconstructions of held-out budgerigar warble from vocal-motor (AAC) single units
+([Yang 2025](README_Yang_2025.md)): true log-mel spectrogram (top), Wiener filter
+(middle) and a small GRU decoder (bottom), for the longest test warble item of each
+of the four birds. On the test sets, the per-band correlation over the vocal span is
+0.73–0.78 (Wiener) and 0.78–0.84 (GRU), against 0.02–0.31 for a control that ignores
+the spikes (one training seed). The
+{doc}`decoding tutorial </_source/ipynb/decoding_tutorial_yang2025>` reproduces this for
+one bird.
+```
+
 The decoding API reuses the dataset, metric and training machinery unchanged.
 A dataset item is the same dict; only the roles of `stims` and `responses` swap.
 
@@ -89,3 +102,7 @@ ckpt_path=...)` as usual.
 
 Datasets with a decoding use: [Yang 2025](README_Yang_2025.md) (budgerigar
 vocal-motor cortex, the bird's own vocalisations).
+
+For a complete walk-through — data, alignment, Wiener filter, a custom GRU decoder
+trained with `Fitter`, and the comparison with the control — see the
+{doc}`decoding tutorial </_source/ipynb/decoding_tutorial_yang2025>`.

@@ -20,6 +20,14 @@ deepSTRF.metrics.performance module
    :show-inheritance:
    :undoc-members:
 
+deepSTRF.metrics.decoding module
+--------------------------------
+
+.. automodule:: deepSTRF.metrics.decoding
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 Module contents
 ---------------
 
