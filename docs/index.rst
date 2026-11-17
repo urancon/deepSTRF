@@ -14,6 +14,12 @@ four-slot model template, pretrained checkpoints on the
 `Hugging Face Hub <https://huggingface.co/urancon>`_, a NaN-aware metrics suite,
 and a thin opt-in training utility.
 
+deepSTRF also works in the other direction: its **decoding** API reconstructs the
+sound from neural activity, with the same datasets, metrics and ``Fitter``. See
+:doc:`Decoding <_source/md/decoding>` and the
+:doc:`decoding tutorial <_source/ipynb/decoding_tutorial_yang2025>`, which
+reconstructs a budgerigar's song from its vocal-motor cortex.
+
 This site is the project's reference documentation. Source code, issue tracker,
 and pull requests live on `GitHub <https://github.com/urancon/deepSTRF>`_.
 
@@ -149,6 +155,7 @@ welcome to add yours.
    _source/ipynb/load_pretrained_statenet_ns1.ipynb
    _source/ipynb/dataset_concatenation.ipynb
    _source/ipynb/fit_ns1_linear_from_waveform.ipynb
+   _source/ipynb/decoding_tutorial_yang2025.ipynb
 
 .. toctree::
    :maxdepth: 1
@@ -176,7 +183,6 @@ welcome to add yours.
    _source/ipynb/strf_gradmap_aa2.ipynb
    _source/ipynb/adaptrans_transformer_aa1.ipynb
    _source/ipynb/learnable_frontend_ns1.ipynb
-   _source/ipynb/explore_yang2025_decoding.ipynb
 
 .. toctree::
    :maxdepth: 3
