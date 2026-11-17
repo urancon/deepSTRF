@@ -39,3 +39,21 @@ def test_prepare_real(cache):
             assert z["unit"].max() < EXPECTED_UNITS[bird]
         inside = ((st[:, None] >= win[:, 0]) & (st[:, None] < win[:, 1])).any(1)
         assert inside.all()
+
+
+def test_loader_real(cache):
+    import torch
+    from deepSTRF.datasets.audio import Yang2025Dataset
+
+    ds = Yang2025Dataset(path=cache)
+    assert ds.N_neurons == sum(EXPECTED_UNITS.values()) == 220
+    assert {m["split"] for m in ds.stim_meta} <= {"train", "val", "test"}
+    split_of = {}
+    for m in ds.stim_meta:
+        assert split_of.setdefault(m["bout_id"], m["split"]) == m["split"]
+    assert all(m["duration_s"] <= 5.0 + 0.3 + 0.005 for m in ds.stim_meta)
+    assert all(torch.isfinite(s).all() for s in ds.stims)
+    for bird, n in EXPECTED_UNITS.items():
+        d = Yang2025Dataset(path=cache, birds=bird)
+        assert d.N_neurons == n
+        assert {m["bird"] for m in d.stim_meta} == {bird}
