@@ -15,10 +15,11 @@ Single units in the left anterior arcopallium (AAC) of four adult male
 budgerigars (*Melopsittacus undulatus*), recorded with a 128-channel silicon
 probe while the freely moving birds produced warble song and calls. The bird's
 own vocalisations come from a **piezo microphone on the skull**, sampled on the
-same 30 kHz clock as the spikes, so the cage-mates' calls are not in the signal.
+same 30 kHz clock as the spikes; through bone conduction it mostly picks up the
+recorded bird's own voice.
 
-AAC is a vocal-**motor** area: its activity leads the sound, and it barely
-responds to played-back sounds. This is therefore a **decoding** dataset —
+AAC is a vocal-**motor** area: its activity leads the sound. This is therefore
+a **decoding** dataset —
 predict the spectrogram of the bird's own voice from the population activity
 (see [Decoding](decoding.md)). It is not suitable for encoding (stimulus →
 response) models.
@@ -37,17 +38,22 @@ each bird is a separate population.
 | `Or61` | 47 | 47 | 43 | 272 s |
 
 Units are curated single units (Kilosort 2.5 + manual curation by the authors),
-recorded in one continuous session per bird; median firing rates are 39–68 Hz across birds.
+recorded in one session per bird (for Or61, two cut segments of it, joined);
+median firing rates are 39–68 Hz across birds.
 Only the authors' annotated vocalisations are used (the first part of each
 session); later vocal periods are not annotated and are not included.
 
-**Items.** One item per vocal *episode*: a warble bout (warble elements separated
-by less than 1 s, as defined by the authors) or a call. Episodes range from
-20 ms (calls) to 126 s (one Bl122 bout); episodes longer than `max_episode_s`
+**Items.** One item per vocal *episode*: a warble bout or a call. Following the
+authors, a warble bout is a run of at least 3 vocal elements separated by gaps
+under 1 s, and every other element is a call — so calls can come in close pairs.
+Episodes range from 15 ms (calls) to 126 s (one Bl122 bout); episodes longer than `max_episode_s`
 (default 5 s) are cut into equal pieces. Every item starts `pre_roll_ms`
 (default 300 ms) before its vocal onset, so that a causal decoder has neural
 history to read; later pieces of a bout take that pre-roll from the end of the
-previous piece.
+previous piece. The pre-roll frames are part of the item and are scored by the
+metrics; to score the vocal span only, mask the first
+`round((vocal_onset_s - t_start_s) * 1000 / dt_ms)` frames of each item. This
+matters most for calls, where the pre-roll is most of the item.
 
 - `stims[s]` — the decoding **target**: `(1, F, T)` causal log-mel spectrogram of
   the piezo audio (default 32 bands, 500 Hz – 10 kHz, 10 ms window; natural log
@@ -75,7 +81,9 @@ ds.select_stims_by_attr("split", "train")
 
 If you already have the raw release, pass `raw_path=` (the folder holding
 `bgI.mat` and the four `<bird>_ChronicLeftAAC/` folders) instead of
-`download=True`.
+`download=True`. After the cache is built, the raw files (kept in
+`default_cache_dir('Yang2025_raw')` by `download=True`) are no longer needed and
+can be deleted.
 
 
 ## Metadata
@@ -100,12 +108,13 @@ that channel in the probe channel map, as released), `fr` (session firing rate, 
 
 ## Train / val / test split
 
-`stim_meta['split']` is a fixed split, computed per bird and per episode type
-(warble / call): whole bouts are dealt out in a seeded random order to test
-then val, up to about 15 % of the vocal time each, skipping any bout that
-would overshoot by more than 25 %; the rest goes to train. All pieces of a
-bout share one split, and outsized bouts (Bl122's 126 s bout) always land in
-train.
+`stim_meta['split']` is a fixed split, computed per bird. The units dealt out
+are whole bouts, merged with any episode of the same bird less than 1 s away,
+so that no item's pre-roll reaches into an episode of another split. Per bird
+and unit type (warble / call), units are dealt out in a seeded random order to
+test then val, up to about 15 % of the vocal time each, skipping any unit that
+would overshoot by more than 25 %; the rest goes to train. Outsized bouts
+(Bl122's 126 s bout) therefore always land in train.
 
 
 ## Caveats

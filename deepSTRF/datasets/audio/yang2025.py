@@ -36,7 +36,7 @@ LOG_EPS = 1e-10
 class Yang2025Dataset(AudioNeuralDataset):
     """Budgerigar AAC single units + the bird's own vocalisations (Yang & Long 2025).
 
-    One item per vocal *episode* — a warble bout or an isolated call — cut into
+    One item per vocal *episode* — a warble bout or a call — cut into
     pieces of at most ``max_episode_s`` (``None`` keeps episodes whole). Each
     item starts ``pre_roll_ms`` before its vocal onset so that a causal decoder
     has neural history to read; the 2nd+ pieces of a bout take that pre-roll
