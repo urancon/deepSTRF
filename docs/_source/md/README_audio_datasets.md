@@ -1,7 +1,7 @@
 ## Auditory datasets
 
-Currently, **14 response datasets** are available, each with a short name for
-easier reference. They span six species and a range of recording modalities —
+Currently, **15 response datasets** are available, each with a short name for
+easier reference. They span seven species and a range of recording modalities —
 extracellular single-units, multi-unit activity, two-photon calcium imaging and scalp EEG — but all share
 the same `NeuralDataset` API (NaN-sentinel missing trials, optional
 `download=True`, and the selection / concatenation utilities). Each dataset has
@@ -29,7 +29,7 @@ publish results obtained with a dataset, cite it as its page asks.
 | Dataset | Host | License / terms |
 |---|---|---|
 | NS1 | OSF | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
-| NAT4, Wingert 2026, Downer 2025, Gosselin 2025, Bagur 2025 | Zenodo | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| NAT4, Wingert 2026, Downer 2025, Gosselin 2025, Bagur 2025, Yang 2025 | Zenodo | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
 | Espejo 2019 | Zenodo | CC BY |
 | Le 2025 | figshare | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
 | Alice EEG | UMD DRUM | derived from the CC BY Alice datasets |
@@ -58,6 +58,9 @@ machine.
 * [CRCNS AA4](README_CRCNS_AA4.md) — extracellular recordings spanning the full zebra-finch vocal repertoire (songs + calls) plus ripple noise.
 * [CRCNS AA5](README_CRCNS_AA5.md) — awake, freely behaving birds; chronic recordings; the full vocal repertoire (110 calls, 10 call types), songs and filtered songs.
 * [Le 2025](README_Le_2025.md) — auditory cortex; occluded conspecific song (auditory-restoration paradigm).
+
+### Budgerigar (*Melopsittacus undulatus*)
+* [Yang 2025](README_Yang_2025.md) — **decoding** dataset: vocal-motor anterior arcopallium (AAC) single units (4 birds, 220 units) while the birds produce warble song and calls; the target is the bird's own voice (piezo skull microphone). See [Decoding](decoding.md).
 
 ### Mouse (*Mus musculus*)
 * [Gosselin 2025](README_Gosselin_2025.md) — cochlear nucleus & inferior colliculus (Neuropixels) and auditory cortex (2-photon); 307 tones, chords, AM, sweeps, noises and natural-like sounds; auditory-nerve model as an optional input.
@@ -89,6 +92,7 @@ README_CRCNS_AA2.md
 README_CRCNS_AA4.md
 README_CRCNS_AA5.md
 README_Le_2025.md
+README_Yang_2025.md
 README_Gosselin_2025.md
 README_Bagur_2025.md
 README_CRCNS_AC1.md

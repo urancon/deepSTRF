@@ -111,6 +111,7 @@ welcome to add yours.
    _source/md/model_paradigm.md
    _source/md/metrics_paradigm.md
    _source/md/fitter.md
+   _source/md/decoding.md
    _source/md/logging.md
    _source/md/README_formats.md
    _source/md/README_publications.md
